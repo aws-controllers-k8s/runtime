@@ -11,26 +11,29 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package util
+package compare
 
-// InStrings returns true if the subject string is contained in the supplied
-// slice of strings
-func InStrings(subject string, collection []string) bool {
-	for _, item := range collection {
-		if subject == item {
-			return true
+import "sort"
+
+// SliceStringPEqual returns true if the supplied slices of string pointers
+// have equal values regardless of order.
+func SliceStringPEqual(a, b []*string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa := make([]string, len(a))
+	sb := make([]string, len(a))
+	for x, aPtr := range a {
+		sa[x] = *aPtr
+		sb[x] = *b[x]
+	}
+	sort.Strings(sa)
+	sort.Strings(sb)
+	for x, aVal := range sa {
+		bVal := sb[x]
+		if aVal != bVal {
+			return false
 		}
 	}
-	return false
-}
-
-// InStringPs returns true if the subject string is contained in the supplied
-// slice of string pointers
-func InStringPs(subject string, collection []*string) bool {
-	for _, item := range collection {
-		if subject == *item {
-			return true
-		}
-	}
-	return false
+	return true
 }

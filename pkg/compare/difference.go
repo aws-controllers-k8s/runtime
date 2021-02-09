@@ -11,26 +11,16 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package util
+package compare
 
-// InStrings returns true if the subject string is contained in the supplied
-// slice of strings
-func InStrings(subject string, collection []string) bool {
-	for _, item := range collection {
-		if subject == item {
-			return true
-		}
-	}
-	return false
-}
-
-// InStringPs returns true if the subject string is contained in the supplied
-// slice of string pointers
-func InStringPs(subject string, collection []*string) bool {
-	for _, item := range collection {
-		if subject == *item {
-			return true
-		}
-	}
-	return false
+// Difference contains the difference in values for a specified field path into
+// two compared resources.
+type Difference struct {
+	// Path is the field path to the detected difference between resources
+	// under comparison
+	Path Path
+	// A is the value of the first resource under comparison at the Path
+	A interface{}
+	// B is the value of the first resource under comparison at the Path
+	B interface{}
 }
