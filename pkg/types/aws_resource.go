@@ -39,7 +39,7 @@ type AWSResource interface {
 	// Conditions returns the ACK Conditions collection for the AWSResource
 	Conditions() []*ackv1alpha1.Condition
 	// IsBeingDeleted returns true if the Kubernetes resource has a non-zero
-	// deletion timestemp
+	// deletion timestamp
 	IsBeingDeleted() bool
 	// RuntimeObject returns the Kubernetes apimachinery/runtime representation
 	// of the AWSResource
@@ -51,4 +51,9 @@ type AWSResource interface {
 	// apimachinery/runtime.Object and the Kubernetes
 	// apimachinery/apis/meta/v1.Object interfaces
 	RuntimeMetaObject() RuntimeMetaObject
+	// SetObjectMeta sets the ObjectMeta field for the resource
+	SetObjectMeta(meta metav1.ObjectMeta)
+	// SetIdentifiers will set the the Spec or Status field that represents the
+	// identifier for the resource.
+	SetIdentifiers(*ackv1alpha1.AWSIdentifiers) error
 }

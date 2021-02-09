@@ -23,6 +23,9 @@ import (
 type ConditionType string
 
 const (
+	// ConditionTypeAdopted indicates that the adopted resource custom resource
+	// has been successfully reconciled and the target has been created
+	ConditionTypeAdopted ConditionType = "ACK.Adopted"
 	// ConditionTypeResourceSynced indicates the state of the resource in the
 	// backend service is in sync with the ACK service controller
 	ConditionTypeResourceSynced ConditionType = "ACK.ResourceSynced"

@@ -20,6 +20,15 @@ import (
 )
 
 var (
+	// AdoptedResourceNotFound is like NotFound but provides the caller with
+	// information that the resource being checked for existence was
+	// previously-created out of band from ACK
+	AdoptedResourceNotFound = fmt.Errorf("adopted resource not found")
+	// MissingNameIdentifier indicates an unexpected nil name identifier pointer
+	MissingNameIdentifier = fmt.Errorf("expected name identifier, found nil")
+	// NotAdoptable is to indicate the current resource has been explicitly
+	// flagged as not able to be adopted
+	NotAdoptable = fmt.Errorf("resource not adoptable")
 	// NotImplemented is returned when a code path isn't implemented yet
 	NotImplemented = fmt.Errorf("not implemented")
 	// NotFound is returned when an expected resource was not found
@@ -30,10 +39,11 @@ var (
 		"error binding controller manager to reconciler before " +
 			"setting resource manager factory",
 	)
-	// AdoptedResourceNotFound is like NotFound but provides the caller with
-	// information that the resource being checked for existence was
-	// previously-created out of band from ACK
-	AdoptedResourceNotFound = fmt.Errorf("adopted resource not found")
+	// ResourceManagerFactoryNotFound is return when a lookup into the resource
+	// manager factory mapping fails
+	ResourceManagerFactoryNotFound = fmt.Errorf("resource manager factory " +
+		"not found",
+	)
 	// TemporaryOutOfSync is to indicate the error isn't really an error
 	// but more of a marker that the status check will be performed
 	// after some wait time
