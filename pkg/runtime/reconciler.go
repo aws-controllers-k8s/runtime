@@ -204,29 +204,29 @@ func (r *reconciler) sync(
 		)
 	} else {
 		// Check to see if the latest observed state already matches the
-		// desired state and if so, simply return since there's nothing to do
-		if r.rd.Equal(desired, latest) {
-			return nil
-		}
-		diffReporter := r.rd.Diff(desired, latest)
-		log.V(1).Info(
-			"desired resource state has changed",
-			"diff", diffReporter.String(),
-			"arn", latest.Identifiers().ARN(),
-		)
-		latest, err = rm.Update(ctx, desired, latest, diffReporter)
-		if err != nil {
-			if latest != nil {
-				// this indicates, that even though update failed
-				// there is some changes available in the latest.RuntimeObject()
-				// (example: ko.Status.Conditions) which have been
-				// updated in the resource
-				// Thus, patchResource() call should be made here
-				_ = r.patchResource(ctx, desired, latest)
+		// desired state and if not, update the resource
+		if !r.rd.Equal(desired, latest) {
+			diffReporter := r.rd.Diff(desired, latest)
+			log.V(1).Info(
+				"desired resource state has changed",
+				"diff", diffReporter.String(),
+				"arn", latest.Identifiers().ARN(),
+			)
+			latest, err = rm.Update(ctx, desired, latest, diffReporter)
+			if err != nil {
+				if latest != nil {
+					// this indicates, that even though update failed
+					// there is some changes available in the latest.RuntimeObject()
+					// (example: ko.Status.Conditions) which have been
+					// updated in the resource
+					// Thus, patchResource() call should be made here
+					_ = r.patchResource(ctx, desired, latest)
+				}
+				return err
 			}
-			return err
+			log.V(0).Info("updated resource")
+
 		}
-		log.V(0).Info("updated resource")
 	}
 	err = r.patchResource(ctx, desired, latest)
 	if err != nil {
