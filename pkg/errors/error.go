@@ -42,6 +42,9 @@ var (
 	// Terminal is returned with resource is in Terminal Condition
 	Terminal = fmt.Errorf(
 		"resource is in terminal condition")
+	// SecretTypeNotSupported is returned if non opaque secret is used.
+	SecretTypeNotSupported = fmt.Errorf(
+		"only opaque secrets can be used")
 )
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go
