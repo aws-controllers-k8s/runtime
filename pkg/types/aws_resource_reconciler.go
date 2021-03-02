@@ -14,7 +14,8 @@
 package types
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	"context"
+	"github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -39,6 +40,6 @@ type AWSResourceReconciler interface {
 	// of an upstream controller-runtime.Manager
 	BindControllerManager(ctrlrt.Manager) error
 	// SecretValueFromReference fetches the value of a Secret given a
-	// SecretReference
-	SecretValueFromReference(*corev1.SecretReference) (string, error)
+	// SecretKeyReference
+	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)
 }

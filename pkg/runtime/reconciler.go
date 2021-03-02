@@ -85,12 +85,41 @@ func (r *reconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 }
 
 // SecretValueFromReference fetches the value of a Secret given a
-// SecretReference
+// SecretKeyReference.
 func (r *reconciler) SecretValueFromReference(
-	ref *corev1.SecretReference,
+	ctx context.Context,
+	ref *ackv1alpha1.SecretKeyReference,
 ) (string, error) {
-	// TODO(alina-kim): Implement this method :)
-	return "", ackerr.NotImplemented
+
+	if ref == nil {
+		return "", nil
+	}
+
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	nsn := client.ObjectKey{
+		Namespace: namespace,
+		Name: ref.Name,
+	}
+	var secret corev1.Secret
+	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
+		return "", err
+	}
+
+	// Currently we have only Opaque secrets in scope.
+	if secret.Type != corev1.SecretTypeOpaque {
+		return "", ackerr.SecretTypeNotSupported
+	}
+
+	if value, ok := secret.Data[ref.Key]; ok {
+		valuestr := string(value)
+		return valuestr, nil
+	}
+
+	return "", ackerr.NotFound
 }
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
