@@ -143,7 +143,7 @@ func (r *reconciler) reconcile(req ctrlrt.Request) error {
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
 	sess, err := r.sc.newSession(
-		region, roleARN,
+		region, &r.cfg.EndpointURL, roleARN,
 		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {
