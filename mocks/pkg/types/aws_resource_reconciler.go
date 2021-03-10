@@ -10,6 +10,8 @@ import (
 
 	reconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	types "github.com/aws-controllers-k8s/runtime/pkg/types"
+
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -90,4 +92,18 @@ func (_m *AWSResourceReconciler) SecretValueFromReference(_a0 context.Context, _
 	}
 
 	return r0, r1
+}
+
+// Sync provides a mock function with given fields: _a0, _a1, _a2
+func (_m *AWSResourceReconciler) Sync(_a0 context.Context, _a1 types.AWSResourceManager, _a2 types.AWSResource) error {
+	ret := _m.Called(_a0, _a1, _a2)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResourceManager, types.AWSResource) error); ok {
+		r0 = rf(_a0, _a1, _a2)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }

@@ -18,16 +18,16 @@ type AWSResourceDescriptor struct {
 	mock.Mock
 }
 
-// Diff provides a mock function with given fields: _a0, _a1
-func (_m *AWSResourceDescriptor) Diff(_a0 types.AWSResource, _a1 types.AWSResource) *compare.Reporter {
-	ret := _m.Called(_a0, _a1)
+// Delta provides a mock function with given fields: a, b
+func (_m *AWSResourceDescriptor) Delta(a types.AWSResource, b types.AWSResource) *compare.Delta {
+	ret := _m.Called(a, b)
 
-	var r0 *compare.Reporter
-	if rf, ok := ret.Get(0).(func(types.AWSResource, types.AWSResource) *compare.Reporter); ok {
-		r0 = rf(_a0, _a1)
+	var r0 *compare.Delta
+	if rf, ok := ret.Get(0).(func(types.AWSResource, types.AWSResource) *compare.Delta); ok {
+		r0 = rf(a, b)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*compare.Reporter)
+			r0 = ret.Get(0).(*compare.Delta)
 		}
 	}
 
@@ -45,20 +45,6 @@ func (_m *AWSResourceDescriptor) EmptyRuntimeObject() runtime.Object {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(runtime.Object)
 		}
-	}
-
-	return r0
-}
-
-// Equal provides a mock function with given fields: _a0, _a1
-func (_m *AWSResourceDescriptor) Equal(_a0 types.AWSResource, _a1 types.AWSResource) bool {
-	ret := _m.Called(_a0, _a1)
-
-	var r0 bool
-	if rf, ok := ret.Get(0).(func(types.AWSResource, types.AWSResource) bool); ok {
-		r0 = rf(_a0, _a1)
-	} else {
-		r0 = ret.Get(0).(bool)
 	}
 
 	return r0

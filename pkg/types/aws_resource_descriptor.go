@@ -14,9 +14,10 @@
 package types
 
 import (
-	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8srt "k8s.io/apimachinery/pkg/runtime"
+
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
 // AWSResourceDescriptor provides metadata that describes the Kubernetes
@@ -33,16 +34,9 @@ type AWSResourceDescriptor interface {
 	// ResourceFromRuntimeObject returns an AWSResource that has been
 	// initialized with the supplied runtime.Object
 	ResourceFromRuntimeObject(k8srt.Object) AWSResource
-	// Equal returns true if the two supplied AWSResources have the same
-	// content. The underlying types of the two supplied AWSResources should be
-	// the same. In other words, the Equal() method should be called with the
-	// same concrete implementing AWSResource type
-	Equal(AWSResource, AWSResource) bool
-	// Diff returns a Reporter which provides the difference between two supplied
-	// AWSResources. The underlying types of the two supplied AWSResources should
-	// be the same. In other words, the Diff() method should be called with the
-	// same concrete implementing AWSResource type
-	Diff(AWSResource, AWSResource) *ackcompare.Reporter
+	// Delta returns an `ackcompare.Delta` object containing the difference between
+	// one `AWSResource` and another.
+	Delta(a, b AWSResource) *ackcompare.Delta
 	// UpdateCRStatus accepts an AWSResource object and changes the Status
 	// sub-object of the AWSResource's Kubernetes custom resource (CR) and
 	// returns whether any changes were made

@@ -15,6 +15,7 @@ package types
 
 import (
 	"context"
+
 	"github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -42,4 +43,14 @@ type AWSResourceReconciler interface {
 	// SecretValueFromReference fetches the value of a Secret given a
 	// SecretKeyReference
 	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)
+	// Sync ensures that the supplied AWSResource's backing API resource
+	// matches the supplied desired state.
+	//
+	// NOTE(jaypipes): This is really only here for dependency injection
+	// purposes in unit testing in order to simplify test setups.
+	Sync(
+		context.Context,
+		AWSResourceManager,
+		AWSResource,
+	) error
 }

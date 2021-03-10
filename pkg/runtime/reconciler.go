@@ -43,7 +43,7 @@ import (
 // controller-runtime.Controller objects (each containing a single reconciler
 // object)s and sharing watch and informer queues across those controllers.
 type reconciler struct {
-	sc      *ServiceController
+	sc      acktypes.ServiceController
 	kc      client.Client
 	rmf     acktypes.AWSResourceManagerFactory
 	rd      acktypes.AWSResourceDescriptor
@@ -102,7 +102,7 @@ func (r *reconciler) SecretValueFromReference(
 
 	nsn := client.ObjectKey{
 		Namespace: namespace,
-		Name: ref.Name,
+		Name:      ref.Name,
 	}
 	var secret corev1.Secret
 	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
@@ -142,7 +142,7 @@ func (r *reconciler) reconcile(req ctrlrt.Request) error {
 	acctID := r.getOwnerAccountID(res)
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
-	sess, err := r.sc.newSession(
+	sess, err := r.sc.NewSession(
 		region, &r.cfg.EndpointURL, roleARN,
 		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
@@ -168,12 +168,12 @@ func (r *reconciler) reconcile(req ctrlrt.Request) error {
 		return r.cleanup(ctx, rm, res)
 	}
 
-	return r.sync(ctx, rm, res)
+	return r.Sync(ctx, rm, res)
 }
 
-// sync ensures that the supplied AWSResource's backing API resource
+// Sync ensures that the supplied AWSResource's backing API resource
 // matches the supplied desired state
-func (r *reconciler) sync(
+func (r *reconciler) Sync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
@@ -234,14 +234,14 @@ func (r *reconciler) sync(
 	} else {
 		// Check to see if the latest observed state already matches the
 		// desired state and if not, update the resource
-		if !r.rd.Equal(desired, latest) {
-			diffReporter := r.rd.Diff(desired, latest)
+		delta := r.rd.Delta(desired, latest)
+		if delta.DifferentAt("Spec") {
 			log.V(1).Info(
 				"desired resource state has changed",
-				"diff", diffReporter.String(),
+				"diff", delta.Differences,
 				"arn", latest.Identifiers().ARN(),
 			)
-			latest, err = rm.Update(ctx, desired, latest, diffReporter)
+			latest, err = rm.Update(ctx, desired, latest, delta)
 			if err != nil {
 				if latest != nil {
 					// this indicates, that even though update failed
@@ -254,7 +254,6 @@ func (r *reconciler) sync(
 				return err
 			}
 			log.V(0).Info("updated resource")
-
 		}
 	}
 	err = r.patchResource(ctx, desired, latest)
@@ -478,7 +477,7 @@ func (r *reconciler) getRegion(
 
 // NewReconciler returns a new reconciler object that
 func NewReconciler(
-	sc *ServiceController,
+	sc acktypes.ServiceController,
 	rmf acktypes.AWSResourceManagerFactory,
 	log logr.Logger,
 	cfg ackcfg.Config,

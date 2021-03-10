@@ -28,11 +28,11 @@ import (
 
 const appName = "aws-controller-k8s"
 
-// newSession returns a new session object. By default the returned session is
+// NewSession returns a new session object. By default the returned session is
 // created using pod IRSA environment variables. If assumeRoleARN is not empty,
 // NewSession will call STS::AssumeRole and use the returned credentials to create
 // the session.
-func (c *ServiceController) newSession(
+func (c *serviceController) NewSession(
 	region ackv1alpha1.AWSRegion,
 	endpointURL *string,
 	assumeRoleARN ackv1alpha1.AWSResourceName,
@@ -69,7 +69,7 @@ func (c *ServiceController) newSession(
 }
 
 // injectUserAgent will inject app specific user-agent into awsSDK
-func (c *ServiceController) injectUserAgent(
+func (c *serviceController) injectUserAgent(
 	handlers *request.Handlers,
 	groupVersionKind schema.GroupVersionKind,
 ) {
