@@ -15,6 +15,7 @@ package config
 
 import (
 	"errors"
+	"net/url"
 
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
@@ -29,6 +30,7 @@ const (
 	flagEnableDevLogging     = "enable-development-logging"
 	flagAWSAccountID         = "aws-account-id"
 	flagAWSRegion            = "aws-region"
+	flagAWSEndpointURL       = "aws-endpoint-url"
 	flagLogLevel             = "log-level"
 	flagResourceTags         = "resource-tags"
 )
@@ -41,6 +43,7 @@ type Config struct {
 	EnableDevelopmentLogging bool
 	AccountID                string
 	Region                   string
+	EndpointURL              string
 	LogLevel                 string
 	ResourceTags             []string
 }
@@ -80,6 +83,13 @@ func (cfg *Config) BindFlags() {
 		"The AWS Region in which the service controller will create its resources",
 	)
 	flag.StringVar(
+		&cfg.EndpointURL, flagAWSEndpointURL,
+		"",
+		"The AWS endpoint URL the service controller will use to create its resources. This is an optional" +
+			" flag that can be used to override the default behaviour of aws-sdk-go that constructs endpoint URLs" +
+			" automatically based on service and region",
+	)
+	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
 		"info",
 		"The log level. Default is info. We use logr interface which only supports info and debug level",
@@ -116,6 +126,14 @@ func (cfg *Config) Validate() error {
 	}
 	if cfg.Region == "" {
 		return errors.New("unable to start service controller as AWS region is nil. Please pass --aws-region flag")
+	}
+
+	if cfg.EndpointURL != "" {
+		endpoint, err := url.Parse(cfg.EndpointURL)
+		if err != nil || endpoint.Scheme != "https" && endpoint.Host != "" {
+			return errors.New("invalid service endpoint. Please refer to " +
+				"https://docs.aws.amazon.com/general/latest/gr/aws-service-information.html for more details")
+		}
 	}
 	return nil
 }

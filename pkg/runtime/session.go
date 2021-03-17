@@ -34,6 +34,7 @@ const appName = "aws-controller-k8s"
 // the session.
 func (c *ServiceController) newSession(
 	region ackv1alpha1.AWSRegion,
+	endpointURL *string,
 	assumeRoleARN ackv1alpha1.AWSResourceName,
 	groupVersionKind schema.GroupVersionKind,
 ) (*session.Session, error) {
@@ -41,6 +42,10 @@ func (c *ServiceController) newSession(
 		Region:              aws.String(string(region)),
 		STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
 	}
+	if endpointURL != nil {
+		awsCfg.Endpoint = endpointURL
+	}
+
 	sess, err := session.NewSession(&awsCfg)
 	if err != nil {
 		return nil, err
