@@ -36,9 +36,9 @@ type VersionInfo struct {
 	BuildDate string
 }
 
-// ServiceController wraps a number of `controller-runtime.Reconciler` that are
+// serviceController wraps a number of `controller-runtime.Reconciler` that are
 // related to a specific AWS service API.
-type ServiceController struct {
+type serviceController struct {
 	metaLock sync.RWMutex
 	// ServiceAlias is a string with the alias of the service API, e.g. "s3"
 	ServiceAlias string
@@ -64,23 +64,23 @@ type ServiceController struct {
 
 // GetReconcilers returns a slice of types.AWSResourceReconcilers associated
 // with this service controller
-func (c *ServiceController) GetReconcilers() []acktypes.AWSResourceReconciler {
+func (c *serviceController) GetReconcilers() []acktypes.AWSResourceReconciler {
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
 	return c.reconcilers
 }
 
 // WithLogger sets up the service controller with the supplied logger
-func (c *ServiceController) WithLogger(log logr.Logger) *ServiceController {
+func (c *serviceController) WithLogger(log logr.Logger) acktypes.ServiceController {
 	c.log = log
 	return c
 }
 
 // WithPrometheusRegistry registers all ACK service controller metrics with the
 // supplied prometheus Registry
-func (c *ServiceController) WithPrometheusRegistry(
+func (c *serviceController) WithPrometheusRegistry(
 	reg prometheus.Registerer,
-) *ServiceController {
+) acktypes.ServiceController {
 	if c.metrics == nil {
 		return c
 	}
@@ -92,9 +92,9 @@ func (c *ServiceController) WithPrometheusRegistry(
 
 // WithResourceManagerFactories sets the controller up to manage resources with
 // a set of supplied factories
-func (c *ServiceController) WithResourceManagerFactories(
+func (c *serviceController) WithResourceManagerFactories(
 	rmfs []acktypes.AWSResourceManagerFactory,
-) *ServiceController {
+) acktypes.ServiceController {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 
@@ -114,7 +114,7 @@ func (c *ServiceController) WithResourceManagerFactories(
 // BindControllerManager takes a `controller-runtime.Manager`, creates all the
 // AWSResourceReconcilers needed for the service and binds all of the
 // reconcilers within the service controller with that manager
-func (c *ServiceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
+func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 	for _, rmf := range c.rmFactories {
@@ -127,13 +127,13 @@ func (c *ServiceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	return nil
 }
 
-// NewServiceController returns a new ServiceController instance
+// NewServiceController returns a new serviceController instance
 func NewServiceController(
 	svcAlias string,
 	svcAPIGroup string,
 	versionInfo VersionInfo,
-) *ServiceController {
-	return &ServiceController{
+) acktypes.ServiceController {
+	return &serviceController{
 		ServiceAlias:    svcAlias,
 		ServiceAPIGroup: svcAPIGroup,
 		VersionInfo:     versionInfo,

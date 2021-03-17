@@ -43,15 +43,20 @@ type AWSResourceManager interface {
 	// service API, returning an AWSResource representing the newly-created
 	// resource
 	Create(context.Context, AWSResource) (AWSResource, error)
-	// Update attempts to mutate the supplied desired AWSResource in the backend AWS
-	// service API, returning an AWSResource representing the newly-mutated
-	// resource.
+	// Update attempts to mutate the supplied desired AWSResource in the
+	// backend AWS service API, returning an AWSResource representing the
+	// newly-mutated resource.
 	// Note for specialized logic implementers can check to see how the latest
 	// observed resource differs from the supplied desired state. The
-	// higher-level reonciler determines whether or not the desired differs
+	// higher-level reconciler determines whether or not the desired differs
 	// from the latest observed and decides whether to call the resource
 	// manager's Update method
-	Update(context.Context /* desired */, AWSResource /* latest */, AWSResource, *ackcompare.Reporter) (AWSResource, error)
+	Update(
+		context.Context,
+		AWSResource, /* desired */
+		AWSResource, /* latest */
+		*ackcompare.Delta,
+	) (AWSResource, error)
 
 	// Delete attempts to destroy the supplied AWSResource in the backend AWS
 	// service API.
