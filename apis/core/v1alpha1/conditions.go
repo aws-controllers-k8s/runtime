@@ -32,13 +32,12 @@ const (
 	//		- As a result of InvalidArgument in input yaml
 	//		- Resource server state is "create-failed"
 	ConditionTypeTerminal ConditionType = "ACK.Terminal"
-	// ConditionTypeNonTerminal indicates that the error may be resolved
+	// ConditionTypeRecoverable indicates that the error may be resolved
 	// without needing to update the custom resource spec and sync will continue.
-	// Any error not marked as Terminal will fall in this category.
 	// Examples include:
 	//		- ServiceUnavailable errors that are transient
 	//		- AccessDeniedException that needs correct credentials
-	ConditionTypeNonTerminal ConditionType = "ACK.NonTerminal"
+	ConditionTypeRecoverable ConditionType = "ACK.Recoverable"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service
