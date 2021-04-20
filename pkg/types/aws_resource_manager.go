@@ -82,9 +82,11 @@ type AWSResourceManagerFactory interface {
 		ackcfg.Config, // passed by-value to avoid mutation by consumers
 		logr.Logger,
 		*ackmetrics.Metrics,
-		AWSResourceReconciler,
+		Reconciler,
 		*session.Session,
 		ackv1alpha1.AWSAccountID,
 		ackv1alpha1.AWSRegion,
 	) (AWSResourceManager, error)
+	// IsAdoptable returns true if the resource is able to be adopted
+	IsAdoptable() bool
 }

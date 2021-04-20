@@ -30,6 +30,10 @@ type ServiceController interface {
 	// GetReconcilers returns a slice of types.AWSResourceReconcilers
 	// associated with this service controller
 	GetReconcilers() []AWSResourceReconciler
+	// GetResourceManagerFactories returns the map of resource manager
+	// factories, keyed by the GroupKind of the resource managed by the resource
+	// manager produced by that factory
+	GetResourceManagerFactories() map[string]AWSResourceManagerFactory
 
 	// WithLogger sets up the service controller with the supplied logger
 	WithLogger(logr.Logger) ServiceController

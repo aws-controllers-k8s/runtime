@@ -59,4 +59,7 @@ type AWSResourceDescriptor interface {
 	// the resource. This will allow the Kubernetes API server to delete the
 	// underlying CR.
 	MarkUnmanaged(AWSResource)
+	// MarkAdopted places descriptors on the custom resource that indicate the
+	// resource was not created from within ACK.
+	MarkAdopted(AWSResource)
 }

@@ -16,10 +16,7 @@ package types
 import (
 	"context"
 
-	"github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrlrt "sigs.k8s.io/controller-runtime"
-	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // AWSResourceReconciler is responsible for reconciling the state of a SINGLE
@@ -32,17 +29,11 @@ import (
 // AWSResourceReconciler object)s and sharing watch and informer queues across
 // those controllers.
 type AWSResourceReconciler interface {
-	ctrlreconcile.Reconciler
+	Reconciler
 	// GroupKind returns the
 	// sigs.k8s.io/apimachinery/pkg/apis/meta/v1.GroupKind containing the API
 	// group and kind reconciled by this reconciler
 	GroupKind() *metav1.GroupKind
-	// BindControllerManager sets up the AWSResourceReconciler with an instance
-	// of an upstream controller-runtime.Manager
-	BindControllerManager(ctrlrt.Manager) error
-	// SecretValueFromReference fetches the value of a Secret given a
-	// SecretKeyReference
-	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)
 	// Sync ensures that the supplied AWSResource's backing API resource
 	// matches the supplied desired state.
 	//

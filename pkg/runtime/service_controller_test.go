@@ -34,6 +34,7 @@ import (
 	k8sscheme "sigs.k8s.io/controller-runtime/pkg/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 
@@ -51,6 +52,7 @@ func init() {
 
 	_ = schemeBuilder.AddToScheme(scheme)
 	_ = clientgoscheme.AddToScheme(scheme)
+	_ = ackv1alpha1.AddToScheme(scheme)
 }
 
 type fakeBook struct{}

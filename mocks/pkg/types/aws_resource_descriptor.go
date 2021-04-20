@@ -80,6 +80,11 @@ func (_m *AWSResourceDescriptor) IsManaged(_a0 types.AWSResource) bool {
 	return r0
 }
 
+// MarkAdopted provides a mock function with given fields: _a0
+func (_m *AWSResourceDescriptor) MarkAdopted(_a0 types.AWSResource) {
+	_m.Called(_a0)
+}
+
 // MarkManaged provides a mock function with given fields: _a0
 func (_m *AWSResourceDescriptor) MarkManaged(_a0 types.AWSResource) {
 	_m.Called(_a0)
