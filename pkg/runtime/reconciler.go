@@ -237,6 +237,14 @@ func (r *resourceReconciler) Sync(
 			"arn", latest.Identifiers().ARN(),
 		)
 	} else {
+		// Ensure that adopted resources are marked as managed during the first
+		// update cycle
+		if isAdopted && !r.rd.IsManaged(desired) {
+			if err = r.setResourceManaged(ctx, desired); err != nil {
+				return err
+			}
+		}
+
 		// Check to see if the latest observed state already matches the
 		// desired state and if not, update the resource
 		delta := r.rd.Delta(desired, latest)
