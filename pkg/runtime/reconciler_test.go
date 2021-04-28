@@ -89,6 +89,7 @@ func TestReconcilerUpdate(t *testing.T) {
 		delta,
 	)
 	rd.On("UpdateCRStatus", latest).Return(false, nil)
+	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
