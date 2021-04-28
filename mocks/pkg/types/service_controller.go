@@ -56,6 +56,22 @@ func (_m *ServiceController) GetReconcilers() []types.AWSResourceReconciler {
 	return r0
 }
 
+// GetResourceManagerFactories provides a mock function with given fields:
+func (_m *ServiceController) GetResourceManagerFactories() map[string]types.AWSResourceManagerFactory {
+	ret := _m.Called()
+
+	var r0 map[string]types.AWSResourceManagerFactory
+	if rf, ok := ret.Get(0).(func() map[string]types.AWSResourceManagerFactory); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]types.AWSResourceManagerFactory)
+		}
+	}
+
+	return r0
+}
+
 // NewSession provides a mock function with given fields: _a0, _a1, _a2, _a3
 func (_m *ServiceController) NewSession(_a0 v1alpha1.AWSRegion, _a1 *string, _a2 v1alpha1.AWSResourceName, _a3 schema.GroupVersionKind) (*session.Session, error) {
 	ret := _m.Called(_a0, _a1, _a2, _a3)
