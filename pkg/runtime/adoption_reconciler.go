@@ -30,6 +30,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -85,6 +86,18 @@ func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
 	}
 
 	gk := r.getTargetResourceGroupKind(res)
+
+	// Check if the target API group matches with the controller
+	var controllerRMF acktypes.AWSResourceManagerFactory
+	for _, v := range r.sc.GetResourceManagerFactories() {
+		controllerRMF = v
+		break
+	}
+	if gk.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
+		ackrtlog.DebugAdoptedResource(r.log, res, "target resource API group is not of this service. no-op")
+		return nil
+	}
+
 	// Look up the rmf for the given target resource GVK
 	rmf, ok := (r.sc.GetResourceManagerFactories())[gk.String()]
 	if !ok {
@@ -111,8 +124,7 @@ func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
 		return err
 	}
 
-	// TODO(RedbackThomson): Better logging for adopted resources
-	r.log.Info("starting adoption reconciliation")
+	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
 		r.cfg, r.log, r.metrics, r, sess, acctID, region,
@@ -460,7 +472,7 @@ func NewAdoptionReconciler(
 	return &adoptionReconciler{
 		reconciler: reconciler{
 			sc:      sc,
-			log:     log.WithName("ackrt"),
+			log:     log.WithName("adopted-reconciler"),
 			cfg:     cfg,
 			metrics: metrics,
 		},
