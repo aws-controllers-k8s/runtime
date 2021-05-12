@@ -56,7 +56,7 @@ type NamespaceCache struct {
 
 	log logr.Logger
 	// Provide a namespace specifically to listen to. 
-	// Provide empty string to listen to all namespaces.
+	// Provide empty string to listen to all namespaces except kube-system and kube-public.
 	listenNamespace string
 
 	// Namespace informer
@@ -88,15 +88,10 @@ func isListenNamespace(raw interface{}, listenNamespace string) bool {
 		return false
 	} 
 
-	if listenNamespace == object.ObjectMeta.Name {
-		return true
-	} else if object.ObjectMeta.Name == "kube-system" || object.ObjectMeta.Name == "kube-public" {
-		return false
-	} else if listenNamespace == "" {
-		return true
+	if listenNamespace != "" {
+		return listenNamespace == object.ObjectMeta.Name
 	}
-
-	return false 
+	return object.ObjectMeta.Name != "kube-system" && object.ObjectMeta.Name != "kube-public"
 }
 
 // Run adds event handler functions to the SharedInformer and
