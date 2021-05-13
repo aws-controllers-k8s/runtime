@@ -13,13 +13,37 @@
 
 package compare
 
+import (
+	"reflect"
+)
+
 // HasNilDifference returns true if the supplied subjects' nilness is
 // different
 func HasNilDifference(a, b interface{}) bool {
-	if a == nil || b == nil {
-		if (a == nil && b != nil) || (a != nil && b == nil) {
+	if isNil(a) || isNil(b) {
+		if (isNil(a) && isNotNil(b)) || (isNil(b) && isNotNil(a)) {
 			return true
 		}
 	}
 	return false
+}
+
+// isNil checks the passed interface argument for Nil value.
+// For interfaces, only 'i==nil' check is not sufficient.
+// https://tour.golang.org/methods/12
+// More details: https://mangatmodi.medium.com/go-check-nil-interface-the-right-way-d142776edef1
+func isNil(i interface{}) bool {
+	if i == nil {
+		return true
+	}
+
+	switch reflect.TypeOf(i).Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Array, reflect.Chan, reflect.Slice:
+		return reflect.ValueOf(i).IsNil()
+	}
+	return false
+}
+
+func isNotNil(i interface{}) bool {
+	return !isNil(i)
 }
