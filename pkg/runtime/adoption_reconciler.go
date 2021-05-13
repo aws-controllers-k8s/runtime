@@ -58,7 +58,7 @@ func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		return err
 	}
 	r.kc = mgr.GetClient()
-	r.cache = ackrtcache.New(clientset, r.log, r.cfg.ListenNamespace)
+	r.cache = ackrtcache.New(clientset, r.log, r.cfg.WatchNamespace)
 	r.cache.Run()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,

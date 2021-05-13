@@ -33,7 +33,7 @@ const (
 	flagAWSEndpointURL       = "aws-endpoint-url"
 	flagLogLevel             = "log-level"
 	flagResourceTags         = "resource-tags"
-	flagListenNamespace      = "listen-namespace"
+	flagWatchNamespace       = "watch-namespace"
 )
 
 // Config contains configuration otpions for ACK service controllers
@@ -47,7 +47,7 @@ type Config struct {
 	EndpointURL              string
 	LogLevel                 string
 	ResourceTags             []string
-	ListenNamespace          string
+	WatchNamespace           string
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -102,9 +102,9 @@ func (cfg *Config) BindFlags() {
 		"Configures the ACK service controller to always set key/value pairs tags on resources that it manages.",
 	)
 	flag.StringVar(
-		&cfg.ListenNamespace, flagListenNamespace,
+		&cfg.WatchNamespace , flagWatchNamespace,
 		"",
-		"Specific namespace the service controller will listen to for object creation from CRD. "+ 
+		"Specific namespace the service controller will watch for object creation from CRD. "+ 
 			" By default it will listen to all namespaces",
 	)
 }

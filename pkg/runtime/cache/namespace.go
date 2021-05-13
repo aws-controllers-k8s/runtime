@@ -57,7 +57,7 @@ type NamespaceCache struct {
 	log logr.Logger
 	// Provide a namespace specifically to listen to. 
 	// Provide empty string to listen to all namespaces except kube-system and kube-public.
-	listenNamespace string
+	watchNamespace  string
 
 	// Namespace informer
 	informer k8scache.SharedInformer
@@ -67,7 +67,7 @@ type NamespaceCache struct {
 
 // NewNamespaceCache makes a new NamespaceCache from a
 // kubernetes.Interface and a logr.Logger
-func NewNamespaceCache(clientset kubernetes.Interface, log logr.Logger, listenNamespace string) *NamespaceCache {
+func NewNamespaceCache(clientset kubernetes.Interface, log logr.Logger, watchNamespace string) *NamespaceCache {
 	sharedInformer := informersv1.NewNamespaceInformer(
 		clientset,
 		informerResyncPeriod,
@@ -76,20 +76,20 @@ func NewNamespaceCache(clientset kubernetes.Interface, log logr.Logger, listenNa
 	return &NamespaceCache{
 		informer:       sharedInformer,
 		log:            log.WithName("cache.namespace"),
-		listenNamespace: listenNamespace,
+		watchNamespace: watchNamespace,
 		namespaceInfos: make(map[string]*namespaceInfo),
 	}
 }
 
 // Check if the provided namespace should be listened to or not 
-func isListenNamespace(raw interface{}, listenNamespace string) bool {
+func isWatchNamespace(raw interface{}, watchNamespace string) bool {
 	object, ok := raw.(*corev1.Namespace)
 	if !ok {
 		return false
 	} 
 
-	if listenNamespace != "" {
-		return listenNamespace == object.ObjectMeta.Name
+	if watchNamespace != "" {
+		return watchNamespace == object.ObjectMeta.Name
 	}
 	return object.ObjectMeta.Name != "kube-system" && object.ObjectMeta.Name != "kube-public"
 }
@@ -99,21 +99,21 @@ func isListenNamespace(raw interface{}, listenNamespace string) bool {
 func (c *NamespaceCache) Run(stopCh <-chan struct{}) {
 	c.informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			if isListenNamespace(obj, c.listenNamespace) {
+			if isWatchNamespace(obj, c.watchNamespace) {
 				ns := obj.(*corev1.Namespace)
 				c.setNamespaceInfoFromK8sObject(ns)
 				c.log.V(1).Info("created namespace", "name", ns.ObjectMeta.Name)
 			}
 		},
 		UpdateFunc: func(orig, desired interface{}) {
-			if isListenNamespace(desired, c.listenNamespace) {
+			if isWatchNamespace(desired, c.watchNamespace) {
 				ns := desired.(*corev1.Namespace)
 				c.setNamespaceInfoFromK8sObject(ns)
 				c.log.V(1).Info("updated namespace", "name", ns.ObjectMeta.Name)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			if isListenNamespace(obj, c.listenNamespace) {
+			if isWatchNamespace(obj, c.watchNamespace) {
 				ns := obj.(*corev1.Namespace)
 				c.deleteNamespaceInfo(ns.ObjectMeta.Name)
 				c.log.V(1).Info("deleted namespace", "name", ns.ObjectMeta.Name)

@@ -58,10 +58,10 @@ type Caches struct {
 
 // New creates a new Caches object from a kubernetes.Interface and
 // a logr.Logger
-func New(clientset kubernetes.Interface, log logr.Logger, listenNamespace string) Caches {
+func New(clientset kubernetes.Interface, log logr.Logger, watchNamespace  string) Caches {
 	return Caches{
 		Accounts:   NewAccountCache(clientset, log),
-		Namespaces: NewNamespaceCache(clientset, log, listenNamespace),
+		Namespaces: NewNamespaceCache(clientset, log, watchNamespace),
 	}
 }
 
