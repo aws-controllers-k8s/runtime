@@ -49,7 +49,7 @@ func TestNamespaceCache(t *testing.T) {
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 
 	// initlizing account cache
-	namespaceCache := ackrtcache.NewNamespaceCache(k8sClient, fakeLogger)
+	namespaceCache := ackrtcache.NewNamespaceCache(k8sClient, fakeLogger, "")
 	stopCh := make(chan struct{})
 
 	namespaceCache.Run(stopCh)

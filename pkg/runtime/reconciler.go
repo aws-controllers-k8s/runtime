@@ -79,7 +79,7 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		return err
 	}
 	r.kc = mgr.GetClient()
-	r.cache = ackrtcache.New(clientset, r.log)
+	r.cache = ackrtcache.New(clientset, r.log, r.cfg.WatchNamespace)
 	r.cache.Run()
 	rd := r.rmf.ResourceDescriptor()
 	return ctrlrt.NewControllerManagedBy(
