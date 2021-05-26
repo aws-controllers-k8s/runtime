@@ -13,12 +13,30 @@
 
 package compare
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Path provides a JSONPath-like struct and field-member "route" to a
-// particular field within a compared struct
+// particular field within a compared struct. Path implements json.Marshaler
+// interface.
 type Path struct {
 	parts []string
+}
+
+// MarshalJSON returns the JSON encoding of a Path object.
+func (p Path) MarshalJSON() ([]byte, error) {
+	// Since json.Marshall doesn't encode unexported struct fields we have to
+	// copy the Path instance into a new struct object with exported fields.
+	// See https://github.com/aws-controllers-k8s/community/issues/772
+	return json.Marshal(
+		struct {
+			Parts []string
+		}{
+			p.parts,
+		},
+	)
 }
 
 // Push adds a new part to the Path.
