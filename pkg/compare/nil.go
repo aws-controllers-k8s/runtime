@@ -20,19 +20,19 @@ import (
 // HasNilDifference returns true if the supplied subjects' nilness is
 // different
 func HasNilDifference(a, b interface{}) bool {
-	if isNil(a) || isNil(b) {
-		if (isNil(a) && isNotNil(b)) || (isNil(b) && isNotNil(a)) {
+	if IsNil(a) || IsNil(b) {
+		if (IsNil(a) && IsNotNil(b)) || (IsNil(b) && IsNotNil(a)) {
 			return true
 		}
 	}
 	return false
 }
 
-// isNil checks the passed interface argument for Nil value.
+// IsNil checks the passed interface argument for Nil value.
 // For interfaces, only 'i==nil' check is not sufficient.
 // https://tour.golang.org/methods/12
 // More details: https://mangatmodi.medium.com/go-check-nil-interface-the-right-way-d142776edef1
-func isNil(i interface{}) bool {
+func IsNil(i interface{}) bool {
 	if i == nil {
 		return true
 	}
@@ -44,6 +44,6 @@ func isNil(i interface{}) bool {
 	return false
 }
 
-func isNotNil(i interface{}) bool {
-	return !isNil(i)
+func IsNotNil(i interface{}) bool {
+	return !IsNil(i)
 }
