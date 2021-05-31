@@ -41,6 +41,10 @@ const (
 	//		- ServiceUnavailable errors that are transient
 	//		- AccessDeniedException that needs correct credentials
 	ConditionTypeRecoverable ConditionType = "ACK.Recoverable"
+	// ConditionTypeAdvisory indicates any advisory info that may be present in the resource.
+	// Examples include
+	//      - Modifying an immutable field after it was created
+	ConditionTypeAdvisory ConditionType = "ACK.Advisory"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service
