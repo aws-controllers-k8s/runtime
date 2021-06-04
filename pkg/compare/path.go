@@ -51,14 +51,28 @@ func (p Path) Pop() {
 	}
 }
 
-// Contains returns true if the supplied string appears within the Path
+//	Contains returns true if the supplied string, delimited on ".", matches
+//	p.parts up to the length of the supplied string.
+//		e.g. if the Path p represents "A.B":
+//			subject "A" -> true
+//			subject "A.B" -> true
+//			subject "A.B.C" -> false
+//			subject "B" -> false
+//			subject "A.C" -> false
 func (p Path) Contains(subject string) bool {
-	for _, p := range p.parts {
-		if p == subject {
-			return true
+	subjectSplit := strings.Split(subject, ".")
+
+	if len(subjectSplit) > len(p.parts) {
+		return false
+	}
+
+	for i, s := range subjectSplit {
+		if p.parts[i] != s {
+			return false
 		}
 	}
-	return false
+
+	return true
 }
 
 // NewPath returns a new Path struct pointer from a dotted-notation string,
