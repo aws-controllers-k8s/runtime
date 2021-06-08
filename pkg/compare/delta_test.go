@@ -53,11 +53,14 @@ func TestDifferentAt(t *testing.T) {
 	d = compare.NewDelta()
 	d.Add("Bar", a.Bar, b.Bar)
 	require.True(d.DifferentAt("Bar"))
-	require.False(d.DifferentAt("Baz"))
+	require.False(d.DifferentAt("Baz")) // diff exists but was not added to Delta
 
 	d = compare.NewDelta()
 	d.Add("Baz.Y", a.Baz.Y, b.Baz.Y)
 	require.True(d.DifferentAt("Baz"))
-	require.True(d.DifferentAt("Y"))
-	require.False(d.DifferentAt("Bar"))
+	require.True(d.DifferentAt("Baz.Y"))
+	require.False(d.DifferentAt("Y")) // there is no diff for top-level field "Y"
+	require.False(d.DifferentAt("Bar")) // diff exists but it was not added to Delta
+	require.False(d.DifferentAt("Baz.Y.Z")) // subject length exceeds length of diff Path
+	require.False(d.DifferentAt("Baz.Z"))  // matches Path top-level field but not sub-field
 }
