@@ -21,6 +21,11 @@ const (
 	DefaultRequeueAfterDuration time.Duration = 30 * time.Second
 )
 
+// GetDurationInSeconds converts an integer into a time duration in seconds
+func GetDurationInSeconds(duration int) time.Duration {
+	return time.Duration(duration) * time.Second
+}
+
 // Needed returns a new RequeueNeeded to instruct the ACK runtime to requeue
 // the processing item without been logged as error.
 func Needed(err error) *RequeueNeeded {

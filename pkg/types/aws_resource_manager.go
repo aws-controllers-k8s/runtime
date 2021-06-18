@@ -89,4 +89,7 @@ type AWSResourceManagerFactory interface {
 	) (AWSResourceManager, error)
 	// IsAdoptable returns true if the resource is able to be adopted
 	IsAdoptable() bool
+	// GetRequeueOnSuccessSeconds returns true if the resource should be requeued after specified seconds
+	// Default is false which means resource will not be requeued after success.
+	GetRequeueOnSuccessSeconds() (int, bool)
 }

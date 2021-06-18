@@ -49,6 +49,11 @@ var (
 	// after some wait time
 	TemporaryOutOfSync = fmt.Errorf(
 		"temporary out of sync, reconcile after some time")
+	// TemporaryOutOfSync is to indicate the error isn't really an error
+	// but more of a marker that the status check will be performed
+	// after some wait time
+	RequeueOnSuccess = fmt.Errorf(
+		"resource creation successful but reconcile after some time")
 	// Terminal is returned with resource is in Terminal Condition
 	Terminal = fmt.Errorf(
 		"resource is in terminal condition")

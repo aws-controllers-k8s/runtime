@@ -279,15 +279,20 @@ func (r *resourceReconciler) Sync(
 		return err
 	}
 	for _, condition := range latest.Conditions() {
-		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced &&
-			condition.Status != corev1.ConditionTrue {
-			rlog.Debug(
-				"requeueing resource after finding resource synced condition false",
-			)
-			return requeue.NeededAfter(
-				ackerr.TemporaryOutOfSync,
-				requeue.DefaultRequeueAfterDuration,
-			)
+		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced {
+			if condition.Status == corev1.ConditionTrue {
+				duration, status := r.rmf.GetRequeueOnSuccessSeconds()
+				if status {
+					return requeue.NeededAfter(
+						ackerr.RequeueOnSuccess, requeue.GetDurationInSeconds(duration))
+				}
+			} else {
+				rlog.Debug(
+					"requeueing resource after finding resource synced condition false",
+				)
+				return requeue.NeededAfter(
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)				
+			}
 		}
 	}
 	return nil
