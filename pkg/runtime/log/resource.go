@@ -14,11 +14,105 @@
 package log
 
 import (
+	"strings"
+
 	"github.com/go-logr/logr"
 
 	"github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
+
+// ResourceLogger is a wrapper around a logr.Logger that writes log messages
+// about resources involved in a controller loop. It implements
+// `pkg/types.Logger`
+type ResourceLogger struct {
+	log        logr.Logger
+	res        acktypes.AWSResource
+	blockDepth int
+}
+
+// WithValues adapts the internal logger with a set of additional values
+func (rl *ResourceLogger) WithValues(
+	values ...interface{},
+) {
+	rl.log = rl.log.WithValues(values...)
+}
+
+// Debug writes a supplied log message about a resource that includes a set of
+// standard log values for the resource's kind, namespace, name, etc
+func (rl *ResourceLogger) Debug(
+	msg string,
+	additionalValues ...interface{},
+) {
+	AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
+}
+
+// Info writes a supplied log message about a resource that includes a
+// set of standard log values for the resource's kind, namespace, name, etc
+func (rl *ResourceLogger) Info(
+	msg string,
+	additionalValues ...interface{},
+) {
+	AdaptResource(rl.log, rl.res, additionalValues...).V(0).Info(msg)
+}
+
+// Enter logs an entry to a function or code block
+func (rl *ResourceLogger) Enter(
+	name string, // name of the function or code block we're entering
+	additionalValues ...interface{},
+) {
+	if rl.log.V(1).Enabled() {
+		rl.blockDepth++
+		depth := strings.Repeat(">", rl.blockDepth)
+		msg := depth + " " + name
+		AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
+	}
+}
+
+// Exit logs an exit from a function or code block
+func (rl *ResourceLogger) Exit(
+	name string, // name of the function or code block we're exiting
+	err error,
+	additionalValues ...interface{},
+) {
+	if rl.log.V(1).Enabled() {
+		depth := strings.Repeat("<", rl.blockDepth)
+		msg := depth + " " + name
+		if err != nil {
+			additionalValues = append(additionalValues, "error")
+			additionalValues = append(additionalValues, err)
+		}
+		AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
+		rl.blockDepth--
+	}
+}
+
+// Trace logs an entry to a function or code block and returns a functor
+// that can be called to log the exit of the function or code block
+func (rl *ResourceLogger) Trace(
+	name string,
+	additionalValues ...interface{},
+) acktypes.TraceExiter {
+	rl.Enter(name, additionalValues...)
+	f := func(err error, args ...interface{}) {
+		rl.Exit(name, err, args...)
+	}
+	return f
+}
+
+// NewResourceLogger returns a resourceLogger that can write log messages about
+// a resource.
+func NewResourceLogger(
+	log logr.Logger,
+	res acktypes.AWSResource,
+	additionalValues ...interface{},
+) *ResourceLogger {
+	return &ResourceLogger{
+		log:        AdaptResource(log, res, additionalValues...),
+		res:        res,
+		blockDepth: 0,
+	}
+}
 
 // AdaptResource returns a logger with log values set for the resource's kind,
 // namespace, name, etc

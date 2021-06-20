@@ -130,18 +130,14 @@ func (r *reconciler) SecretValueFromReference(
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
 // a CR CRUD request
 func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error) {
-	return r.handleReconcileError(r.reconcile(req))
-}
-
-func (r *resourceReconciler) reconcile(req ctrlrt.Request) error {
 	ctx := context.Background()
 	res, err := r.getAWSResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
-			return nil
+			return ctrlrt.Result{}, nil
 		}
-		return err
+		return ctrlrt.Result{}, err
 	}
 
 	acctID := r.getOwnerAccountID(res)
@@ -152,23 +148,31 @@ func (r *resourceReconciler) reconcile(req ctrlrt.Request) error {
 		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {
-		return err
+		return ctrlrt.Result{}, err
 	}
 
-	ackrtlog.DebugResource(
-		r.log, res, "starting reconciliation",
+	rlog := ackrtlog.NewResourceLogger(
+		r.log, res,
 		"account", acctID,
 		"role", roleARN,
 		"region", region,
 	)
+	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 
 	rm, err := r.rmf.ManagerFor(
 		r.cfg, r.log, r.metrics, r, sess, acctID, region,
 	)
 	if err != nil {
-		return err
+		return ctrlrt.Result{}, err
 	}
+	return r.handleReconcileError(ctx, r.reconcile(ctx, rm, res))
+}
 
+func (r *resourceReconciler) reconcile(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	res acktypes.AWSResource,
+) error {
 	if res.IsBeingDeleted() {
 		return r.cleanup(ctx, rm, res)
 	}
@@ -183,19 +187,23 @@ func (r *resourceReconciler) Sync(
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
 ) error {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.Sync")
+	defer exit(err)
+
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
 	isAdopted := IsAdopted(desired)
-	log := ackrtlog.AdaptResource(
-		r.log, desired,
-		"is_adopted", isAdopted,
-	)
+	rlog.WithValues("is_adopted", isAdopted)
 
 	// TODO(jaypipes): Validate all dependent resources. The AWSResource
 	// interface needs to get some methods that return schema relationships,
 	// first though
 
-	latest, err := rm.ReadOne(ctx, desired)
+	rlog.Enter("rm.ReadOne")
+	latest, err = rm.ReadOne(ctx, desired)
+	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
 			if latest != nil {
@@ -220,7 +228,9 @@ func (r *resourceReconciler) Sync(
 			return err
 		}
 
+		rlog.Enter("rm.Create")
 		latest, err = rm.Create(ctx, desired)
+		rlog.Exit("rm.Create", err)
 		if err != nil {
 			if latest != nil {
 				// this indicates, that even though Create failed
@@ -232,10 +242,7 @@ func (r *resourceReconciler) Sync(
 			}
 			return err
 		}
-		log.V(0).Info(
-			"created new resource",
-			"arn", latest.Identifiers().ARN(),
-		)
+		rlog.Info("created new resource")
 	} else {
 		// Ensure the resource is always managed (adopted resources apply)
 		if err = r.setResourceManaged(ctx, desired); err != nil {
@@ -246,12 +253,13 @@ func (r *resourceReconciler) Sync(
 		// desired state and if not, update the resource
 		delta := r.rd.Delta(desired, latest)
 		if delta.DifferentAt("Spec") {
-			log.V(1).Info(
+			rlog.Info(
 				"desired resource state has changed",
 				"diff", delta.Differences,
-				"arn", latest.Identifiers().ARN(),
 			)
+			rlog.Enter("rm.Update")
 			latest, err = rm.Update(ctx, desired, latest, delta)
+			rlog.Exit("rm.Update", err, "latest", latest)
 			if err != nil {
 				if latest != nil {
 					// this indicates, that even though update failed
@@ -263,7 +271,7 @@ func (r *resourceReconciler) Sync(
 				}
 				return err
 			}
-			log.V(0).Info("updated resource")
+			rlog.Info("updated resource")
 		}
 	}
 	err = r.patchResource(ctx, desired, latest)
@@ -273,8 +281,13 @@ func (r *resourceReconciler) Sync(
 	for _, condition := range latest.Conditions() {
 		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced &&
 			condition.Status != corev1.ConditionTrue {
+			rlog.Debug(
+				"requeueing resource after finding resource synced condition false",
+			)
 			return requeue.NeededAfter(
-				ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
+				ackerr.TemporaryOutOfSync,
+				requeue.DefaultRequeueAfterDuration,
+			)
 		}
 	}
 	return nil
@@ -287,6 +300,11 @@ func (r *resourceReconciler) patchResource(
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 ) error {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.patchResource")
+	defer exit(err)
+
 	changedStatus, err := r.rd.UpdateCRStatus(latest)
 	if err != nil {
 		return err
@@ -294,15 +312,17 @@ func (r *resourceReconciler) patchResource(
 	if !changedStatus {
 		return nil
 	}
+	rlog.Enter("kc.Patch (status)")
 	err = r.kc.Status().Patch(
 		ctx,
 		latest.RuntimeObject().DeepCopyObject(),
 		client.MergeFrom(desired.RuntimeObject()),
 	)
+	rlog.Exit("kc.Patch (status)", err)
 	if err != nil {
 		return err
 	}
-	ackrtlog.DebugResource(r.log, latest, "patched resource")
+	rlog.Debug("patched resource status", "latest", latest)
 	return nil
 }
 
@@ -316,23 +336,36 @@ func (r *resourceReconciler) cleanup(
 	// TODO(jaypipes): Handle all dependent resources. The AWSResource
 	// interface needs to get some methods that return schema relationships,
 	// first though
-	observed, err := rm.ReadOne(ctx, current)
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.cleanup")
+	defer exit(err)
+
+	rlog.Enter("rm.ReadOne")
+	latest, err := rm.ReadOne(ctx, current)
+	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err == ackerr.NotFound {
 			// If the aws resource is not found, remove finalizer
-			return r.setResourceUnmanaged(ctx, current)
+			return r.setResourceUnmanaged(ctx, latest)
 		}
 		return err
 	}
-	if err = rm.Delete(ctx, observed); err != nil {
+	rlog.Enter("rm.Delete")
+	err = rm.Delete(ctx, latest)
+	rlog.Exit("rm.Delete", err)
+	if err != nil {
 		return err
 	}
-	ackrtlog.InfoResource(r.log, current, "deleted resource")
 
 	// Now that external AWS service resources have been appropriately cleaned
 	// up, we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
-	return r.setResourceUnmanaged(ctx, observed)
+	if err = r.setResourceUnmanaged(ctx, latest); err != nil {
+		return err
+	}
+	rlog.Info("deleted resource")
+	return nil
 }
 
 // setResourceManaged marks the underlying CR in the supplied AWSResource with
@@ -342,20 +375,27 @@ func (r *resourceReconciler) setResourceManaged(
 	ctx context.Context,
 	res acktypes.AWSResource,
 ) error {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.setResourceManaged")
+	defer exit(err)
+
 	if r.rd.IsManaged(res) {
 		return nil
 	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkManaged(res)
-	err := r.kc.Patch(
+	rlog.Enter("kc.Patch (all)")
+	err = r.kc.Patch(
 		ctx,
 		res.RuntimeObject(),
 		client.MergeFrom(orig),
 	)
+	rlog.Exit("kc.Patch (all)", err)
 	if err != nil {
 		return err
 	}
-	ackrtlog.DebugResource(r.log, res, "marked resource as managed")
+	rlog.Debug("marked resource as managed")
 	return nil
 }
 
@@ -366,20 +406,27 @@ func (r *resourceReconciler) setResourceUnmanaged(
 	ctx context.Context,
 	res acktypes.AWSResource,
 ) error {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.setResourceUnmanaged")
+	defer exit(err)
+
 	if !r.rd.IsManaged(res) {
 		return nil
 	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkUnmanaged(res)
-	err := r.kc.Patch(
+	rlog.Enter("kc.Patch (all)")
+	err = r.kc.Patch(
 		ctx,
 		res.RuntimeObject(),
 		client.MergeFrom(orig),
 	)
+	rlog.Exit("kc.Patch (all)", err)
 	if err != nil {
 		return err
 	}
-	ackrtlog.DebugResource(r.log, res, "removed resource from management")
+	rlog.Debug("removed resource from management")
 	return nil
 }
 
@@ -398,15 +445,19 @@ func (r *resourceReconciler) getAWSResource(
 
 // handleReconcileError will handle errors from reconcile handlers, which
 // respects runtime errors.
-func (r *resourceReconciler) handleReconcileError(err error) (ctrlrt.Result, error) {
+func (r *resourceReconciler) handleReconcileError(
+	ctx context.Context,
+	err error,
+) (ctrlrt.Result, error) {
 	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
 	}
+	rlog := ackrtlog.FromContext(ctx)
 
 	var requeueNeededAfter *requeue.RequeueNeededAfter
 	if errors.As(err, &requeueNeededAfter) {
 		after := requeueNeededAfter.Duration()
-		r.log.V(1).Info(
+		rlog.Debug(
 			"requeue needed after error",
 			"error", requeueNeededAfter.Unwrap(),
 			"after", after,
@@ -416,7 +467,7 @@ func (r *resourceReconciler) handleReconcileError(err error) (ctrlrt.Result, err
 
 	var requeueNeeded *requeue.RequeueNeeded
 	if errors.As(err, &requeueNeeded) {
-		r.log.V(1).Info(
+		rlog.Debug(
 			"requeue needed error",
 			"error", requeueNeeded.Unwrap(),
 		)
