@@ -32,12 +32,11 @@ type RuntimeMetaObject interface {
 // AWSResource represents a custom resource object in the Kubernetes API that
 // corresponds to a resource in an AWS service API.
 type AWSResource interface {
+	ConditionManager
 	// Identifiers returns an AWSResourceIdentifiers object containing various
 	// identifying information, including the AWS account ID that owns the
 	// resource, the resource's AWS Resource Name (ARN)
 	Identifiers() AWSResourceIdentifiers
-	// Conditions returns the ACK Conditions collection for the AWSResource
-	Conditions() []*ackv1alpha1.Condition
 	// IsBeingDeleted returns true if the Kubernetes resource has a non-zero
 	// deletion timestamp
 	IsBeingDeleted() bool

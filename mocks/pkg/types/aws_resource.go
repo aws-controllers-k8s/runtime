@@ -80,6 +80,11 @@ func (_m *AWSResource) MetaObject() v1.Object {
 	return r0
 }
 
+// ReplaceConditions provides a mock function with given fields: _a0
+func (_m *AWSResource) ReplaceConditions(_a0 []*v1alpha1.Condition) {
+	_m.Called(_a0)
+}
+
 // RuntimeMetaObject provides a mock function with given fields:
 func (_m *AWSResource) RuntimeMetaObject() types.RuntimeMetaObject {
 	ret := _m.Called()
