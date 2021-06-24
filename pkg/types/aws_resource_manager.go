@@ -70,6 +70,7 @@ type AWSResourceManager interface {
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
 // manage AWS resources for a particular AWS account
+// TODO(jaypipes): Move AWSResourceManagerFactory into its own file
 type AWSResourceManagerFactory interface {
 	// ResourceDescriptor returns an AWSResourceDescriptor that can be used by
 	// the upstream controller-runtime to introspect the CRs that the resource
@@ -89,4 +90,7 @@ type AWSResourceManagerFactory interface {
 	) (AWSResourceManager, error)
 	// IsAdoptable returns true if the resource is able to be adopted
 	IsAdoptable() bool
+	// RequeueOnSuccessSeconds returns true if the resource should be requeued after specified seconds
+	// Default is false which means resource will not be requeued after success.
+	RequeueOnSuccessSeconds() int
 }

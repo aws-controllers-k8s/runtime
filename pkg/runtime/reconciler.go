@@ -15,7 +15,8 @@ package runtime
 
 import (
 	"context"
-
+	"time"
+	
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -279,15 +280,21 @@ func (r *resourceReconciler) Sync(
 		return err
 	}
 	for _, condition := range latest.Conditions() {
-		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced &&
-			condition.Status != corev1.ConditionTrue {
-			rlog.Debug(
-				"requeueing resource after finding resource synced condition false",
-			)
-			return requeue.NeededAfter(
-				ackerr.TemporaryOutOfSync,
-				requeue.DefaultRequeueAfterDuration,
-			)
+		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced {
+			if condition.Status == corev1.ConditionTrue {
+				if duration := r.rmf.RequeueOnSuccessSeconds(); duration > 0 {
+					rlog.Debug(
+						"requeueing resource after resource synced condition true",
+					)
+					return requeue.NeededAfter(nil, time.Duration(duration)*time.Second)
+				}
+			} else {
+				rlog.Debug(
+					"requeueing resource after finding resource synced condition false",
+				)
+				return requeue.NeededAfter(
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)				
+			}
 		}
 	}
 	return nil
