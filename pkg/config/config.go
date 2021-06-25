@@ -34,6 +34,8 @@ const (
 	flagLogLevel             = "log-level"
 	flagResourceTags         = "resource-tags"
 	flagWatchNamespace       = "watch-namespace"
+	flagEnableWebhookServer  = "enable-webhook-server"
+	flagWebhookServerAddr    = "webhook-server-addr"
 )
 
 // Config contains configuration otpions for ACK service controllers
@@ -48,6 +50,8 @@ type Config struct {
 	LogLevel                 string
 	ResourceTags             []string
 	WatchNamespace           string
+	EnableWebhookServer      bool
+	WebhookServerAddr        string
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -61,6 +65,16 @@ func (cfg *Config) BindFlags() {
 		&cfg.MetricsAddr, flagMetricAddr,
 		"0.0.0.0:8080",
 		"The address the metric endpoint binds to.",
+	)
+	flag.BoolVar(
+		&cfg.EnableWebhookServer, flagEnableWebhookServer,
+		false,
+		"Enable webhook server for controller manager. ",
+	)
+	flag.StringVar(
+		&cfg.WebhookServerAddr, flagWebhookServerAddr,
+		"0.0.0.0:443",
+		"The address the webhook endpoint binds to.",
 	)
 	flag.BoolVar(
 		&cfg.EnableLeaderElection, flagEnableLeaderElection,
@@ -87,8 +101,8 @@ func (cfg *Config) BindFlags() {
 	flag.StringVar(
 		&cfg.EndpointURL, flagAWSEndpointURL,
 		"",
-		"The AWS endpoint URL the service controller will use to create its resources. This is an optional" +
-			" flag that can be used to override the default behaviour of aws-sdk-go that constructs endpoint URLs" +
+		"The AWS endpoint URL the service controller will use to create its resources. This is an optional"+
+			" flag that can be used to override the default behaviour of aws-sdk-go that constructs endpoint URLs"+
 			" automatically based on service and region",
 	)
 	flag.StringVar(
@@ -102,9 +116,9 @@ func (cfg *Config) BindFlags() {
 		"Configures the ACK service controller to always set key/value pairs tags on resources that it manages.",
 	)
 	flag.StringVar(
-		&cfg.WatchNamespace , flagWatchNamespace,
+		&cfg.WatchNamespace, flagWatchNamespace,
 		"",
-		"Specific namespace the service controller will watch for object creation from CRD. "+ 
+		"Specific namespace the service controller will watch for object creation from CRD. "+
 			" By default it will listen to all namespaces",
 	)
 }
@@ -142,6 +156,10 @@ func (cfg *Config) Validate() error {
 			return errors.New("invalid service endpoint. Please refer to " +
 				"https://docs.aws.amazon.com/general/latest/gr/aws-service-information.html for more details")
 		}
+	}
+
+	if cfg.EnableWebhookServer && cfg.WebhookServerAddr == "" {
+		return errors.New("empty webhook server address")
 	}
 	return nil
 }
