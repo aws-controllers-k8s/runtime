@@ -59,6 +59,20 @@ func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 logr.Logg
 	return r0, r1
 }
 
+// RequeueOnSuccessSeconds provides a mock function with given fields:
+func (_m *AWSResourceManagerFactory) RequeueOnSuccessSeconds() int {
+	ret := _m.Called()
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	return r0
+}
+
 // ResourceDescriptor provides a mock function with given fields:
 func (_m *AWSResourceManagerFactory) ResourceDescriptor() types.AWSResourceDescriptor {
 	ret := _m.Called()
