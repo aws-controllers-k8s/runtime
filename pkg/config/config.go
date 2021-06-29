@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	flagBindPort             = "bind-port"
 	flagEnableLeaderElection = "enable-leader-election"
 	flagMetricAddr           = "metrics-addr"
 	flagEnableDevLogging     = "enable-development-logging"
@@ -40,7 +39,6 @@ const (
 
 // Config contains configuration otpions for ACK service controllers
 type Config struct {
-	BindPort                 int
 	MetricsAddr              string
 	EnableLeaderElection     bool
 	EnableDevelopmentLogging bool
@@ -56,11 +54,6 @@ type Config struct {
 
 // BindFlags defines CLI/runtime configuration options
 func (cfg *Config) BindFlags() {
-	flag.IntVar(
-		&cfg.BindPort, flagBindPort,
-		9443,
-		"The port the service controller binds to.",
-	)
 	flag.StringVar(
 		&cfg.MetricsAddr, flagMetricAddr,
 		"0.0.0.0:8080",
@@ -69,11 +62,11 @@ func (cfg *Config) BindFlags() {
 	flag.BoolVar(
 		&cfg.EnableWebhookServer, flagEnableWebhookServer,
 		false,
-		"Enable webhook server for controller manager. ",
+		"Enable webhook server for controller manager.",
 	)
 	flag.StringVar(
 		&cfg.WebhookServerAddr, flagWebhookServerAddr,
-		"0.0.0.0:443",
+		"0.0.0.0:9433",
 		"The address the webhook endpoint binds to.",
 	)
 	flag.BoolVar(
