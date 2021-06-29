@@ -20,15 +20,18 @@ type AWSIdentifiers struct {
 	ARN *AWSResourceName `json:"arn,omitempty"`
 	// NameOrId is a user-supplied string identifier for the resource. It may
 	// or may not be globally unique, depending on the type of resource.
-	NameOrID *string `json:"nameOrID,omitempty"`
+	NameOrID string `json:"nameOrID,omitempty"`
+	// AdditionalKeys represents any additional arbitrary identifiers used when
+	// describing the target resource.
+	AdditionalKeys map[string]string `json:"additionalKeys,omitempty"`
 }
 
 // TargetKubernetesResource provides all the values necessary to identify a given ACK type
 // and override any metadata values when creating a resource of that type.
 type TargetKubernetesResource struct {
 	// +kubebuilder:validation:Required
-	Group *string `json:"group"`
+	Group string `json:"group"`
 	// +kubebuilder:validation:Required
-	Kind     *string            `json:"kind"`
+	Kind     string             `json:"kind"`
 	Metadata *PartialObjectMeta `json:"metadata,omitempty"`
 }

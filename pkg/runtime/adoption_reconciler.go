@@ -337,8 +337,8 @@ func (r *adoptionReconciler) getTargetResourceGroupKind(
 	res *ackv1alpha1.AdoptedResource,
 ) schema.GroupKind {
 	return schema.GroupKind{
-		Group: *res.Spec.Kubernetes.Group,
-		Kind:  *res.Spec.Kubernetes.Kind,
+		Group: res.Spec.Kubernetes.Group,
+		Kind:  res.Spec.Kubernetes.Kind,
 	}
 }
 
