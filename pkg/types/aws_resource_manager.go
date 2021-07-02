@@ -59,8 +59,9 @@ type AWSResourceManager interface {
 	) (AWSResource, error)
 
 	// Delete attempts to destroy the supplied AWSResource in the backend AWS
-	// service API.
-	Delete(context.Context, AWSResource) error
+	// service API, returning an AWSResource representing the
+	// resource being deleted (if delete is asynchronous and takes time)
+	Delete(context.Context, AWSResource) (AWSResource, error)
 	// ARNFromName returns an AWS Resource Name from a given string name. This
 	// is useful for constructing ARNs for APIs that require ARNs in their
 	// GetAttributes operations but all we have (for new CRs at least) is a

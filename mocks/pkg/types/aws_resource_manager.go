@@ -55,17 +55,26 @@ func (_m *AWSResourceManager) Create(_a0 context.Context, _a1 types.AWSResource)
 }
 
 // Delete provides a mock function with given fields: _a0, _a1
-func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource) error {
+func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource) (types.AWSResource, error) {
 	ret := _m.Called(_a0, _a1)
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource) error); ok {
+	var r0 types.AWSResource
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource) types.AWSResource); ok {
 		r0 = rf(_a0, _a1)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResource)
+		}
 	}
 
-	return r0
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, types.AWSResource) error); ok {
+		r1 = rf(_a0, _a1)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // ReadOne provides a mock function with given fields: _a0, _a1

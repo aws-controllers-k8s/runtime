@@ -349,26 +349,34 @@ func (r *resourceReconciler) cleanup(
 	defer exit(err)
 
 	rlog.Enter("rm.ReadOne")
-	latest, err := rm.ReadOne(ctx, current)
+	observed, err := rm.ReadOne(ctx, current)
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err == ackerr.NotFound {
 			// If the aws resource is not found, remove finalizer
-			return r.setResourceUnmanaged(ctx, latest)
+			return r.setResourceUnmanaged(ctx, current)
 		}
 		return err
 	}
 	rlog.Enter("rm.Delete")
-	err = rm.Delete(ctx, latest)
+	latest, err := rm.Delete(ctx, observed)
 	rlog.Exit("rm.Delete", err)
+	if latest != nil {
+		// The Delete operation is likely asynchronous and has likely set a Status
+		// field on the returned CR to something like `deleting`. Here, we patchResource()
+		// in order to save these Status field modifications.
+		_ = r.patchResource(ctx, current, latest)
+	}
 	if err != nil {
+		// NOTE: Delete() implementations that have asynchronously-completing
+		// deletions should return a RequeueNeededAfter.
 		return err
 	}
 
 	// Now that external AWS service resources have been appropriately cleaned
 	// up, we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
-	if err = r.setResourceUnmanaged(ctx, latest); err != nil {
+	if err = r.setResourceUnmanaged(ctx, current); err != nil {
 		return err
 	}
 	rlog.Info("deleted resource")
