@@ -16,7 +16,7 @@ package runtime
 import (
 	"context"
 	"time"
-	
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +34,7 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -361,7 +362,7 @@ func (r *resourceReconciler) cleanup(
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
 	rlog.Exit("rm.Delete", err)
-	if latest != nil {
+	if ackcompare.IsNotNil(latest) {
 		// The Delete operation is likely asynchronous and has likely set a Status
 		// field on the returned CR to something like `deleting`. Here, we patchResource()
 		// in order to save these Status field modifications.
