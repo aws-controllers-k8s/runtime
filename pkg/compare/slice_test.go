@@ -66,3 +66,49 @@ func TestSliceStringPEqual(t *testing.T) {
 	require.True(compare.SliceStringPEqual(aab, aba))
 	require.False(compare.SliceStringPEqual(aab, bba))
 }
+
+func TestSliceStringEqual(t *testing.T) {
+	require := require.New(t)
+
+	aStr := "a"
+	bStr := "b"
+
+	empty := []string{}
+	a := []string{
+		aStr,
+	}
+	ac := []string{
+		aStr,
+	}
+	b := []string{
+		bStr,
+	}
+	ab := []string{
+		aStr, bStr,
+	}
+	abc := []string{
+		aStr, bStr,
+	}
+	ba := []string{
+		bStr, aStr,
+	}
+	aab := []string{
+		aStr, aStr, bStr,
+	}
+	aba := []string{
+		aStr, bStr, aStr,
+	}
+	bba := []string{
+		bStr, bStr, aStr,
+	}
+
+	require.False(compare.SliceStringEqual(a, empty))
+	require.False(compare.SliceStringEqual(empty, a))
+	require.False(compare.SliceStringEqual(a, b))
+	require.False(compare.SliceStringEqual(b, a))
+	require.True(compare.SliceStringEqual(a, ac))
+	require.True(compare.SliceStringEqual(ab, ba))
+	require.True(compare.SliceStringEqual(ab, abc))
+	require.True(compare.SliceStringEqual(aab, aba))
+	require.False(compare.SliceStringEqual(aab, bba))
+}

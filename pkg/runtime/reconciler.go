@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -34,7 +35,6 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
-	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -213,8 +213,8 @@ func (r *resourceReconciler) Sync(
 				// there is some changes available in the latest.RuntimeObject()
 				// (example: ko.Status.Conditions) which have been
 				// updated in the resource
-				// Thus, patchResource() call should be made here
-				_ = r.patchResource(ctx, desired, latest)
+				// Thus, patchResourceStatus() call should be made here
+				_ = r.patchResourceStatus(ctx, desired, latest)
 			}
 			return err
 		}
@@ -239,8 +239,8 @@ func (r *resourceReconciler) Sync(
 				// there is some changes available in the latest.RuntimeObject()
 				// (example: ko.Status.Conditions) which have been
 				// updated in the resource
-				// Thus, patchResource() call should be made here
-				_ = r.patchResource(ctx, desired, latest)
+				// Thus, patchResourceStatus() call should be made here
+				_ = r.patchResourceStatus(ctx, desired, latest)
 			}
 			return err
 		}
@@ -268,20 +268,24 @@ func (r *resourceReconciler) Sync(
 					// there is some changes available in the latest.RuntimeObject()
 					// (example: ko.Status.Conditions) which have been
 					// updated in the resource
-					// Thus, patchResource() call should be made here
-					_ = r.patchResource(ctx, desired, latest)
+					// Thus, patchResourceStatus() call should be made here
+					_ = r.patchResourceStatus(ctx, desired, latest)
 				}
 				return err
 			}
 			rlog.Info("updated resource")
 		}
 	}
-	err = r.patchResource(ctx, desired, latest)
-	if err != nil {
-		return err
-	}
-	for _, condition := range latest.Conditions() {
-		if condition.Type == ackv1alpha1.ConditionTypeResourceSynced {
+	if ackcompare.IsNotNil(latest) {
+		err = r.patchResource(ctx, desired, latest)
+		if err != nil {
+			return err
+		}
+		for _, condition := range latest.Conditions() {
+			if condition.Type != ackv1alpha1.ConditionTypeResourceSynced {
+				continue
+			}
+			// The code below only executes for "ConditionTypeResourceSynced"
 			if condition.Status == corev1.ConditionTrue {
 				if duration := r.rmf.RequeueOnSuccessSeconds(); duration > 0 {
 					rlog.Debug(
@@ -294,7 +298,7 @@ func (r *resourceReconciler) Sync(
 					"requeueing resource after finding resource synced condition false",
 				)
 				return requeue.NeededAfter(
-					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)				
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
 			}
 		}
 	}
@@ -302,15 +306,71 @@ func (r *resourceReconciler) Sync(
 }
 
 // patchResource patches the custom resource in the Kubernetes API to match the
-// supplied latest resource.
+// supplied latest resource's "metadata", "spec" and "status"
+// To only patch the metadata and spec, use "patchResourceMetadataAndSpec".
+// To only patch the status, use "patchResourceStatus"
 func (r *resourceReconciler) patchResource(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) error {
+	err := r.patchResourceMetadataAndSpec(ctx, desired, latest)
+	if err != nil {
+		return err
+	}
+
+	err = r.patchResourceStatus(ctx, desired, latest)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// patchResourceMetadataAndSpec patches the custom resource in the Kubernetes API to match the
+// supplied latest resource's metadata and spec.
+func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	ctx context.Context,
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 ) error {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
-	exit := rlog.Trace("r.patchResource")
+	exit := rlog.Trace("r.patchResourceMetadataAndSpec")
+	defer exit(err)
+
+	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desired.MetaObject(), latest.MetaObject())
+	if err != nil {
+		return err
+	}
+	if equalMetadata && !r.rd.Delta(desired, latest).DifferentAt("Spec") {
+		rlog.Debug("no difference found between metadata and spec for desired and latest object.")
+		return nil
+	}
+
+	rlog.Enter("kc.Patch (metadata + spec)")
+	err = r.kc.Patch(
+		ctx,
+		latest.RuntimeObject(),
+		client.MergeFrom(desired.RuntimeObject()),
+	)
+	rlog.Exit("kc.Patch (metadata + spec)", err)
+	if err != nil {
+		return err
+	}
+	rlog.Debug("patched resource metadata and spec", "latest", latest)
+	return nil
+}
+
+// patchResourceStatus patches the custom resource in the Kubernetes API to match the
+// supplied latest resource.
+func (r *resourceReconciler) patchResourceStatus(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) error {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.patchResourceStatus")
 	defer exit(err)
 
 	changedStatus, err := r.rd.UpdateCRStatus(latest)
@@ -401,13 +461,13 @@ func (r *resourceReconciler) setResourceManaged(
 	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkManaged(res)
-	rlog.Enter("kc.Patch (all)")
+	rlog.Enter("kc.Patch (metadata + spec)")
 	err = r.kc.Patch(
 		ctx,
 		res.RuntimeObject(),
 		client.MergeFrom(orig),
 	)
-	rlog.Exit("kc.Patch (all)", err)
+	rlog.Exit("kc.Patch (metadata + spec)", err)
 	if err != nil {
 		return err
 	}
@@ -432,13 +492,13 @@ func (r *resourceReconciler) setResourceUnmanaged(
 	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkUnmanaged(res)
-	rlog.Enter("kc.Patch (all)")
+	rlog.Enter("kc.Patch (metadata + spec)")
 	err = r.kc.Patch(
 		ctx,
 		res.RuntimeObject(),
 		client.MergeFrom(orig),
 	)
-	rlog.Exit("kc.Patch (all)", err)
+	rlog.Exit("kc.Patch (metadata + spec)", err)
 	if err != nil {
 		return err
 	}
@@ -552,9 +612,22 @@ func (r *resourceReconciler) getRegion(
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
 }
 
-// NewReconciler returns a new reconciler object that
+// NewReconciler returns a new reconciler object
 func NewReconciler(
 	sc acktypes.ServiceController,
+	rmf acktypes.AWSResourceManagerFactory,
+	log logr.Logger,
+	cfg ackcfg.Config,
+	metrics *ackmetrics.Metrics,
+) acktypes.AWSResourceReconciler {
+	return NewReconcilerWithClient(sc, nil, rmf, log, cfg, metrics)
+}
+
+// NewReconcilerWithClient returns a new reconciler object
+// with Client(controller-runtime/pkg/client) already set.
+func NewReconcilerWithClient(
+	sc acktypes.ServiceController,
+	kc client.Client,
 	rmf acktypes.AWSResourceManagerFactory,
 	log logr.Logger,
 	cfg ackcfg.Config,
@@ -563,6 +636,7 @@ func NewReconciler(
 	return &resourceReconciler{
 		reconciler: reconciler{
 			sc:      sc,
+			kc:      kc,
 			log:     log.WithName("ackrt"),
 			cfg:     cfg,
 			metrics: metrics,

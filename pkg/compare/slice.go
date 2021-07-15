@@ -29,8 +29,32 @@ func SliceStringPEqual(a, b []*string) bool {
 	}
 	sort.Strings(sa)
 	sort.Strings(sb)
-	for x, aVal := range sa {
-		bVal := sb[x]
+	return sortedStringSliceEqual(sa, sb)
+}
+
+// SliceStringEqual returns true if the supplied slices of string
+// have equal values regardless of order.
+func SliceStringEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aCopy := make([]string, len(a))
+	bCopy := make([]string, len(a))
+	for x, aVal := range a {
+		aCopy[x] = aVal
+		bCopy[x] = b[x]
+	}
+	sort.Strings(aCopy)
+	sort.Strings(bCopy)
+	return sortedStringSliceEqual(aCopy, bCopy)
+}
+
+// sortedStringSliceEqual returns true if the supplied sorted slices of string
+// have equal values considering the order. It is assumed the size is same for
+// both slices.
+func sortedStringSliceEqual(a, b []string) bool {
+	for x, aVal := range a {
+		bVal := b[x]
 		if aVal != bVal {
 			return false
 		}
