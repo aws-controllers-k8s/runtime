@@ -30,6 +30,7 @@ import (
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
+	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 
 	k8srtmocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
@@ -142,7 +143,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics)
+	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -259,7 +260,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics)
+	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -375,7 +376,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics)
+	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)

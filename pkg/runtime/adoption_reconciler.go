@@ -21,8 +21,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubernetes "k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -32,9 +34,6 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 const (
@@ -52,14 +51,7 @@ type adoptionReconciler struct {
 // BindControllerManager sets up the AWSResourceReconciler with an instance
 // of an upstream controller-runtime.Manager
 func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
-	clusterConfig := mgr.GetConfig()
-	clientset, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
-		return err
-	}
 	r.kc = mgr.GetClient()
-	r.cache = ackrtcache.New(clientset, r.log, r.cfg.WatchNamespace)
-	r.cache.Run()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -468,6 +460,7 @@ func NewAdoptionReconciler(
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
 ) acktypes.Reconciler {
 	return &adoptionReconciler{
 		reconciler: reconciler{
@@ -475,6 +468,7 @@ func NewAdoptionReconciler(
 			log:     log.WithName("adopted-reconciler"),
 			cfg:     cfg,
 			metrics: metrics,
+			cache:   cache,
 		},
 	}
 }

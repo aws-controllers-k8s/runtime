@@ -22,7 +22,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubernetes "k8s.io/client-go/kubernetes"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -75,14 +74,7 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	if r.rmf == nil {
 		return ackerr.NilResourceManagerFactory
 	}
-	clusterConfig := mgr.GetConfig()
-	clientset, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
-		return err
-	}
 	r.kc = mgr.GetClient()
-	r.cache = ackrtcache.New(clientset, r.log, r.cfg.WatchNamespace)
-	r.cache.Run()
 	rd := r.rmf.ResourceDescriptor()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
@@ -619,8 +611,9 @@ func NewReconciler(
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
 ) acktypes.AWSResourceReconciler {
-	return NewReconcilerWithClient(sc, nil, rmf, log, cfg, metrics)
+	return NewReconcilerWithClient(sc, nil, rmf, log, cfg, metrics, cache)
 }
 
 // NewReconcilerWithClient returns a new reconciler object
@@ -632,6 +625,7 @@ func NewReconcilerWithClient(
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
 ) acktypes.AWSResourceReconciler {
 	return &resourceReconciler{
 		reconciler: reconciler{
@@ -640,6 +634,7 @@ func NewReconcilerWithClient(
 			log:     log.WithName("ackrt"),
 			cfg:     cfg,
 			metrics: metrics,
+			cache:   cache,
 		},
 		rmf: rmf,
 		rd:  rmf.ResourceDescriptor(),
