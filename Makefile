@@ -4,7 +4,8 @@ GOPATH ?= "$(HOME)/go"
 GO111MODULE=on
 K8S_APIMACHINERY_VERSION = $(shell go list -m -f '{{ .Version }}' k8s.io/apimachinery)
 K8S_APIMACHINERY_DIR = "$(GOPATH)/pkg/mod/k8s.io/apimachinery@$(K8S_APIMACHINERY_VERSION)"
-
+CONTROLLER_RUNTIME_VERSION = $(shell go list -m -f '{{ .Version }}' sigs.k8s.io/controller-runtime)
+CONTROLLER_RUNTIME_DIR = "$(GOPATH)/pkg/mod/sigs.k8s.io/controller-runtime@$(CONTROLLER_RUNTIME_VERSION)"
 .PHONY: all test clean-mocks mocks
 
 all: test
@@ -30,6 +31,9 @@ mocks: install-mockery ## Build mocks
 	@echo "ok."
 	@echo -n "building mocks for k8s.io/apimachinery/runtime/schema ... "
 	@bin/mockery --quiet --name=ObjectKind --case=underscore --output=mocks/apimachinery/pkg/runtime/schema --dir="$(K8S_APIMACHINERY_DIR)/pkg/runtime/schema"
+	@echo "ok."
+	@echo -n "building mocks for sigs.k8s.io/controller-runtime/pkg/client ... "
+	@bin/mockery --quiet --name="(Client|Status)" --case=underscore --output=mocks/controller-runtime/pkg/client --dir="$(CONTROLLER_RUNTIME_DIR)/pkg/client"
 	@echo "ok."
 
 help:           ## Show this help.

@@ -25,3 +25,16 @@ func MapStringStringPEqual(a, b map[string]*string) bool {
 	}
 	return true
 }
+
+// MapStringStringEqual returns true if the supplied maps are equal
+func MapStringStringEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for aKey, aVal := range a {
+		if bVal, ok := b[aKey]; !ok || bVal != aVal {
+			return false
+		}
+	}
+	return true
+}
