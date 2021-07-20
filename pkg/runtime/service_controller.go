@@ -18,10 +18,12 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
+	kubernetes "k8s.io/client-go/kubernetes"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
+	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -130,15 +132,24 @@ func (c *serviceController) WithResourceManagerFactories(
 func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
+
+	clusterConfig := mgr.GetConfig()
+	clientset, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		return err
+	}
+	cache := ackrtcache.New(clientset, c.log, cfg.WatchNamespace)
+	cache.Run()
+
 	for _, rmf := range c.rmFactories {
-		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics)
+		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
 		}
 		c.reconcilers = append(c.reconcilers, rec)
 	}
 
-	rec := NewAdoptionReconciler(c, c.log, cfg, c.metrics)
+	rec := NewAdoptionReconciler(c, c.log, cfg, c.metrics, cache)
 	if err := rec.BindControllerManager(mgr); err != nil {
 		return err
 	}
