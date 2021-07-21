@@ -58,6 +58,7 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	desiredRTObj := &k8srtmocks.Object{}
 	desiredRTObj.On("GetObjectKind").Return(objKind)
+	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
 
 	desiredMetaObj := &k8sobj.Unstructured{}
 	desiredMetaObj.SetAnnotations(map[string]string{})
@@ -174,6 +175,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	desiredRTObj := &k8srtmocks.Object{}
 	desiredRTObj.On("GetObjectKind").Return(objKind)
+	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
 
 	desiredMetaObj := &k8sobj.Unstructured{}
 	desiredMetaObj.SetAnnotations(map[string]string{})
@@ -291,6 +293,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	desiredRTObj := &k8srtmocks.Object{}
 	desiredRTObj.On("GetObjectKind").Return(objKind)
+	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
 
 	desiredMetaObj := &k8sobj.Unstructured{}
 	desiredMetaObj.SetAnnotations(map[string]string{})
