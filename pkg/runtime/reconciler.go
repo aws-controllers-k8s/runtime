@@ -105,7 +105,7 @@ func (r *reconciler) SecretValueFromReference(
 	}
 	var secret corev1.Secret
 	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
-		return "", err
+		return "", ackerr.SecretNotFound
 	}
 
 	// Currently we have only Opaque secrets in scope.
@@ -118,7 +118,7 @@ func (r *reconciler) SecretValueFromReference(
 		return valuestr, nil
 	}
 
-	return "", ackerr.NotFound
+	return "", ackerr.SecretNotFound
 }
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
