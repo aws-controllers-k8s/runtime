@@ -342,8 +342,8 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	rlog.Enter("kc.Patch (metadata + spec)")
 	err = r.kc.Patch(
 		ctx,
-		latest.RuntimeObject(),
-		client.MergeFrom(desired.RuntimeObject()),
+		latest.RuntimeObject().DeepCopyObject(),
+		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
 	)
 	rlog.Exit("kc.Patch (metadata + spec)", err)
 	if err != nil {
@@ -376,7 +376,7 @@ func (r *resourceReconciler) patchResourceStatus(
 	err = r.kc.Status().Patch(
 		ctx,
 		latest.RuntimeObject().DeepCopyObject(),
-		client.MergeFrom(desired.RuntimeObject()),
+		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
 	)
 	rlog.Exit("kc.Patch (status)", err)
 	if err != nil {
