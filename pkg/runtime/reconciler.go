@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -34,7 +35,6 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
-	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -113,7 +113,7 @@ func (r *reconciler) SecretValueFromReference(
 	}
 	var secret corev1.Secret
 	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
-		return "", err
+		return "", ackerr.SecretNotFound
 	}
 
 	// Currently we have only Opaque secrets in scope.
@@ -126,7 +126,7 @@ func (r *reconciler) SecretValueFromReference(
 		return valuestr, nil
 	}
 
-	return "", ackerr.NotFound
+	return "", ackerr.SecretNotFound
 }
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
@@ -294,7 +294,7 @@ func (r *resourceReconciler) Sync(
 					"requeueing resource after finding resource synced condition false",
 				)
 				return requeue.NeededAfter(
-					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)				
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
 			}
 		}
 	}
