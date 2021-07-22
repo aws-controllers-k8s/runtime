@@ -340,6 +340,10 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	}
 
 	rlog.Enter("kc.Patch (metadata + spec)")
+	// It is necessary to use `DeepCopyObject` versions of `latest` when calling
+	// `Patch` as this method overrides all values as merged from `desired`.
+	// This may affect `latest` in later execution, as otherwise this would set
+	//`desired` == `latest` after calling this method.
 	err = r.kc.Patch(
 		ctx,
 		latest.RuntimeObject().DeepCopyObject(),
@@ -373,6 +377,10 @@ func (r *resourceReconciler) patchResourceStatus(
 		return nil
 	}
 	rlog.Enter("kc.Patch (status)")
+	// It is necessary to use `DeepCopyObject` versions of `latest` when calling
+	// `Patch` as this method overrides all values as merged from `desired`.
+	// This may affect `latest` in later execution, as otherwise this would set
+	//`desired` == `latest` after calling this method.
 	err = r.kc.Status().Patch(
 		ctx,
 		latest.RuntimeObject().DeepCopyObject(),
