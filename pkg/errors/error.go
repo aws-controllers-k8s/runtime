@@ -55,6 +55,9 @@ var (
 	// SecretTypeNotSupported is returned if non opaque secret is used.
 	SecretTypeNotSupported = fmt.Errorf(
 		"only opaque secrets can be used")
+	// SecretNotFound is returned if specified kubernetes secret is not found.
+	SecretNotFound = fmt.Errorf(
+		"kubernetes secret not found")
 )
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go

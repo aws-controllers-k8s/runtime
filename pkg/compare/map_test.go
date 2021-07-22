@@ -55,3 +55,41 @@ func TestMapStringStringPEqual(t *testing.T) {
 	require.True(compare.MapStringStringPEqual(ab, ba))
 	require.True(compare.MapStringStringPEqual(ab, abc))
 }
+
+func TestMapStringStringEqual(t *testing.T) {
+	require := require.New(t)
+
+	aStr := "a"
+	bStr := "b"
+
+	empty := map[string]string{}
+	a := map[string]string{
+		"a": aStr,
+	}
+	ac := map[string]string{
+		"a": aStr,
+	}
+	b := map[string]string{
+		"b": bStr,
+	}
+	ab := map[string]string{
+		"a": aStr, "b": bStr,
+	}
+	abc := map[string]string{
+		"a": aStr, "b": bStr,
+	}
+	ba := map[string]string{
+		"b": bStr, "a": aStr,
+	}
+
+	require.False(compare.MapStringStringEqual(a, empty))
+	require.False(compare.MapStringStringEqual(empty, a))
+	require.False(compare.MapStringStringEqual(a, nil))
+	require.False(compare.MapStringStringEqual(nil, a))
+	require.True(compare.MapStringStringEqual(nil, nil))
+	require.False(compare.MapStringStringEqual(a, b))
+	require.False(compare.MapStringStringEqual(b, a))
+	require.True(compare.MapStringStringEqual(a, ac))
+	require.True(compare.MapStringStringEqual(ab, ba))
+	require.True(compare.MapStringStringEqual(ab, abc))
+}
