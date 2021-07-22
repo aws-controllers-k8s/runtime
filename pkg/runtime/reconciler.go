@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -34,7 +35,6 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
-	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -145,8 +145,9 @@ func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error
 	acctID := r.getOwnerAccountID(res)
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
+	endpointURL := r.getEndpointURL(res)
 	sess, err := r.sc.NewSession(
-		region, &r.cfg.EndpointURL, roleARN,
+		region, &endpointURL, roleARN,
 		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {
@@ -178,7 +179,6 @@ func (r *resourceReconciler) reconcile(
 	if res.IsBeingDeleted() {
 		return r.cleanup(ctx, rm, res)
 	}
-
 	return r.Sync(ctx, rm, res)
 }
 
@@ -294,7 +294,7 @@ func (r *resourceReconciler) Sync(
 					"requeueing resource after finding resource synced condition false",
 				)
 				return requeue.NeededAfter(
-					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)				
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
 			}
 		}
 	}
@@ -550,6 +550,25 @@ func (r *resourceReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// getEndpointURL returns the AWS account that owns the supplied resource.
+// We look for the namespace associated endpoint url, if that is set we use it.
+// Otherwise if none of these annotations are set we use the endpoint url specified
+// in the configuration
+func (r *resourceReconciler) getEndpointURL(
+	res acktypes.AWSResource,
+) string {
+
+	// look for endpoint url in the namespace annotations
+	namespace := res.MetaObject().GetNamespace()
+	endpointURL, ok := r.cache.Namespaces.GetEndpointURL(namespace)
+	if ok {
+		return endpointURL
+	}
+
+	// use controller configuration EndpointURL
+	return r.cfg.EndpointURL
 }
 
 // NewReconciler returns a new reconciler object that
