@@ -63,6 +63,7 @@ func TestNamespaceCache(t *testing.T) {
 				Annotations: map[string]string{
 					ackv1alpha1.AnnotationDefaultRegion:  "us-west-2",
 					ackv1alpha1.AnnotationOwnerAccountID: "012345678912",
+					ackv1alpha1.AnnotationEndpointURL:    "https://amazon-service.region.amazonaws.com",
 				},
 			},
 		},
@@ -79,6 +80,10 @@ func TestNamespaceCache(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "012345678912", ownerAccountID)
 
+	endpointURL, ok := namespaceCache.GetEndpointURL("production")
+	require.True(t, ok)
+	require.Equal(t, "https://amazon-service.region.amazonaws.com", endpointURL)
+
 	// Test update events
 	k8sClient.CoreV1().Namespaces().Update(
 		context.Background(),
@@ -88,6 +93,7 @@ func TestNamespaceCache(t *testing.T) {
 				Annotations: map[string]string{
 					ackv1alpha1.AnnotationDefaultRegion:  "us-est-1",
 					ackv1alpha1.AnnotationOwnerAccountID: "21987654321",
+					ackv1alpha1.AnnotationEndpointURL:    "https://amazon-other-service.region.amazonaws.com",
 				},
 			},
 		},
@@ -103,6 +109,10 @@ func TestNamespaceCache(t *testing.T) {
 	ownerAccountID, ok = namespaceCache.GetOwnerAccountID("production")
 	require.True(t, ok)
 	require.Equal(t, "21987654321", ownerAccountID)
+
+	endpointURL, ok = namespaceCache.GetEndpointURL("production")
+	require.True(t, ok)
+	require.Equal(t, "https://amazon-other-service.region.amazonaws.com", endpointURL)
 
 	// Test delete events
 	k8sClient.CoreV1().Namespaces().Delete(

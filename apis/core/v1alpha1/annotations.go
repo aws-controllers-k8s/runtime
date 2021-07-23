@@ -51,4 +51,12 @@ const (
 	// injected by POD IRSA, to decide in which region the resources should be
 	// created.
 	AnnotationDefaultRegion = AnnotationPrefix + "default-region"
+	// AnnotationEndpointURL is an annotation whose value is the identifier
+	// for the AWS endpoint in which the service controller will use to create
+	// its resources. If this annotation is set on a namespace, the Kubernetes user
+	// is indicating that the ACK service controller should create its resources using
+	// that specific endpoint. If this annotation is not set, ACK service controller
+	// will either use the default behavior	of aws-sdk-go to create endpoints or
+	// aws-endpoint-url if it is set in controller binary flags and environment variables.
+	AnnotationEndpointURL = AnnotationPrefix + "endpoint-url"
 )

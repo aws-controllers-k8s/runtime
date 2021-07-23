@@ -137,8 +137,9 @@ func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error
 	acctID := r.getOwnerAccountID(res)
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
+	endpointURL := r.getEndpointURL(res)
 	sess, err := r.sc.NewSession(
-		region, &r.cfg.EndpointURL, roleARN,
+		region, &endpointURL, roleARN,
 		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {
@@ -170,7 +171,6 @@ func (r *resourceReconciler) reconcile(
 	if res.IsBeingDeleted() {
 		return r.cleanup(ctx, rm, res)
 	}
-
 	return r.Sync(ctx, rm, res)
 }
 
@@ -610,6 +610,25 @@ func (r *resourceReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// getEndpointURL returns the AWS account that owns the supplied resource.
+// We look for the namespace associated endpoint url, if that is set we use it.
+// Otherwise if none of these annotations are set we use the endpoint url specified
+// in the configuration
+func (r *resourceReconciler) getEndpointURL(
+	res acktypes.AWSResource,
+) string {
+
+	// look for endpoint url in the namespace annotations
+	namespace := res.MetaObject().GetNamespace()
+	endpointURL, ok := r.cache.Namespaces.GetEndpointURL(namespace)
+	if ok {
+		return endpointURL
+	}
+
+	// use controller configuration EndpointURL
+	return r.cfg.EndpointURL
 }
 
 // NewReconciler returns a new reconciler object

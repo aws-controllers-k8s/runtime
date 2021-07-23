@@ -31,6 +31,8 @@ type namespaceInfo struct {
 	defaultRegion string
 	// services.k8s.aws/owner-account-id Annotation
 	ownerAccountID string
+	// services.k8s.aws/endpoint-url Annotation
+	endpointURL string
 }
 
 // getDefaultRegion returns the default region value
@@ -49,15 +51,23 @@ func (n *namespaceInfo) getOwnerAccountID() string {
 	return n.ownerAccountID
 }
 
+// getEndpointURL returns the namespace Endpoint URL
+func (n *namespaceInfo) getEndpointURL() string {
+	if n == nil {
+		return ""
+	}
+	return n.endpointURL
+}
+
 // NamespaceCache is responsible of keeping track of namespaces
 // annotations, and caching those related to the ACK controller.
 type NamespaceCache struct {
 	sync.RWMutex
 
 	log logr.Logger
-	// Provide a namespace specifically to listen to. 
+	// Provide a namespace specifically to listen to.
 	// Provide empty string to listen to all namespaces except kube-system and kube-public.
-	watchNamespace  string
+	watchNamespace string
 
 	// Namespace informer
 	informer k8scache.SharedInformer
@@ -81,12 +91,12 @@ func NewNamespaceCache(clientset kubernetes.Interface, log logr.Logger, watchNam
 	}
 }
 
-// Check if the provided namespace should be listened to or not 
+// Check if the provided namespace should be listened to or not
 func isWatchNamespace(raw interface{}, watchNamespace string) bool {
 	object, ok := raw.(*corev1.Namespace)
 	if !ok {
 		return false
-	} 
+	}
 
 	if watchNamespace != "" {
 		return watchNamespace == object.ObjectMeta.Name
@@ -143,8 +153,18 @@ func (c *NamespaceCache) GetOwnerAccountID(namespace string) (string, bool) {
 	return "", false
 }
 
+// GetEndpointURL returns the endpoint URL if it exists
+func (c *NamespaceCache) GetEndpointURL(namespace string) (string, bool) {
+	info, ok := c.getNamespaceInfo(namespace)
+	if ok {
+		e := info.getEndpointURL()
+		return e, e != ""
+	}
+	return "", false
+}
+
 // getNamespaceInfo reads a namespace cached annotations and
-// return a given namespace default aws region and owner account id.
+// return a given namespace default aws region, owner account id and endpoint url.
 // This function is thread safe.
 func (c *NamespaceCache) getNamespaceInfo(ns string) (*namespaceInfo, bool) {
 	c.RLock()
@@ -165,6 +185,10 @@ func (c *NamespaceCache) setNamespaceInfoFromK8sObject(ns *corev1.Namespace) {
 	OwnerAccountID, ok := nsa[ackv1alpha1.AnnotationOwnerAccountID]
 	if ok {
 		nsInfo.ownerAccountID = OwnerAccountID
+	}
+	EndpointURL, ok := nsa[ackv1alpha1.AnnotationEndpointURL]
+	if ok {
+		nsInfo.endpointURL = EndpointURL
 	}
 	c.Lock()
 	defer c.Unlock()

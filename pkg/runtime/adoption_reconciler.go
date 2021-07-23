@@ -107,9 +107,10 @@ func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
 	acctID := r.getOwnerAccountID(res)
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
+	endpointURL := r.getEndpointURL(res)
 
 	sess, err := r.sc.NewSession(
-		region, &r.cfg.EndpointURL, roleARN,
+		region, &endpointURL, roleARN,
 		targetDescriptor.EmptyRuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {
@@ -417,6 +418,24 @@ func (r *adoptionReconciler) getOwnerAccountID(
 
 	// use controller configuration
 	return ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+}
+
+// getEndpointURL returns the AWS account that owns the supplied resource.
+// We look for the namespace associated endpoint url, if that is set we use it.
+// Otherwise if none of these annotations are set we use the endpoint url specified
+// in the configuration
+func (r *adoptionReconciler) getEndpointURL(
+	res *ackv1alpha1.AdoptedResource,
+) string {
+	// look for endpoint url in the namespace annotations
+	namespace := res.GetNamespace()
+	endpointURL, ok := r.cache.Namespaces.GetEndpointURL(namespace)
+	if ok {
+		return endpointURL
+	}
+
+	// use controller configuration
+	return r.cfg.EndpointURL
 }
 
 // getRoleARN return the Role ARN that should be assumed in order to manage
