@@ -109,3 +109,15 @@ func TestRequeueNeededAfter(t *testing.T) {
 		})
 	}
 }
+
+func TestRequeueNeededAfter_Nil(t *testing.T) {
+	assert := assert.New(t)
+	var nilRequeueNeededAfter *requeue.RequeueNeededAfter
+	assert.Empty(nilRequeueNeededAfter.Error())
+	assert.Nil(nilRequeueNeededAfter.Unwrap())
+	assert.Equal("0s", nilRequeueNeededAfter.Duration().String())
+
+	var nilRequeueNeeded *requeue.RequeueNeeded
+	assert.Empty(nilRequeueNeeded.Error())
+	assert.Nil(nilRequeueNeeded.Unwrap())
+}
