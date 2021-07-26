@@ -16,6 +16,7 @@ package types
 import (
 	"context"
 
+	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/go-logr/logr"
 
@@ -67,6 +68,12 @@ type AWSResourceManager interface {
 	// GetAttributes operations but all we have (for new CRs at least) is a
 	// name for the resource
 	ARNFromName(string) string
+	// LateInitialize returns an AWS Resource after setting the late initialized
+	// fields from the readOne call. This method will initialize the optional fields
+	// which were not provided by the k8s user but were defaulted by the AWS service.
+	// If there are no such fields to be initialized, the returned object is similar to
+	// object passed in the parameter.
+	LateInitialize(context.Context, AWSResource) (AWSResource, *requeue.RequeueNeededAfter)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to

@@ -35,6 +35,13 @@ func Terminal(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeTerminal)
 }
 
+// LateInitialized returns the Condition in the resource's Conditions collection that
+// is of type ConditionTypeLateInitialized. If no such condition is found, returns
+// nil.
+func LateInitialized(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeLateInitialized)
+}
+
 // FirstOfType returns the first Condition in the resource's Conditions
 // collection of the supplied type. If no such condition is found, returns nil.
 func FirstOfType(
@@ -110,4 +117,36 @@ func SetTerminal(
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
+}
+
+// SetLateInitialized sets the resource's Condition of type ConditionTypeLateInitialized to
+// the supplied status, optional message and reason.
+func SetLateInitialized(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = LateInitialized(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeLateInitialized,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
+// False status means that resource has LateInitializationConfig but has not been completely
+// late initialized yet.
+func LateInitializationInProgress(subject acktypes.ConditionManager) bool {
+	c := LateInitialized(subject)
+	return c != nil && c.Status == corev1.ConditionFalse
 }

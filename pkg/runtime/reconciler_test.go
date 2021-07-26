@@ -15,8 +15,11 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -145,6 +148,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 
 	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
@@ -170,6 +174,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
@@ -206,6 +211,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -219,6 +225,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	kc.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
@@ -252,6 +259,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -325,4 +333,244 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 	// even though there is a change to the annotations we expect no call to
 	// patch the spec/metadata...
 	kc.AssertNotCalled(t, "Patch")
+}
+
+func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	objKind := &k8srtschemamocks.ObjectKind{}
+	objKind.On("GroupVersionKind").Return(
+		k8srtschema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Kind:    "Book",
+			Version: "v1alpha1",
+		},
+	)
+
+	desiredRTObj := &k8srtmocks.Object{}
+	desiredRTObj.On("GetObjectKind").Return(objKind)
+	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
+
+	desiredMetaObj := &k8sobj.Unstructured{}
+	desiredMetaObj.SetAnnotations(map[string]string{})
+	desiredMetaObj.SetNamespace("default")
+	desiredMetaObj.SetName("mybook")
+	desiredMetaObj.SetGeneration(int64(1))
+
+	desired := &ackmocks.AWSResource{}
+	desired.On("MetaObject").Return(desiredMetaObj)
+	desired.On("RuntimeObject").Return(desiredRTObj)
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latestRTObj := &k8srtmocks.Object{}
+	latestRTObj.On("GetObjectKind").Return(objKind)
+	latestRTObj.On("DeepCopyObject").Return(latestRTObj)
+
+	latestMetaObj := &k8sobj.Unstructured{}
+	latestMetaObj.SetAnnotations(map[string]string{})
+	latestMetaObj.SetNamespace("default")
+	latestMetaObj.SetName("mybook")
+	latestMetaObj.SetGeneration(int64(1))
+
+	latest := &ackmocks.AWSResource{}
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On("MetaObject").Return(latestMetaObj)
+	latest.On("RuntimeObject").Return(latestRTObj)
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupKind").Return(
+		&metav1.GroupKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(
+		&fakeBook{},
+	)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("UpdateCRStatus", latest).Return(true, nil)
+	rd.On("IsManaged", desired).Return(true)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
+	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
+
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+
+	reg := ackrt.NewRegistry()
+	reg.RegisterResourceManagerFactory(rmf)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	cfg := ackcfg.Config{}
+	metrics := ackmetrics.NewMetrics("bookstore")
+
+	sc := &ackmocks.ServiceController{}
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+
+	// TODO(jaypipes): Place the above setup into helper functions that can be
+	// re-used by future unit tests of the reconciler code paths.
+
+	// With the above mocks and below assertions, we check that if we got a
+	// non-error return from `AWSResourceManager.ReadOne()` and the
+	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
+	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
+	// method,
+	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rd.AssertCalled(t, "Delta", desired, latest)
+	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+}
+
+func TestReconcilerUpdate_DelayInLateInitialization(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	objKind := &k8srtschemamocks.ObjectKind{}
+	objKind.On("GroupVersionKind").Return(
+		k8srtschema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Kind:    "Book",
+			Version: "v1alpha1",
+		},
+	)
+
+	desiredRTObj := &k8srtmocks.Object{}
+	desiredRTObj.On("GetObjectKind").Return(objKind)
+	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
+
+	desiredMetaObj := &k8sobj.Unstructured{}
+	desiredMetaObj.SetAnnotations(map[string]string{})
+	desiredMetaObj.SetNamespace("default")
+	desiredMetaObj.SetName("mybook")
+	desiredMetaObj.SetGeneration(int64(1))
+
+	desired := &ackmocks.AWSResource{}
+	desired.On("MetaObject").Return(desiredMetaObj)
+	desired.On("RuntimeObject").Return(desiredRTObj)
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latestRTObj := &k8srtmocks.Object{}
+	latestRTObj.On("GetObjectKind").Return(objKind)
+	latestRTObj.On("DeepCopyObject").Return(latestRTObj)
+
+	latestMetaObj := &k8sobj.Unstructured{}
+	latestMetaObj.SetAnnotations(map[string]string{})
+	latestMetaObj.SetNamespace("default")
+	latestMetaObj.SetName("mybook")
+	latestMetaObj.SetGeneration(int64(1))
+
+	latest := &ackmocks.AWSResource{}
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On("MetaObject").Return(latestMetaObj)
+	latest.On("RuntimeObject").Return(latestRTObj)
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupKind").Return(
+		&metav1.GroupKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(
+		&fakeBook{},
+	)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("UpdateCRStatus", latest).Return(true, nil)
+	rd.On("IsManaged", desired).Return(true)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+	requeueError := requeue.NeededAfter(nil, time.Duration(1)*time.Second)
+	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
+
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+
+	reg := ackrt.NewRegistry()
+	reg.RegisterResourceManagerFactory(rmf)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	cfg := ackcfg.Config{}
+	metrics := ackmetrics.NewMetrics("bookstore")
+
+	sc := &ackmocks.ServiceController{}
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+
+	// TODO(jaypipes): Place the above setup into helper functions that can be
+	// re-used by future unit tests of the reconciler code paths.
+
+	// With the above mocks and below assertions, we check that if we got a
+	// non-error return from `AWSResourceManager.ReadOne()` and the
+	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
+	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
+	// method,
+	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rd.AssertCalled(t, "Delta", desired, latest)
+	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }

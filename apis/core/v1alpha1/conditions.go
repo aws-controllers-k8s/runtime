@@ -45,6 +45,13 @@ const (
 	// Examples include
 	//      - Modifying an immutable field after it was created
 	ConditionTypeAdvisory ConditionType = "ACK.Advisory"
+	// ConditionTypeLateInitialized indicates whether the late initialization
+	// of fields is completed or is in progress.
+	// The absence of this condition indicates there is no late initalization
+	// needed for the k8s resource.
+	// "True" status indicates that the resource fields have been late initialized
+	// "False" status indicates that the resource fields are in process of being late initialized.
+	ConditionTypeLateInitialized ConditionType = "ACK.LateInitialized"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service

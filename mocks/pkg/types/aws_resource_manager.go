@@ -9,6 +9,8 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 
+	requeue "github.com/aws-controllers-k8s/runtime/pkg/requeue"
+
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -72,6 +74,31 @@ func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource)
 		r1 = rf(_a0, _a1)
 	} else {
 		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// LateInitialize provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceManager) LateInitialize(_a0 context.Context, _a1 types.AWSResource) (types.AWSResource, *requeue.RequeueNeededAfter) {
+	ret := _m.Called(_a0, _a1)
+
+	var r0 types.AWSResource
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource) types.AWSResource); ok {
+		r0 = rf(_a0, _a1)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResource)
+		}
+	}
+
+	var r1 *requeue.RequeueNeededAfter
+	if rf, ok := ret.Get(1).(func(context.Context, types.AWSResource) *requeue.RequeueNeededAfter); ok {
+		r1 = rf(_a0, _a1)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*requeue.RequeueNeededAfter)
+		}
 	}
 
 	return r0, r1
