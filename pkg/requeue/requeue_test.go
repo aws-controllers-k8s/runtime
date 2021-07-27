@@ -17,10 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 )
 
 func TestRequeueNeeded(t *testing.T) {

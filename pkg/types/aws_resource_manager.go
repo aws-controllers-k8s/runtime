@@ -16,7 +16,6 @@ package types
 import (
 	"context"
 
-	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/go-logr/logr"
 
@@ -24,6 +23,7 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
+	ackrequeue "github.com/aws-controllers-k8s/runtime/pkg/requeue"
 )
 
 // AWSResourceManager is responsible for providing a consistent way to perform
@@ -74,7 +74,7 @@ type AWSResourceManager interface {
 	// If there are no such fields to be initialized, the returned object is identical to
 	// object passed in the parameter.
 	// This method also adds/updates the ConditionTypeLateInitialized for the AWSResource.
-	LateInitialize(context.Context, AWSResource) (AWSResource, *requeue.RequeueNeededAfter)
+	LateInitialize(context.Context, AWSResource) (AWSResource, *ackrequeue.RequeueNeededAfter)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
