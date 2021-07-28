@@ -369,13 +369,6 @@ func (r *resourceReconciler) patchResourceStatus(
 	exit := rlog.Trace("r.patchResourceStatus")
 	defer exit(err)
 
-	changedStatus, err := r.rd.UpdateCRStatus(latest)
-	if err != nil {
-		return err
-	}
-	if !changedStatus {
-		return nil
-	}
 	rlog.Enter("kc.Patch (status)")
 	// It is necessary to use `DeepCopyObject` versions of `latest` when calling
 	// `Patch` as this method overrides all values as merged from `desired`.

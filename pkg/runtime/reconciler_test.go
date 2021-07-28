@@ -103,7 +103,6 @@ func TestReconcilerUpdate(t *testing.T) {
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
 	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
@@ -221,7 +220,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
 	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
@@ -338,7 +336,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	)
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
 	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
