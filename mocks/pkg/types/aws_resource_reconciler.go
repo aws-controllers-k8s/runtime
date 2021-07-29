@@ -52,6 +52,27 @@ func (_m *AWSResourceReconciler) GroupKind() *v1.GroupKind {
 	return r0
 }
 
+// HandleReconcileError provides a mock function with given fields: ctx, desired, latest, err
+func (_m *AWSResourceReconciler) HandleReconcileError(ctx context.Context, desired types.AWSResource, latest types.AWSResource, err error) (reconcile.Result, error) {
+	ret := _m.Called(ctx, desired, latest, err)
+
+	var r0 reconcile.Result
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource, types.AWSResource, error) reconcile.Result); ok {
+		r0 = rf(ctx, desired, latest, err)
+	} else {
+		r0 = ret.Get(0).(reconcile.Result)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, types.AWSResource, types.AWSResource, error) error); ok {
+		r1 = rf(ctx, desired, latest, err)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Reconcile provides a mock function with given fields: _a0
 func (_m *AWSResourceReconciler) Reconcile(_a0 reconcile.Request) (reconcile.Result, error) {
 	ret := _m.Called(_a0)
@@ -95,15 +116,24 @@ func (_m *AWSResourceReconciler) SecretValueFromReference(_a0 context.Context, _
 }
 
 // Sync provides a mock function with given fields: _a0, _a1, _a2
-func (_m *AWSResourceReconciler) Sync(_a0 context.Context, _a1 types.AWSResourceManager, _a2 types.AWSResource) error {
+func (_m *AWSResourceReconciler) Sync(_a0 context.Context, _a1 types.AWSResourceManager, _a2 types.AWSResource) (types.AWSResource, error) {
 	ret := _m.Called(_a0, _a1, _a2)
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResourceManager, types.AWSResource) error); ok {
+	var r0 types.AWSResource
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResourceManager, types.AWSResource) types.AWSResource); ok {
 		r0 = rf(_a0, _a1, _a2)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResource)
+		}
 	}
 
-	return r0
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, types.AWSResourceManager, types.AWSResource) error); ok {
+		r1 = rf(_a0, _a1, _a2)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }

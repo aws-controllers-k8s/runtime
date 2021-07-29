@@ -125,7 +125,7 @@ func (r *reconciler) SecretValueFromReference(
 // a CR CRUD request
 func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error) {
 	ctx := context.Background()
-	res, err := r.getAWSResource(ctx, req)
+	desired, err := r.getAWSResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
@@ -134,20 +134,18 @@ func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error
 		return ctrlrt.Result{}, err
 	}
 
-	acctID := r.getOwnerAccountID(res)
-	region := r.getRegion(res)
+	acctID := r.getOwnerAccountID(desired)
+	region := r.getRegion(desired)
 	roleARN := r.getRoleARN(acctID)
-	endpointURL := r.getEndpointURL(res)
-	sess, err := r.sc.NewSession(
-		region, &endpointURL, roleARN,
-		res.RuntimeObject().GetObjectKind().GroupVersionKind(),
-	)
+	endpointURL := r.getEndpointURL(desired)
+	gvk := desired.RuntimeObject().GetObjectKind().GroupVersionKind()
+	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
 
 	rlog := ackrtlog.NewResourceLogger(
-		r.log, res,
+		r.log, desired,
 		"account", acctID,
 		"role", roleARN,
 		"region", region,
@@ -160,27 +158,34 @@ func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
-	return r.handleReconcileError(ctx, r.reconcile(ctx, rm, res))
+	latest, err := r.reconcile(ctx, rm, desired)
+	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
+// reconcile either cleans up a deleted resource or ensures that the supplied
+// AWSResource's backing API resource matches the supplied desired state.
+//
+// It returns a copy of the resource that represents the latest observed state.
 func (r *resourceReconciler) reconcile(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	res acktypes.AWSResource,
-) error {
+) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
-		return r.cleanup(ctx, rm, res)
+		return r.deleteResource(ctx, rm, res)
 	}
 	return r.Sync(ctx, rm, res)
 }
 
 // Sync ensures that the supplied AWSResource's backing API resource
-// matches the supplied desired state
+// matches the supplied desired state.
+//
+// It returns a copy of the resource that represents the latest observed state.
 func (r *resourceReconciler) Sync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-) error {
+) (acktypes.AWSResource, error) {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.Sync")
@@ -200,122 +205,123 @@ func (r *resourceReconciler) Sync(
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
-			if latest != nil {
-				// this indicates, that even though ReadOne failed
-				// there is some changes available in the latest.RuntimeObject()
-				// (example: ko.Status.Conditions) which have been
-				// updated in the resource
-				// Thus, patchResourceStatus() call should be made here
-				_ = r.patchResourceStatus(ctx, desired, latest)
-			}
-			return err
+			return latest, err
 		}
 		if isAdopted {
-			return ackerr.AdoptedResourceNotFound
+			return nil, ackerr.AdoptedResourceNotFound
 		}
-		// Before we create the backend AWS service resources, let's first mark
-		// the CR as being managed by ACK. Internally, this means adding a
-		// finalizer to the CR; a finalizer that is removed once ACK no longer
-		// manages the resource OR if the backend AWS service resource is
-		// properly deleted.
-		if err = r.setResourceManaged(ctx, desired); err != nil {
-			return err
+		if latest, err = r.createResource(ctx, rm, desired); err != nil {
+			return latest, err
 		}
-
-		rlog.Enter("rm.Create")
-		latest, err = rm.Create(ctx, desired)
-		rlog.Exit("rm.Create", err)
-		if err != nil {
-			if latest != nil {
-				// this indicates, that even though Create failed
-				// there is some changes available in the latest.RuntimeObject()
-				// (example: ko.Status.Conditions) which have been
-				// updated in the resource
-				// Thus, patchResourceStatus() call should be made here
-				_ = r.patchResourceStatus(ctx, desired, latest)
-			}
-			return err
-		}
-		rlog.Info("created new resource")
 	} else {
-		// Ensure the resource is always managed (adopted resources apply)
-		if err = r.setResourceManaged(ctx, desired); err != nil {
-			return err
-		}
-
-		// Check to see if the latest observed state already matches the
-		// desired state and if not, update the resource
-		delta := r.rd.Delta(desired, latest)
-		if delta.DifferentAt("Spec") {
-			rlog.Info(
-				"desired resource state has changed",
-				"diff", delta.Differences,
-			)
-			rlog.Enter("rm.Update")
-			latest, err = rm.Update(ctx, desired, latest, delta)
-			rlog.Exit("rm.Update", err, "latest", latest)
-			if err != nil {
-				if latest != nil {
-					// this indicates, that even though update failed
-					// there is some changes available in the latest.RuntimeObject()
-					// (example: ko.Status.Conditions) which have been
-					// updated in the resource
-					// Thus, patchResourceStatus() call should be made here
-					_ = r.patchResourceStatus(ctx, desired, latest)
-				}
-				return err
-			}
-			rlog.Info("updated resource")
+		if latest, err = r.updateResource(ctx, rm, desired, latest); err != nil {
+			return latest, err
 		}
 	}
-	if ackcompare.IsNotNil(latest) {
-		err = r.patchResource(ctx, desired, latest)
-		if err != nil {
-			return err
-		}
-		for _, condition := range latest.Conditions() {
-			if condition.Type != ackv1alpha1.ConditionTypeResourceSynced {
-				continue
-			}
-			// The code below only executes for "ConditionTypeResourceSynced"
-			if condition.Status == corev1.ConditionTrue {
-				if duration := r.rmf.RequeueOnSuccessSeconds(); duration > 0 {
-					rlog.Debug(
-						"requeueing resource after resource synced condition true",
-					)
-					return requeue.NeededAfter(nil, time.Duration(duration)*time.Second)
-				}
-			} else {
-				rlog.Debug(
-					"requeueing resource after finding resource synced condition false",
-				)
-				return requeue.NeededAfter(
-					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
-			}
-		}
-	}
-	return nil
+	return r.handleRequeues(ctx, latest)
 }
 
-// patchResource patches the custom resource in the Kubernetes API to match the
-// supplied latest resource's "metadata", "spec" and "status"
-// To only patch the metadata and spec, use "patchResourceMetadataAndSpec".
-// To only patch the status, use "patchResourceStatus"
-func (r *resourceReconciler) patchResource(
+// createResource marks the CR as managed by ACK, calls one or more AWS APIs to
+// create the backend AWS resource and patches the CR's Metadata, Spec and
+// Status back to the Kubernetes API.
+//
+// When the backend resource modification fails, we return an error along with
+// the latest observed state of the CR, and the HandleReconcileError wrapper
+// ensures that the CR's Status is patched back to the Kubernetes API. This is
+// done in order to ensure things like Conditions are appropriately saved on
+// the resource.
+//
+// The function returns a copy of the CR that has most recently been patched
+// back to the Kubernetes API.
+func (r *resourceReconciler) createResource(
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-	latest acktypes.AWSResource,
-) error {
-	err := r.patchResourceMetadataAndSpec(ctx, desired, latest)
-	if err != nil {
-		return err
+) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.createResource")
+	defer exit(err)
+
+	var latest acktypes.AWSResource // the newly created resource
+
+	// Before we create the backend AWS service resources, let's first mark
+	// the CR as being managed by ACK. Internally, this means adding a
+	// finalizer to the CR; a finalizer that is removed once ACK no longer
+	// manages the resource OR if the backend AWS service resource is
+	// properly deleted.
+	if err = r.setResourceManaged(ctx, desired); err != nil {
+		return nil, err
 	}
 
-	err = r.patchResourceStatus(ctx, desired, latest)
+	rlog.Enter("rm.Create")
+	latest, err = rm.Create(ctx, desired)
+	rlog.Exit("rm.Create", err)
 	if err != nil {
-		return err
+		return latest, err
 	}
-	return nil
+	// Ensure that we are patching any changes to the annotations/metadata and
+	// the Spec that may have been set by the resource manager's successful
+	// Create call above.
+	err = r.patchResourceMetadataAndSpec(ctx, desired, latest)
+	if err != nil {
+		return latest, err
+	}
+	rlog.Info("created new resource")
+	return latest, nil
+}
+
+// updateResource calls one or more AWS APIs to modify the backend AWS resource
+// and patches the CR's Metadata and Spec back to the Kubernetes API.
+//
+// When the backend resource creation fails, we return an error along with the
+// latest observed state of the CR, and the HandleReconcileError wrapper
+// ensures that the CR's Status is patched back to the Kubernetes API. This is
+// done in order to ensure things like Conditions are appropriately saved on
+// the resource.
+//
+// The function returns a copy of the CR that has most recently been patched
+// back to the Kubernetes API.
+func (r *resourceReconciler) updateResource(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.updateResource")
+	defer exit(err)
+
+	// Ensure the resource is always managed (adopted resources apply)
+	if err = r.setResourceManaged(ctx, desired); err != nil {
+		return latest, err
+	}
+
+	// Check to see if the latest observed state already matches the
+	// desired state and if not, update the resource
+	delta := r.rd.Delta(desired, latest)
+	if delta.DifferentAt("Spec") {
+		rlog.Info(
+			"desired resource state has changed",
+			"diff", delta.Differences,
+		)
+		rlog.Enter("rm.Update")
+		latest, err = rm.Update(ctx, desired, latest, delta)
+		rlog.Exit("rm.Update", err, "latest", latest)
+		if err != nil {
+			return latest, err
+		}
+		// Ensure that we are patching any changes to the annotations/metadata and
+		// the Spec that may have been set by the resource manager's successful
+		// Create call above.
+		err = r.patchResourceMetadataAndSpec(ctx, desired, latest)
+		if err != nil {
+			return latest, err
+		}
+		rlog.Info("updated resource")
+	}
+	return latest, nil
 }
 
 // patchResourceMetadataAndSpec patches the custom resource in the Kubernetes API to match the
@@ -387,19 +393,22 @@ func (r *resourceReconciler) patchResourceStatus(
 	return nil
 }
 
-// cleanup ensures that the supplied AWSResource's backing API resource is
-// destroyed along with all child dependent resources
-func (r *resourceReconciler) cleanup(
+// deleteResource ensures that the supplied AWSResource's backing API resource
+// is destroyed along with all child dependent resources.
+//
+// Returns a copy of the resource with the latest state either right before
+// deletion OR after a failed attempted deletion.
+func (r *resourceReconciler) deleteResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	current acktypes.AWSResource,
-) error {
+) (acktypes.AWSResource, error) {
 	// TODO(jaypipes): Handle all dependent resources. The AWSResource
 	// interface needs to get some methods that return schema relationships,
 	// first though
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
-	exit := rlog.Trace("r.cleanup")
+	exit := rlog.Trace("r.deleteResource")
 	defer exit(err)
 
 	rlog.Enter("rm.ReadOne")
@@ -408,33 +417,38 @@ func (r *resourceReconciler) cleanup(
 	if err != nil {
 		if err == ackerr.NotFound {
 			// If the aws resource is not found, remove finalizer
-			return r.setResourceUnmanaged(ctx, current)
+			return current, r.setResourceUnmanaged(ctx, current)
 		}
-		return err
+		return current, err
 	}
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
 	rlog.Exit("rm.Delete", err)
 	if ackcompare.IsNotNil(latest) {
-		// The Delete operation is likely asynchronous and has likely set a Status
-		// field on the returned CR to something like `deleting`. Here, we patchResource()
-		// in order to save these Status field modifications.
-		_ = r.patchResource(ctx, current, latest)
+		// The Delete operation may be asynchronous and the resource manager
+		// may have set a Spec field or metadata on the CR during `rm.Delete`,
+		// so we make sure to save any of those Spec/Metadata changes here.
+		//
+		// NOTE(jaypipes): The `HandleReconcilerError` wrapper *always* saves
+		// any changes to Status fields that may have been made by the resource
+		// manager if the returned `latest` resource is non-nil, so we don't
+		// have to worry about saving status stuff here.
+		_ = r.patchResourceMetadataAndSpec(ctx, current, latest)
 	}
 	if err != nil {
 		// NOTE: Delete() implementations that have asynchronously-completing
 		// deletions should return a RequeueNeededAfter.
-		return err
+		return latest, err
 	}
 
 	// Now that external AWS service resources have been appropriately cleaned
 	// up, we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
 	if err = r.setResourceUnmanaged(ctx, current); err != nil {
-		return err
+		return latest, err
 	}
 	rlog.Info("deleted resource")
-	return nil
+	return latest, nil
 }
 
 // setResourceManaged marks the underlying CR in the supplied AWSResource with
@@ -444,14 +458,15 @@ func (r *resourceReconciler) setResourceManaged(
 	ctx context.Context,
 	res acktypes.AWSResource,
 ) error {
+	if r.rd.IsManaged(res) {
+		return nil
+	}
+
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.setResourceManaged")
 	defer exit(err)
 
-	if r.rd.IsManaged(res) {
-		return nil
-	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkManaged(res)
 	rlog.Enter("kc.Patch (metadata + spec)")
@@ -475,14 +490,15 @@ func (r *resourceReconciler) setResourceUnmanaged(
 	ctx context.Context,
 	res acktypes.AWSResource,
 ) error {
+	if !r.rd.IsManaged(res) {
+		return nil
+	}
+
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.setResourceUnmanaged")
 	defer exit(err)
 
-	if !r.rd.IsManaged(res) {
-		return nil
-	}
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkUnmanaged(res)
 	rlog.Enter("kc.Patch (metadata + spec)")
@@ -512,12 +528,61 @@ func (r *resourceReconciler) getAWSResource(
 	return r.rd.ResourceFromRuntimeObject(ro), nil
 }
 
-// handleReconcileError will handle errors from reconcile handlers, which
-// respects runtime errors.
-func (r *resourceReconciler) handleReconcileError(
+// handleRequeues examines the supplied latest observed resource state and
+// triggers a requeue for reconciling the resource when certain events occur
+// (or when nothing occurs and the resource manager for that kind of resource
+// indicates the resource should be repeatedly reconciled)
+func (r *resourceReconciler) handleRequeues(
 	ctx context.Context,
+	latest acktypes.AWSResource,
+) (acktypes.AWSResource, error) {
+	if ackcompare.IsNotNil(latest) {
+		rlog := ackrtlog.FromContext(ctx)
+		for _, condition := range latest.Conditions() {
+			if condition.Type != ackv1alpha1.ConditionTypeResourceSynced {
+				continue
+			}
+			// The code below only executes for "ConditionTypeResourceSynced"
+			if condition.Status == corev1.ConditionTrue {
+				if duration := r.rmf.RequeueOnSuccessSeconds(); duration > 0 {
+					rlog.Debug(
+						"requeueing resource after resource synced condition true",
+					)
+					return latest, requeue.NeededAfter(nil, time.Duration(duration)*time.Second)
+				}
+			} else {
+				rlog.Debug(
+					"requeueing resource after finding resource synced condition false",
+				)
+				return latest, requeue.NeededAfter(
+					ackerr.TemporaryOutOfSync, requeue.DefaultRequeueAfterDuration)
+			}
+		}
+	}
+	return latest, nil
+}
+
+// HandleReconcileError will handle errors from reconcile handlers, which
+// respects runtime errors.
+//
+// If the `latest` parameter is not nil, this function will ALWAYS patch the
+// latest Status fields back to the Kubernetes API.
+func (r *resourceReconciler) HandleReconcileError(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
 	err error,
 ) (ctrlrt.Result, error) {
+	if ackcompare.IsNotNil(latest) {
+		// The reconciliation loop may have returned an error, but if latest is
+		// not nil, there may be some changes available in the CR's Status
+		// struct (example: Conditions), and we want to make sure we save those
+		// changes before proceeding
+		//
+		// TODO(jaypipes): We ignore error handling here but I don't know if
+		// there is a more robust way to handle failures in the patch operation
+		_ = r.patchResourceStatus(ctx, desired, latest)
+	}
 	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
 	}
