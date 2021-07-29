@@ -92,6 +92,34 @@ func reconcilerMocks(
 	), kc
 }
 
+func managerFactoryMocks(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+	delta *ackcompare.Delta,
+) (
+	*ackmocks.AWSResourceManagerFactory,
+	*ackmocks.AWSResourceDescriptor,
+) {
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupKind").Return(
+		&metav1.GroupKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(
+		&fakeBook{},
+	)
+	rd.On("IsManaged", desired).Return(true)
+
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+
+	reg := ackrt.NewRegistry()
+	reg.RegisterResourceManagerFactory(rmf)
+	return rmf, rd
+}
+
 func TestReconcilerUpdate(t *testing.T) {
 	require := require.New(t)
 
@@ -110,22 +138,6 @@ func TestReconcilerUpdate(t *testing.T) {
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
-	rd.On("Delta", desired, latest).Return(
-		delta,
-	).Once()
-	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("IsManaged", desired).Return(true)
-
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
@@ -134,11 +146,11 @@ func TestReconcilerUpdate(t *testing.T) {
 		latest, nil,
 	)
 
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
-
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -182,21 +194,11 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	// Note the change in annotaions
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -205,12 +207,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
-
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
-
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -247,20 +243,10 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	// Note no change to metadata...
 
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	)
-	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -269,12 +255,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
-
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
-
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
 
 	r, kc := reconcilerMocks(rmf)
 
