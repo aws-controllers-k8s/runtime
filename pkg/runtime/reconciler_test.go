@@ -31,6 +31,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 
 	k8srtmocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
@@ -38,15 +39,11 @@ import (
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
-func TestReconcilerUpdate(t *testing.T) {
-	require := require.New(t)
-
-	ctx := context.TODO()
-	arn := ackv1alpha1.AWSResourceName("mybook-arn")
-
-	delta := ackcompare.NewDelta()
-	delta.Add("Spec.A", "val1", "val2")
-
+func resourceMocks() (
+	*ackmocks.AWSResource, // mocked resource
+	*k8srtmocks.Object, // mocked k8s controller-runtime RuntimeObject
+	*k8sobj.Unstructured, // NON-mocked k8s apimachinery meta object
+) {
 	objKind := &k8srtschemamocks.ObjectKind{}
 	objKind.On("GroupVersionKind").Return(
 		k8srtschema.GroupVersionKind{
@@ -56,70 +53,29 @@ func TestReconcilerUpdate(t *testing.T) {
 		},
 	)
 
-	desiredRTObj := &k8srtmocks.Object{}
-	desiredRTObj.On("GetObjectKind").Return(objKind)
-	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
+	rtObj := &k8srtmocks.Object{}
+	rtObj.On("GetObjectKind").Return(objKind)
+	rtObj.On("DeepCopyObject").Return(rtObj)
 
-	desiredMetaObj := &k8sobj.Unstructured{}
-	desiredMetaObj.SetAnnotations(map[string]string{})
-	desiredMetaObj.SetNamespace("default")
-	desiredMetaObj.SetName("mybook")
-	desiredMetaObj.SetGeneration(int64(1))
+	metaObj := &k8sobj.Unstructured{}
+	metaObj.SetAnnotations(map[string]string{})
+	metaObj.SetNamespace("default")
+	metaObj.SetName("mybook")
+	metaObj.SetGeneration(int64(1))
 
-	desired := &ackmocks.AWSResource{}
-	desired.On("MetaObject").Return(desiredMetaObj)
-	desired.On("RuntimeObject").Return(desiredRTObj)
+	res := &ackmocks.AWSResource{}
+	res.On("MetaObject").Return(metaObj)
+	res.On("RuntimeObject").Return(rtObj)
 
-	ids := &ackmocks.AWSResourceIdentifiers{}
-	ids.On("ARN").Return(&arn)
+	return res, rtObj, metaObj
+}
 
-	latestRTObj := &k8srtmocks.Object{}
-	latestRTObj.On("GetObjectKind").Return(objKind)
-	latestRTObj.On("DeepCopyObject").Return(latestRTObj)
-
-	latestMetaObj := &k8sobj.Unstructured{}
-	latestMetaObj.SetAnnotations(map[string]string{})
-	latestMetaObj.SetNamespace("default")
-	latestMetaObj.SetName("mybook")
-	latestMetaObj.SetGeneration(int64(1))
-
-	latest := &ackmocks.AWSResource{}
-	latest.On("Identifiers").Return(ids)
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On("MetaObject").Return(latestMetaObj)
-	latest.On("RuntimeObject").Return(latestRTObj)
-
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
-	rd.On("Delta", desired, latest).Return(
-		delta,
-	).Once()
-	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
-	rd.On("IsManaged", desired).Return(true)
-
-	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ReadOne", ctx, desired).Return(
-		latest, nil,
-	)
-	rm.On("Update", ctx, desired, latest, delta).Return(
-		latest, nil,
-	)
-
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
-
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
-
+func reconcilerMocks(
+	rmf acktypes.AWSResourceManagerFactory,
+) (
+	acktypes.AWSResourceReconciler,
+	*ctrlrtclientmock.Client,
+) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -130,22 +86,84 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	sc := &ackmocks.ServiceController{}
 	kc := &ctrlrtclientmock.Client{}
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
+	return ackrt.NewReconcilerWithClient(
+		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
+	), kc
+}
+
+func managerFactoryMocks(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+	delta *ackcompare.Delta,
+) (
+	*ackmocks.AWSResourceManagerFactory,
+	*ackmocks.AWSResourceDescriptor,
+) {
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupKind").Return(
+		&metav1.GroupKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(
+		&fakeBook{},
+	)
+	rd.On("IsManaged", desired).Return(true)
+
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+
+	reg := ackrt.NewRegistry()
+	reg.RegisterResourceManagerFactory(rmf)
+	return rmf, rd
+}
+
+func TestReconcilerUpdate(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, desiredRTObj, _ := resourceMocks()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	r, kc := reconcilerMocks(rmf)
+
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
-
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
@@ -164,65 +182,23 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.A", "val1", "val2")
 
-	objKind := &k8srtschemamocks.ObjectKind{}
-	objKind.On("GroupVersionKind").Return(
-		k8srtschema.GroupVersionKind{
-			Group:   "bookstore.services.k8s.aws",
-			Kind:    "Book",
-			Version: "v1alpha1",
-		},
-	)
-
-	desiredRTObj := &k8srtmocks.Object{}
-	desiredRTObj.On("GetObjectKind").Return(objKind)
-	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
-
-	desiredMetaObj := &k8sobj.Unstructured{}
-	desiredMetaObj.SetAnnotations(map[string]string{})
-	desiredMetaObj.SetNamespace("default")
-	desiredMetaObj.SetName("mybook")
-	desiredMetaObj.SetGeneration(int64(1))
-
-	desired := &ackmocks.AWSResource{}
-	desired.On("MetaObject").Return(desiredMetaObj)
-	desired.On("RuntimeObject").Return(desiredRTObj)
+	desired, desiredRTObj, _ := resourceMocks()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
 
-	latestRTObj := &k8srtmocks.Object{}
-	latestRTObj.On("GetObjectKind").Return(objKind)
-	latestRTObj.On("DeepCopyObject").Return(latestRTObj)
-
-	latestMetaObj := &k8sobj.Unstructured{}
-	// Note the change in annotaions
-	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
-	latestMetaObj.SetNamespace("default")
-	latestMetaObj.SetName("mybook")
-	latestMetaObj.SetGeneration(int64(1))
-
-	latest := &ackmocks.AWSResource{}
+	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On("MetaObject").Return(latestMetaObj)
-	latest.On("RuntimeObject").Return(latestRTObj)
 
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
+	// Note the change in annotaions
+	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
+
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
-	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -232,37 +208,12 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 		latest, nil,
 	)
 
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
+	r, kc := reconcilerMocks(rmf)
 
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
-
-	zapOptions := ctrlrtzap.Options{
-		Development: true,
-		Level:       zapcore.InfoLevel,
-	}
-	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
-	metrics := ackmetrics.NewMetrics("bookstore")
-
-	sc := &ackmocks.ServiceController{}
-	kc := &ctrlrtclientmock.Client{}
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
-
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
-
-	// With the above mocks and below assertions, we check that if we got a
-	// non-error return from `AWSResourceManager.ReadOne()` and the
-	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
-	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
-	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -282,64 +233,20 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.A", "val1", "val2")
 
-	objKind := &k8srtschemamocks.ObjectKind{}
-	objKind.On("GroupVersionKind").Return(
-		k8srtschema.GroupVersionKind{
-			Group:   "bookstore.services.k8s.aws",
-			Kind:    "Book",
-			Version: "v1alpha1",
-		},
-	)
-
-	desiredRTObj := &k8srtmocks.Object{}
-	desiredRTObj.On("GetObjectKind").Return(objKind)
-	desiredRTObj.On("DeepCopyObject").Return(desiredRTObj)
-
-	desiredMetaObj := &k8sobj.Unstructured{}
-	desiredMetaObj.SetAnnotations(map[string]string{})
-	desiredMetaObj.SetNamespace("default")
-	desiredMetaObj.SetName("mybook")
-	desiredMetaObj.SetGeneration(int64(1))
-
-	desired := &ackmocks.AWSResource{}
-	desired.On("MetaObject").Return(desiredMetaObj)
-	desired.On("RuntimeObject").Return(desiredRTObj)
+	desired, desiredRTObj, _ := resourceMocks()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
 
-	latestRTObj := &k8srtmocks.Object{}
-	latestRTObj.On("GetObjectKind").Return(objKind)
-	latestRTObj.On("DeepCopyObject").Return(latestRTObj)
-
-	latestMetaObj := &k8sobj.Unstructured{}
-	// Note Similar metadata
-	latestMetaObj.SetAnnotations(map[string]string{})
-	latestMetaObj.SetNamespace("default")
-	latestMetaObj.SetName("mybook")
-	latestMetaObj.SetGeneration(int64(1))
-
-	latest := &ackmocks.AWSResource{}
+	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On("MetaObject").Return(latestMetaObj)
-	latest.On("RuntimeObject").Return(latestRTObj)
+	// Note no change to metadata...
 
-	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
-			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBook",
-		},
-	)
-	rd.On("EmptyRuntimeObject").Return(
-		&fakeBook{},
-	)
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	)
-	rd.On("UpdateCRStatus", latest).Return(true, nil)
-	rd.On("IsManaged", desired).Return(true)
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -349,37 +256,12 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 		latest, nil,
 	)
 
-	rmf := &ackmocks.AWSResourceManagerFactory{}
-	rmf.On("ResourceDescriptor").Return(rd)
+	r, kc := reconcilerMocks(rmf)
 
-	reg := ackrt.NewRegistry()
-	reg.RegisterResourceManagerFactory(rmf)
-
-	zapOptions := ctrlrtzap.Options{
-		Development: true,
-		Level:       zapcore.InfoLevel,
-	}
-	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
-	metrics := ackmetrics.NewMetrics("bookstore")
-
-	sc := &ackmocks.ServiceController{}
-	kc := &ctrlrtclientmock.Client{}
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
-
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
-
-	// With the above mocks and below assertions, we check that if we got a
-	// non-error return from `AWSResourceManager.ReadOne()` and the
-	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
-	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
-	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)

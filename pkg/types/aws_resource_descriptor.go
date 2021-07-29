@@ -37,10 +37,6 @@ type AWSResourceDescriptor interface {
 	// Delta returns an `ackcompare.Delta` object containing the difference between
 	// one `AWSResource` and another.
 	Delta(a, b AWSResource) *ackcompare.Delta
-	// UpdateCRStatus accepts an AWSResource object and changes the Status
-	// sub-object of the AWSResource's Kubernetes custom resource (CR) and
-	// returns whether any changes were made
-	UpdateCRStatus(AWSResource) (bool, error)
 	// IsManaged returns true if the supplied AWSResource is under the
 	// management of an ACK service controller. What this means in practice is
 	// that the underlying custom resource (CR) in the AWSResource has had a
