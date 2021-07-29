@@ -31,6 +31,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 
 	k8srtmocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
@@ -67,6 +68,28 @@ func resourceMocks() (
 	res.On("RuntimeObject").Return(rtObj)
 
 	return res, rtObj, metaObj
+}
+
+func reconcilerMocks(
+	rmf acktypes.AWSResourceManagerFactory,
+) (
+	acktypes.AWSResourceReconciler,
+	*ctrlrtclientmock.Client,
+) {
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	cfg := ackcfg.Config{}
+	metrics := ackmetrics.NewMetrics("bookstore")
+
+	sc := &ackmocks.ServiceController{}
+	kc := &ctrlrtclientmock.Client{}
+
+	return ackrt.NewReconcilerWithClient(
+		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
+	), kc
 }
 
 func TestReconcilerUpdate(t *testing.T) {
@@ -117,32 +140,18 @@ func TestReconcilerUpdate(t *testing.T) {
 	reg := ackrt.NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 
-	zapOptions := ctrlrtzap.Options{
-		Development: true,
-		Level:       zapcore.InfoLevel,
-	}
-	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
-	metrics := ackmetrics.NewMetrics("bookstore")
+	r, kc := reconcilerMocks(rmf)
 
-	sc := &ackmocks.ServiceController{}
-	kc := &ctrlrtclientmock.Client{}
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
-
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
-
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
@@ -203,31 +212,12 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	reg := ackrt.NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 
-	zapOptions := ctrlrtzap.Options{
-		Development: true,
-		Level:       zapcore.InfoLevel,
-	}
-	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
-	metrics := ackmetrics.NewMetrics("bookstore")
+	r, kc := reconcilerMocks(rmf)
 
-	sc := &ackmocks.ServiceController{}
-	kc := &ctrlrtclientmock.Client{}
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
-
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
-
-	// With the above mocks and below assertions, we check that if we got a
-	// non-error return from `AWSResourceManager.ReadOne()` and the
-	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
-	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
-	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -286,31 +276,12 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	reg := ackrt.NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 
-	zapOptions := ctrlrtzap.Options{
-		Development: true,
-		Level:       zapcore.InfoLevel,
-	}
-	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
-	metrics := ackmetrics.NewMetrics("bookstore")
+	r, kc := reconcilerMocks(rmf)
 
-	sc := &ackmocks.ServiceController{}
-	kc := &ctrlrtclientmock.Client{}
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
-
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
-
-	// TODO(jaypipes): Place the above setup into helper functions that can be
-	// re-used by future unit tests of the reconciler code paths.
-
-	// With the above mocks and below assertions, we check that if we got a
-	// non-error return from `AWSResourceManager.ReadOne()` and the
-	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
-	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
-	// method,
-	r := ackrt.NewReconcilerWithClient(sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{})
 
 	err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
