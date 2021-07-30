@@ -17,6 +17,7 @@ import (
 	"context"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 )
 
 // AWSResourceReconciler is responsible for reconciling the state of a SINGLE
@@ -37,11 +38,28 @@ type AWSResourceReconciler interface {
 	// Sync ensures that the supplied AWSResource's backing API resource
 	// matches the supplied desired state.
 	//
+	// It returns a copy of the resource that represents the latest observed
+	// state.
+	//
 	// NOTE(jaypipes): This is really only here for dependency injection
 	// purposes in unit testing in order to simplify test setups.
 	Sync(
 		context.Context,
 		AWSResourceManager,
 		AWSResource,
-	) error
+	) (AWSResource, error)
+	// HandleReconcileError will handle errors from reconcile handlers, which
+	// respects runtime errors.
+	//
+	// If the `latest` parameter is not nil, this function will ALWAYS patch the
+	// latest Status fields back to the Kubernetes API.
+	//
+	// NOTE(jaypipes): This is really only here for dependency injection
+	// purposes in unit testing in order to simplify test setups.
+	HandleReconcileError(
+		ctx context.Context,
+		desired AWSResource,
+		latest AWSResource,
+		err error,
+	) (ctrlrt.Result, error)
 }

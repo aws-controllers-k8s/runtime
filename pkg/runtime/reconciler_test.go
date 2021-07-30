@@ -154,9 +154,6 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	r, kc := reconcilerMocks(rmf)
 
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
-	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
@@ -164,13 +161,15 @@ func TestReconcilerUpdate(t *testing.T) {
 	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
 	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
 	// method,
-	err := r.Sync(ctx, rm, desired)
+	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
+	// No changes to metadata or spec so Patch on the object shouldn't be done
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
-	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
@@ -191,7 +190,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
-	// Note the change in annotaions
+	// Note the change in annotations
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
 	rmf, rd := managerFactoryMocks(desired, latest, delta)
@@ -210,18 +209,16 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	r, kc := reconcilerMocks(rmf)
 
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
-	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 
-	err := r.Sync(ctx, rm, desired)
+	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	kc.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
-	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
@@ -258,16 +255,74 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	r, kc := reconcilerMocks(rmf)
 
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
-	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
 
-	err := r.Sync(ctx, rm, desired)
+	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	kc.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
+}
+
+func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, desiredRTObj, _ := resourceMocks()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, latestMetaObj := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
+
+	rmf, _ := managerFactoryMocks(desired, latest, delta)
+	r, kc := reconcilerMocks(rmf)
+
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+
+	_, err := r.HandleReconcileError(ctx, desired, latest, nil)
+	require.Nil(err)
 	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	// The HandleReconcilerError function never updates spec or metadata, so
+	// even though there is a change to the annotations we expect no call to
+	// patch the spec/metadata...
+	kc.AssertNotCalled(t, "Patch")
+}
+
+func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+
+	rmf, _ := managerFactoryMocks(desired, nil, nil)
+	r, kc := reconcilerMocks(rmf)
+
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	kc.On("Status").Return(statusWriter)
+
+	_, err := r.HandleReconcileError(ctx, desired, nil, nil)
+	require.Nil(err)
+	// If latest is nil, we should not call patch status...
+	statusWriter.AssertNotCalled(t, "Patch")
+	// The HandleReconcilerError function never updates spec or metadata, so
+	// even though there is a change to the annotations we expect no call to
+	// patch the spec/metadata...
+	kc.AssertNotCalled(t, "Patch")
 }
