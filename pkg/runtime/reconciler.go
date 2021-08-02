@@ -223,11 +223,10 @@ func (r *resourceReconciler) Sync(
 	}
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
-	var lateInitializedLatest acktypes.AWSResource
-	if lateInitializedLatest, err = r.lateInitializeResource(ctx, rm, desired, latest); err != nil {
-		return lateInitializedLatest, err
+	if latest, err = r.lateInitializeResource(ctx, rm, desired, latest); err != nil {
+		return latest, err
 	}
-	return r.handleRequeues(ctx, lateInitializedLatest)
+	return r.handleRequeues(ctx, latest)
 }
 
 // createResource marks the CR as managed by ACK, calls one or more AWS APIs to
