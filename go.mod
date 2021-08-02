@@ -3,7 +3,7 @@ module github.com/aws-controllers-k8s/runtime
 go 1.14
 
 require (
-	github.com/aws/aws-sdk-go v1.37.4
+	github.com/aws/aws-sdk-go v1.37.10
 	github.com/go-logr/logr v0.1.0
 	github.com/google/go-cmp v0.3.1
 	github.com/pkg/errors v0.9.1
