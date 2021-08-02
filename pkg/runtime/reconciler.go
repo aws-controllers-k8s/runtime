@@ -221,7 +221,13 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	}
-	return r.handleRequeues(ctx, latest)
+	// Attempt to late initialize the resource. If there are no fields to
+	// late initialize, this operation will be a no-op.
+	var lateInitializedLatest acktypes.AWSResource
+	if lateInitializedLatest, err = r.lateInitializeResource(ctx, rm, desired, latest); err != nil {
+		return lateInitializedLatest, err
+	}
+	return r.handleRequeues(ctx, lateInitializedLatest)
 }
 
 // createResource marks the CR as managed by ACK, calls one or more AWS APIs to
@@ -336,6 +342,40 @@ func (r *resourceReconciler) updateResource(
 		rlog.Info("updated resource")
 	}
 	return latest, nil
+}
+
+// lateInitializeResource calls AWSResourceManager.LateInitialize() method and
+// returns the AWSResource with late initialized fields.
+//
+// When the late initialization is delayed for an AWSResource, an error is returned
+// with specific requeue delay to attempt lateInitialization again.
+//
+// This method also adds an annotation to K8s CR, indicating the number of
+// late initialization attempts to correctly calculate exponential backoff delay
+//
+// This method also adds Condition to CR's status indicating status of late initialization.
+func (r *resourceReconciler) lateInitializeResource(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.lateInitializeResource")
+	defer exit(err)
+
+	rlog.Enter("rm.LateInitialize")
+	lateInitializedLatest, err := rm.LateInitialize(ctx, latest)
+	rlog.Exit("rm.LateInitialize", err)
+	if err != nil {
+		// If there was error in late initialization, still patch the resource metadata and spec
+		// to reflect changes in k8s resource.
+		if ackcompare.IsNotNil(lateInitializedLatest) {
+			_ = r.patchResourceMetadataAndSpec(ctx, desired, lateInitializedLatest)
+		}
+	}
+	return lateInitializedLatest, err
 }
 
 // patchResourceMetadataAndSpec patches the custom resource in the Kubernetes API to match the

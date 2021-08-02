@@ -3,7 +3,7 @@ package annotation_test
 import (
 	"testing"
 
-	assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/aws-controllers-k8s/runtime/pkg/annotation"
