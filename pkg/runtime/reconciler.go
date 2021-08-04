@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
@@ -80,6 +81,8 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		mgr,
 	).For(
 		rd.EmptyRuntimeObject(),
+	).WithEventFilter(
+		predicate.GenerationChangedPredicate{},
 	).Complete(r)
 }
 
