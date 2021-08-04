@@ -25,6 +25,7 @@ import (
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -57,6 +58,8 @@ func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	).For(
 		// Read only adopted resource objects
 		&ackv1alpha1.AdoptedResource{},
+	).WithEventFilter(
+		predicate.GenerationChangedPredicate{},
 	).Complete(r)
 }
 
