@@ -34,25 +34,13 @@ const (
 // make the changes accordingly.
 type AccountCache struct {
 	sync.RWMutex
-
-	log logr.Logger
-
-	// ConfigMap informer
-	informer k8scache.SharedInformer
+	log      logr.Logger
 	roleARNs map[string]string
 }
 
-// NewAccountCache makes a new AccountCache from a client.Interface
-// and a logr.Logger
-func NewAccountCache(clientset kubernetes.Interface, log logr.Logger) *AccountCache {
-	sharedInformer := informersv1.NewConfigMapInformer(
-		clientset,
-		currentNamespace,
-		informerResyncPeriod,
-		k8scache.Indexers{},
-	)
+// NewAccountCache instanciate a new AccountCache.
+func NewAccountCache(log logr.Logger) *AccountCache {
 	return &AccountCache{
-		informer: sharedInformer,
 		log:      log.WithName("cache.account"),
 		roleARNs: make(map[string]string),
 	}
@@ -65,10 +53,15 @@ func resourceMatchACKRoleAccountsConfigMap(raw interface{}) bool {
 	return ok && object.ObjectMeta.Name == ACKRoleAccountMap
 }
 
-// Run adds the default event handler functions to the SharedInformer and
-// runs the informer to begin processing items.
-func (c *AccountCache) Run(stopCh <-chan struct{}) {
-	c.informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
+// Run instantiate a new SharedInformer for ConfigMaps and runs it to begin processing items.
+func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{}) {
+	informer := informersv1.NewConfigMapInformer(
+		clientSet,
+		currentNamespace,
+		informerResyncPeriod,
+		k8scache.Indexers{},
+	)
+	informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			if resourceMatchACKRoleAccountsConfigMap(obj) {
 				cm := obj.(*corev1.ConfigMap)
@@ -95,7 +88,7 @@ func (c *AccountCache) Run(stopCh <-chan struct{}) {
 			}
 		},
 	})
-	go c.informer.Run(stopCh)
+	go informer.Run(stopCh)
 }
 
 // GetAccountRoleARN queries the AWS accountID associated Role ARN

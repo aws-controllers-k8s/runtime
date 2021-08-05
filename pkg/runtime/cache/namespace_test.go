@@ -49,13 +49,13 @@ func TestNamespaceCache(t *testing.T) {
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 
 	// initlizing account cache
-	namespaceCache := ackrtcache.NewNamespaceCache(k8sClient, fakeLogger, "")
+	namespaceCache := ackrtcache.NewNamespaceCache(fakeLogger)
 	stopCh := make(chan struct{})
 
-	namespaceCache.Run(stopCh)
+	namespaceCache.Run(k8sClient, stopCh)
 
 	// Test create events
-	k8sClient.CoreV1().Namespaces().Create(
+	_, err := k8sClient.CoreV1().Namespaces().Create(
 		context.Background(),
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -69,6 +69,7 @@ func TestNamespaceCache(t *testing.T) {
 		},
 		metav1.CreateOptions{},
 	)
+	require.Nil(t, err)
 
 	time.Sleep(time.Second)
 
@@ -85,7 +86,7 @@ func TestNamespaceCache(t *testing.T) {
 	require.Equal(t, "https://amazon-service.region.amazonaws.com", endpointURL)
 
 	// Test update events
-	k8sClient.CoreV1().Namespaces().Update(
+	_, err = k8sClient.CoreV1().Namespaces().Update(
 		context.Background(),
 		&corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -99,6 +100,7 @@ func TestNamespaceCache(t *testing.T) {
 		},
 		metav1.UpdateOptions{},
 	)
+	require.Nil(t, err)
 
 	time.Sleep(time.Second)
 
@@ -115,11 +117,12 @@ func TestNamespaceCache(t *testing.T) {
 	require.Equal(t, "https://amazon-other-service.region.amazonaws.com", endpointURL)
 
 	// Test delete events
-	k8sClient.CoreV1().Namespaces().Delete(
+	err = k8sClient.CoreV1().Namespaces().Delete(
 		context.Background(),
 		"production",
 		metav1.DeleteOptions{},
 	)
+	require.Nil(t, err)
 
 	time.Sleep(time.Second)
 

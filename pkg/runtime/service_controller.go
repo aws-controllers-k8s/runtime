@@ -133,13 +133,15 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 
-	clusterConfig := mgr.GetConfig()
-	clientset, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
-		return err
+	cache := ackrtcache.New(c.log)
+	if cfg.WatchNamespace == "" {
+		clusterConfig := mgr.GetConfig()
+		clientSet, err := kubernetes.NewForConfig(clusterConfig)
+		if err != nil {
+			return err
+		}
+		cache.Run(clientSet)
 	}
-	cache := ackrtcache.New(clientset, c.log, cfg.WatchNamespace)
-	cache.Run()
 
 	for _, rmf := range c.rmFactories {
 		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
