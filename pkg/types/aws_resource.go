@@ -55,4 +55,6 @@ type AWSResource interface {
 	// SetIdentifiers will set the the Spec or Status field that represents the
 	// identifier for the resource.
 	SetIdentifiers(*ackv1alpha1.AWSIdentifiers) error
+	// SetStatus will set the Status field for the resource
+	SetStatus(AWSResource)
 }
