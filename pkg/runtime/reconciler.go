@@ -263,6 +263,13 @@ func (r *resourceReconciler) createResource(
 	if err != nil {
 		return latest, err
 	}
+
+	rlog.Enter("rm.ReadOne")
+	latest, err = rm.ReadOne(ctx, latest)
+	rlog.Exit("rm.ReadOne", err)
+	if err != nil {
+		return latest, err
+	}
 	// Ensure that we are patching any changes to the annotations/metadata and
 	// the Spec that may have been set by the resource manager's successful
 	// Create call above.
