@@ -56,23 +56,22 @@ type Caches struct {
 	Namespaces *NamespaceCache
 }
 
-// New creates a new Caches object from a kubernetes.Interface and
-// a logr.Logger
-func New(clientset kubernetes.Interface, log logr.Logger, watchNamespace string) Caches {
+// New instantiate a new Caches object.
+func New(log logr.Logger) Caches {
 	return Caches{
-		Accounts:   NewAccountCache(clientset, log),
-		Namespaces: NewNamespaceCache(clientset, log, watchNamespace),
+		Accounts:   NewAccountCache(log),
+		Namespaces: NewNamespaceCache(log),
 	}
 }
 
 // Run runs all the owned caches
-func (c Caches) Run() {
+func (c Caches) Run(clientSet kubernetes.Interface) {
 	stopCh := make(chan struct{})
 	if c.Accounts != nil {
-		c.Accounts.Run(stopCh)
+		c.Accounts.Run(clientSet, stopCh)
 	}
 	if c.Namespaces != nil {
-		c.Namespaces.Run(stopCh)
+		c.Namespaces.Run(clientSet, stopCh)
 	}
 	c.stopCh = stopCh
 }

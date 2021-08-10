@@ -61,12 +61,12 @@ func TestAccountCache(t *testing.T) {
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 
 	// initlizing account cache
-	accountCache := ackrtcache.NewAccountCache(k8sClient, fakeLogger)
+	accountCache := ackrtcache.NewAccountCache(fakeLogger)
 	stopCh := make(chan struct{})
-	accountCache.Run(stopCh)
+	accountCache.Run(k8sClient, stopCh)
 
 	// Test create events
-	k8sClient.CoreV1().ConfigMaps(testNamespace).Create(
+	_, err := k8sClient.CoreV1().ConfigMaps(testNamespace).Create(
 		context.Background(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -76,6 +76,7 @@ func TestAccountCache(t *testing.T) {
 		},
 		metav1.CreateOptions{},
 	)
+	require.Nil(t, err)
 
 	time.Sleep(time.Second)
 
