@@ -149,13 +149,15 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
-	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 
 	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -213,6 +215,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -261,6 +264,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -363,14 +367,16 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
-	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
-	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
 
 	rmf, rd := managerFactoryMocks(desired, latest, delta)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
+	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 

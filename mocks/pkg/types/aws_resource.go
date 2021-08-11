@@ -135,3 +135,8 @@ func (_m *AWSResource) SetIdentifiers(_a0 *v1alpha1.AWSIdentifiers) error {
 func (_m *AWSResource) SetObjectMeta(meta v1.ObjectMeta) {
 	_m.Called(meta)
 }
+
+// SetStatus provides a mock function with given fields: _a0
+func (_m *AWSResource) SetStatus(_a0 types.AWSResource) {
+	_m.Called(_a0)
+}
