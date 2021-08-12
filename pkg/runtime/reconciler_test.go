@@ -15,8 +15,11 @@ package runtime_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +32,7 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
+	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
@@ -152,6 +156,9 @@ func TestReconcilerUpdate(t *testing.T) {
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
 	r, kc := reconcilerMocks(rmf)
 
 	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
@@ -170,6 +177,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
@@ -206,6 +214,8 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -219,6 +229,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	kc.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
@@ -252,6 +263,8 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -265,6 +278,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	kc.AssertCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }
 
 func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
@@ -325,4 +339,57 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 	// even though there is a change to the annotations we expect no call to
 	// patch the spec/metadata...
 	kc.AssertNotCalled(t, "Patch")
+}
+
+func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, desiredRTObj, _ := resourceMocks()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+
+	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
+	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc := reconcilerMocks(rmf)
+
+	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+
+	_, err := r.Sync(ctx, rm, desired)
+	// Assert the error from late initialization
+	require.NotNil(err)
+	assert.Equal(requeueError, err)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rd.AssertCalled(t, "Delta", desired, latest)
+	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
+	// No difference in desired, latest metadata and spec
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 }

@@ -17,10 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 )
 
 func TestRequeueNeeded(t *testing.T) {
@@ -108,4 +107,16 @@ func TestRequeueNeededAfter(t *testing.T) {
 			assert.Equal(t, 3*time.Second, got.Duration())
 		})
 	}
+}
+
+func TestRequeueNeededAfter_Nil(t *testing.T) {
+	assert := assert.New(t)
+	var nilRequeueNeededAfter *requeue.RequeueNeededAfter
+	assert.Empty(nilRequeueNeededAfter.Error())
+	assert.Nil(nilRequeueNeededAfter.Unwrap())
+	assert.Equal("0s", nilRequeueNeededAfter.Duration().String())
+
+	var nilRequeueNeeded *requeue.RequeueNeeded
+	assert.Empty(nilRequeueNeeded.Error())
+	assert.Nil(nilRequeueNeeded.Unwrap())
 }

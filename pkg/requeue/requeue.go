@@ -53,13 +53,16 @@ type RequeueNeeded struct {
 }
 
 func (e *RequeueNeeded) Error() string {
-	if e.err == nil {
+	if e == nil || e.err == nil {
 		return ""
 	}
 	return e.err.Error()
 }
 
 func (e *RequeueNeeded) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.err
 }
 
@@ -78,17 +81,23 @@ type RequeueNeededAfter struct {
 }
 
 func (e *RequeueNeededAfter) Error() string {
-	if e.err == nil {
+	if e == nil || e.err == nil {
 		return ""
 	}
 	return e.err.Error()
 }
 
 func (e *RequeueNeededAfter) Duration() time.Duration {
+	if e == nil {
+		return time.Duration(0)*time.Second
+	}
 	return e.duration
 }
 
 func (e *RequeueNeededAfter) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.err
 }
 
