@@ -42,8 +42,17 @@ func (c *serviceController) NewSession(
 		Region:              aws.String(string(region)),
 		STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
 	}
-	if endpointURL != nil {
-		awsCfg.Endpoint = endpointURL
+
+	if *endpointURL != "" {
+		endpointServiceResolver := func(service, region string, optFns ...func(*endpoints.Options)) (endpoints.ResolvedEndpoint, error) {
+			if service == c.ServiceEndpointsID {
+				return endpoints.ResolvedEndpoint{
+					URL: *endpointURL,
+				}, nil
+			}
+			return endpoints.DefaultResolver().EndpointFor(service, region)
+		}
+		awsCfg.EndpointResolver = endpoints.ResolverFunc(endpointServiceResolver)
 	}
 
 	sess, err := session.NewSession(&awsCfg)
