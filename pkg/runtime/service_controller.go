@@ -47,6 +47,8 @@ type serviceController struct {
 	// ServiceAPIGroup is a string with the full DNS-correct API group that
 	// this service controller manages, e.g. "s3.services.k8s.aws"
 	ServiceAPIGroup string
+	// ServiceEndpointsID is a string with the service API's EndpointsID, e.g. "api.sagemaker"
+	ServiceEndpointsID string
 	// VersionInfo describes the service controller's built code
 	VersionInfo VersionInfo
 	// rmFactories is a map of resource manager factories, keyed by the
@@ -163,12 +165,14 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 func NewServiceController(
 	svcAlias string,
 	svcAPIGroup string,
+	svcEndpointsID string,
 	versionInfo VersionInfo,
 ) acktypes.ServiceController {
 	return &serviceController{
-		ServiceAlias:    svcAlias,
-		ServiceAPIGroup: svcAPIGroup,
-		VersionInfo:     versionInfo,
-		metrics:         ackmetrics.NewMetrics(svcAlias),
+		ServiceAlias:       svcAlias,
+		ServiceAPIGroup:    svcAPIGroup,
+		ServiceEndpointsID: svcEndpointsID,
+		VersionInfo:        versionInfo,
+		metrics:            ackmetrics.NewMetrics(svcAlias),
 	}
 }
