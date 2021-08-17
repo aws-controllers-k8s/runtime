@@ -114,7 +114,7 @@ func managerFactoryMocks(
 	rd.On("EmptyRuntimeObject").Return(
 		&fakeBook{},
 	)
-	rd.On("IsManaged", desired).Return(true)
+	rd.On("IsManaged", latest).Return(true)
 
 	rmf := &ackmocks.AWSResourceManagerFactory{}
 	rmf.On("ResourceDescriptor").Return(rd)
