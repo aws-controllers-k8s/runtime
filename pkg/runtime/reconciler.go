@@ -28,6 +28,7 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
+	"github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -312,8 +313,8 @@ func (r *resourceReconciler) updateResource(
 	exit := rlog.Trace("r.updateResource")
 	defer exit(err)
 
-	// Ensure the resource is always managed (adopted resources apply)
-	if err = r.setResourceManaged(ctx, desired); err != nil {
+	// Ensure the resource is managed
+	if err = r.failOnResourceUnmanaged(ctx, latest); err != nil {
 		return latest, err
 	}
 
@@ -333,7 +334,7 @@ func (r *resourceReconciler) updateResource(
 		}
 		// Ensure that we are patching any changes to the annotations/metadata and
 		// the Spec that may have been set by the resource manager's successful
-		// Create call above.
+		// Update call above.
 		err = r.patchResourceMetadataAndSpec(ctx, desired, latest)
 		if err != nil {
 			return latest, err
@@ -402,13 +403,9 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	}
 
 	rlog.Enter("kc.Patch (metadata + spec)")
-	// It is necessary to use `DeepCopyObject` versions of `latest` when calling
-	// `Patch` as this method overrides all values as merged from `desired`.
-	// This may affect `latest` in later execution, as otherwise this would set
-	//`desired` == `latest` after calling this method.
 	err = r.kc.Patch(
 		ctx,
-		latest.RuntimeObject().DeepCopyObject(),
+		latest.RuntimeObject(),
 		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
 	)
 	rlog.Exit("kc.Patch (metadata + spec)", err)
@@ -432,13 +429,9 @@ func (r *resourceReconciler) patchResourceStatus(
 	defer exit(err)
 
 	rlog.Enter("kc.Patch (status)")
-	// It is necessary to use `DeepCopyObject` versions of `latest` when calling
-	// `Patch` as this method overrides all values as merged from `desired`.
-	// This may affect `latest` in later execution, as otherwise this would set
-	//`desired` == `latest` after calling this method.
 	err = r.kc.Status().Patch(
 		ctx,
-		latest.RuntimeObject().DeepCopyObject(),
+		latest.RuntimeObject(),
 		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
 	)
 	rlog.Exit("kc.Patch (status)", err)
@@ -517,7 +510,6 @@ func (r *resourceReconciler) setResourceManaged(
 	if r.rd.IsManaged(res) {
 		return nil
 	}
-
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.setResourceManaged")
@@ -525,13 +517,7 @@ func (r *resourceReconciler) setResourceManaged(
 
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkManaged(res)
-	rlog.Enter("kc.Patch (metadata + spec)")
-	err = r.kc.Patch(
-		ctx,
-		res.RuntimeObject(),
-		client.MergeFrom(orig),
-	)
-	rlog.Exit("kc.Patch (metadata + spec)", err)
+	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {
 		return err
 	}
@@ -557,18 +543,27 @@ func (r *resourceReconciler) setResourceUnmanaged(
 
 	orig := res.RuntimeObject().DeepCopyObject()
 	r.rd.MarkUnmanaged(res)
-	rlog.Enter("kc.Patch (metadata + spec)")
-	err = r.kc.Patch(
-		ctx,
-		res.RuntimeObject(),
-		client.MergeFrom(orig),
-	)
-	rlog.Exit("kc.Patch (metadata + spec)", err)
+	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {
 		return err
 	}
 	rlog.Debug("removed resource from management")
 	return nil
+}
+
+// failOnResourceUnmanaged ensures that the underlying CR in the supplied
+// AWSResource has a finalizer. If it does not, it will set a Terminal condition
+// and return with an error
+func (r *resourceReconciler) failOnResourceUnmanaged(
+	ctx context.Context,
+	res acktypes.AWSResource,
+) error {
+	if r.rd.IsManaged(res) {
+		return nil
+	}
+
+	condition.SetTerminal(res, corev1.ConditionTrue, &condition.NotManagedMessage, &condition.NotManagedReason)
+	return ackerr.Terminal
 }
 
 // getAWSResource returns an AWSResource representing the requested Kubernetes

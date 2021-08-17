@@ -209,6 +209,7 @@ func (r *adoptionReconciler) sync(
 	}
 
 	described.SetObjectMeta(*targetMeta)
+	targetDescriptor.MarkManaged(described)
 	targetDescriptor.MarkAdopted(described)
 
 	if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
