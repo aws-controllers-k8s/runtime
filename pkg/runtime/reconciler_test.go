@@ -20,8 +20,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -30,7 +32,9 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
+	"github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
+	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
@@ -96,10 +100,20 @@ func reconcilerMocks(
 	), kc
 }
 
+func managedResourceManagerFactoryMocks(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) (
+	*ackmocks.AWSResourceManagerFactory,
+	*ackmocks.AWSResourceDescriptor,
+) {
+	return managerFactoryMocks(desired, latest, true)
+}
+
 func managerFactoryMocks(
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
-	delta *ackcompare.Delta,
+	isManaged bool,
 ) (
 	*ackmocks.AWSResourceManagerFactory,
 	*ackmocks.AWSResourceDescriptor,
@@ -114,7 +128,7 @@ func managerFactoryMocks(
 	rd.On("EmptyRuntimeObject").Return(
 		&fakeBook{},
 	)
-	rd.On("IsManaged", latest).Return(true)
+	rd.On("IsManaged", latest).Return(isManaged)
 
 	rmf := &ackmocks.AWSResourceManagerFactory{}
 	rmf.On("ResourceDescriptor").Return(rd)
@@ -150,7 +164,7 @@ func TestReconcilerUpdate(t *testing.T) {
 		latest, nil,
 	)
 
-	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -201,7 +215,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	// Note the change in annotations
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
-	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -251,7 +265,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	// Note no change to metadata...
 
-	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	)
@@ -301,7 +315,7 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
-	rmf, _ := managerFactoryMocks(desired, latest, delta)
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
 	r, kc := reconcilerMocks(rmf)
 
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
@@ -325,7 +339,7 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 
-	rmf, _ := managerFactoryMocks(desired, nil, nil)
+	rmf, _ := managedResourceManagerFactoryMocks(desired, nil)
 	r, kc := reconcilerMocks(rmf)
 
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
@@ -368,7 +382,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 		latest, nil,
 	)
 
-	rmf, rd := managerFactoryMocks(desired, latest, delta)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -392,4 +406,63 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	// No difference in desired, latest metadata and spec
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+}
+
+func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+
+	desired, _, _ := resourceMocks()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, _, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	terminalCondition := ackv1alpha1.Condition{
+		Type:    ackv1alpha1.ConditionTypeTerminal,
+		Status:  corev1.ConditionTrue,
+		Reason:  &condition.NotManagedReason,
+		Message: &condition.NotManagedMessage,
+	}
+	latest.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return([]*ackv1alpha1.Condition{&terminalCondition}).Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		hasTerminal := false
+		for _, condition := range conditions {
+			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
+				continue
+			}
+
+			hasTerminal = true
+			assert.Equal(condition.Message, terminalCondition.Message)
+			assert.Equal(condition.Reason, terminalCondition.Reason)
+		}
+
+		assert.True(hasTerminal)
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+
+	rmf, rd := managerFactoryMocks(desired, latest, false)
+
+	r, _ := reconcilerMocks(rmf)
+
+	_, err := r.Sync(ctx, rm, desired)
+	// Assert the error from late initialization
+	require.NotNil(err)
+	assert.Equal(ackerr.Terminal, err)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rd.AssertNotCalled(t, "Delta", desired, latest)
+	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 }
