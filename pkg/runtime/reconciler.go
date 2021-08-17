@@ -562,9 +562,7 @@ func (r *resourceReconciler) failOnResourceUnmanaged(
 		return nil
 	}
 
-	notManagedMessage := "Resource already exists"
-	notManagedReason := "This resource already exists and is not managed by ACK"
-	condition.SetTerminal(res, corev1.ConditionTrue, &notManagedMessage, &notManagedReason)
+	condition.SetTerminal(res, corev1.ConditionTrue, &condition.NotManagedMessage, &condition.NotManagedReason)
 	return ackerr.Terminal
 }
 

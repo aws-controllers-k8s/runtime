@@ -21,6 +21,13 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
+var (
+	NotManagedMessage = "Resource already exists"
+	NotManagedReason  = "This resource already exists but is not managed by ACK. " +
+		"To bring the resource under ACK management, you should explicitly adopt " +
+		"the resource by creating a services.k8s.aws/AdoptedResource"
+)
+
 // Synced returns the Condition in the resource's Conditions collection that is
 // of type ConditionTypeResourceSynced. If no such condition is found, returns
 // nil.
