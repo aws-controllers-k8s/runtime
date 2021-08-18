@@ -1,9 +1,22 @@
+// Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"). You may
+// not use this file except in compliance with the License. A copy of the
+// License is located at
+//
+//     http://aws.amazon.com/apache2.0/
+//
+// or in the "license" file accompanying this file. This file is distributed
+// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+// express or implied. See the License for the specific language governing
+// permissions and limitations under the License.
+
 package annotation_test
 
 import (
 	"testing"
 
-	assert "github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/aws-controllers-k8s/runtime/pkg/annotation"
@@ -29,40 +42,50 @@ func TestGetNumLateInitializationAttempt(t *testing.T) {
 func TestIncrementNumLateInitializationAttempt(t *testing.T) {
 	assert := assert.New(t)
 	// Handles nil parameter
-	annotation.IncrementNumLateInitializationAttempt(nil)
+	err := annotation.IncrementNumLateInitializationAttempt(nil)
+	assert.NotNil(err)
+	assert.Equal("metav1Obj parameter should not be nil", err.Error())
 	obj := &k8sobj.Unstructured{}
 	// nil annotations
 	obj.SetAnnotations(nil)
-	annotation.IncrementNumLateInitializationAttempt(obj)
+	err = annotation.IncrementNumLateInitializationAttempt(obj)
+	assert.Nil(err)
 	assert.Equal("1", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 
 	//empty annotations
 	obj.SetAnnotations(make(map[string]string))
-	annotation.IncrementNumLateInitializationAttempt(obj)
+	err = annotation.IncrementNumLateInitializationAttempt(obj)
+	assert.Nil(err)
 	assert.Equal("1", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 
 	obj.SetAnnotations(map[string]string{annotation.LateInitializationAttempt: "99"})
-	annotation.IncrementNumLateInitializationAttempt(obj)
+	err = annotation.IncrementNumLateInitializationAttempt(obj)
+	assert.Nil(err)
 	assert.Equal("100", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 }
 
 func TestSetNumLateInitializationAttempt(t *testing.T) {
 	assert := assert.New(t)
 	// Handles nil parameter
-	annotation.SetNumLateInitializationAttempt(nil, 10)
+	err := annotation.SetNumLateInitializationAttempt(nil, 10)
+	assert.NotNil(err)
+	assert.Equal("metav1Obj parameter should not be nil", err.Error())
 	obj := &k8sobj.Unstructured{}
 	// nil annotations
 	obj.SetAnnotations(nil)
-	annotation.SetNumLateInitializationAttempt(obj, 10)
+	err = annotation.SetNumLateInitializationAttempt(obj, 10)
+	assert.Nil(err)
 	assert.Equal("10", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 
 	//empty annotations
 	obj.SetAnnotations(make(map[string]string))
-	annotation.SetNumLateInitializationAttempt(obj, 10)
+	err = annotation.SetNumLateInitializationAttempt(obj, 10)
+	assert.Nil(err)
 	assert.Equal("10", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 
 	obj.SetAnnotations(map[string]string{annotation.LateInitializationAttempt: "99"})
-	annotation.SetNumLateInitializationAttempt(obj, 10)
+	err = annotation.SetNumLateInitializationAttempt(obj, 10)
+	assert.Nil(err)
 	assert.Equal("10", obj.GetAnnotations()[annotation.LateInitializationAttempt])
 }
 

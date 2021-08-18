@@ -14,6 +14,7 @@
 package annotation
 
 import (
+	"errors"
 	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +22,7 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
-var (
+const (
 	LateInitializationAttempt = "services.k8s.aws/late-initialization-attempt"
 )
 
@@ -46,26 +47,25 @@ func GetNumLateInitializationAttempt(metav1Obj metav1.Object) int {
 // attempts from k8s resource annotation, increments by 1, and stores back into
 // k8s resource annotation
 // This method updates the object the passed in the parameter inplace. Make sure
-//to pass a pointer object for updates to reflect after method call.
+// to pass a pointer object for updates to reflect after method call.
 // NOTE: AWSResource.MetaObject() method for all ACK resources returns a pointer
 // , so this method is safe to use without return type.
 // Also See https://github.com/aws-controllers-k8s/community/issues/905
-func IncrementNumLateInitializationAttempt(metav1Obj metav1.Object) {
+func IncrementNumLateInitializationAttempt(metav1Obj metav1.Object) error {
 	if ackcompare.IsNil(metav1Obj) {
-		return
+		return errors.New("metav1Obj parameter should not be nil")
 	}
 	annotations := metav1Obj.GetAnnotations()
 	if annotations != nil {
 		if currentNumAttemptStr, ok := annotations[LateInitializationAttempt]; ok {
 			if currentNumAttempt, err := strconv.Atoi(currentNumAttemptStr); err == nil {
-				SetNumLateInitializationAttempt(metav1Obj, currentNumAttempt+1)
-				return
+				return SetNumLateInitializationAttempt(metav1Obj, currentNumAttempt+1)
 			}
 		}
 	}
 	// If late initialization attempt annotation is not present or value is not
 	// a number, reset to 1
-	SetNumLateInitializationAttempt(metav1Obj, 1)
+	return SetNumLateInitializationAttempt(metav1Obj, 1)
 }
 
 // SetNumLateInitializationAttempt stores 'numAttempt' into k8s resource annotation
@@ -75,9 +75,9 @@ func IncrementNumLateInitializationAttempt(metav1Obj metav1.Object) {
 // NOTE: AWSResource.MetaObject() method for all ACK resources returns a pointer
 // , so this method is safe to use without return type.
 // Also See: https://github.com/aws-controllers-k8s/community/issues/905
-func SetNumLateInitializationAttempt(metav1Obj metav1.Object, numAttempt int) {
+func SetNumLateInitializationAttempt(metav1Obj metav1.Object, numAttempt int) error {
 	if ackcompare.IsNil(metav1Obj) {
-		return
+		return errors.New("metav1Obj parameter should not be nil")
 	}
 	annotations := make(map[string]string)
 	if metav1Obj.GetAnnotations() != nil {
@@ -85,6 +85,7 @@ func SetNumLateInitializationAttempt(metav1Obj metav1.Object, numAttempt int) {
 	}
 	annotations[LateInitializationAttempt] = strconv.Itoa(numAttempt)
 	metav1Obj.SetAnnotations(annotations)
+	return nil
 }
 
 // RemoveLateInitializationAttempt removes the 'services.k8s.aws/late-initialization-attempt'
