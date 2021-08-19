@@ -216,6 +216,10 @@ func (r *adoptionReconciler) sync(
 		return r.onError(ctx, desired, err)
 	}
 
+	if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
+		return r.onError(ctx, desired, err)
+	}
+
 	if err := r.markManaged(ctx, *desired); err != nil {
 		return r.onError(ctx, desired, err)
 	}
