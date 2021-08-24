@@ -57,4 +57,6 @@ type AWSResource interface {
 	SetIdentifiers(*ackv1alpha1.AWSIdentifiers) error
 	// SetStatus will set the Status field for the resource
 	SetStatus(AWSResource)
+	// DeepCopy will return a copy of the resource
+	DeepCopy() AWSResource
 }

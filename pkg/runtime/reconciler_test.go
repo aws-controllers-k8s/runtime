@@ -74,6 +74,9 @@ func resourceMocks() (
 	res := &ackmocks.AWSResource{}
 	res.On("MetaObject").Return(metaObj)
 	res.On("RuntimeObject").Return(rtObj)
+	res.On("DeepCopy").Return(res)
+	// DoNothing on SetStatus call.
+	res.On("SetStatus", res).Return(func(res ackmocks.AWSResource) {})
 
 	return res, rtObj, metaObj
 }
@@ -244,6 +247,8 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+	latest.AssertCalled(t, "DeepCopy")
+	latest.AssertCalled(t, "SetStatus", latest)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {

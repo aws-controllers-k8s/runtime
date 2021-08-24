@@ -403,12 +403,18 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	}
 
 	rlog.Enter("kc.Patch (metadata + spec)")
+	// Save a copy of the latest object, to reset 'Status' after performing
+	// the kc.Patch() operation
+	latestCopy := latest.DeepCopy()
 	err = r.kc.Patch(
 		ctx,
 		latest.RuntimeObject(),
 		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
 	)
+	// Reset the status of latest object after patching.
+	latest.SetStatus(latestCopy)
 	rlog.Exit("kc.Patch (metadata + spec)", err)
+
 	if err != nil {
 		return err
 	}

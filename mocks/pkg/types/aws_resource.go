@@ -34,6 +34,22 @@ func (_m *AWSResource) Conditions() []*v1alpha1.Condition {
 	return r0
 }
 
+// DeepCopy provides a mock function with given fields:
+func (_m *AWSResource) DeepCopy() types.AWSResource {
+	ret := _m.Called()
+
+	var r0 types.AWSResource
+	if rf, ok := ret.Get(0).(func() types.AWSResource); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResource)
+		}
+	}
+
+	return r0
+}
+
 // Identifiers provides a mock function with given fields:
 func (_m *AWSResource) Identifiers() types.AWSResourceIdentifiers {
 	ret := _m.Called()
