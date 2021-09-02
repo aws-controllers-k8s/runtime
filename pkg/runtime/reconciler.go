@@ -40,12 +40,13 @@ import (
 
 // reconciler describes a generic reconciler within ACK.
 type reconciler struct {
-	sc      acktypes.ServiceController
-	kc      client.Client
-	log     logr.Logger
-	cfg     ackcfg.Config
-	cache   ackrtcache.Caches
-	metrics *ackmetrics.Metrics
+	sc        acktypes.ServiceController
+	kc        client.Client
+	apiReader client.Reader
+	log       logr.Logger
+	cfg       ackcfg.Config
+	cache     ackrtcache.Caches
+	metrics   *ackmetrics.Metrics
 }
 
 // resourceReconciler is responsible for reconciling the state of a SINGLE KIND of
@@ -77,6 +78,7 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		return ackerr.NilResourceManagerFactory
 	}
 	r.kc = mgr.GetClient()
+	r.apiReader = mgr.GetAPIReader()
 	rd := r.rmf.ResourceDescriptor()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
@@ -574,12 +576,24 @@ func (r *resourceReconciler) failOnResourceUnmanaged(
 
 // getAWSResource returns an AWSResource representing the requested Kubernetes
 // namespaced object
+// NOTE: this method makes direct call to k8s apiserver. Currently this method
+// is only invoked once per reconciler loop. For future use, Take care of k8s
+// apiserver rate limit if calling this method more than once per reconciler
+// loop.
 func (r *resourceReconciler) getAWSResource(
 	ctx context.Context,
 	req ctrlrt.Request,
 ) (acktypes.AWSResource, error) {
 	ro := r.rd.EmptyRuntimeObject()
-	if err := r.kc.Get(ctx, req.NamespacedName, ro); err != nil {
+	// Here we use k8s APIReader to read the k8s object by making the
+	// direct call to k8s apiserver instead of using k8sClient.
+	// The reason is that k8sClient uses a cache and sometimes k8sClient can
+	// return stale copy of object.
+	// It is okay to make direct call to k8s apiserver because we are only
+	// making single read call for complete reconciler loop.
+	// See following issue for more details:
+	// https://github.com/aws-controllers-k8s/community/issues/894
+	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return r.rd.ResourceFromRuntimeObject(ro), nil
