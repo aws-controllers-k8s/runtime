@@ -474,11 +474,14 @@ func (r *resourceReconciler) deleteResource(
 	if err != nil {
 		if err == ackerr.NotFound {
 			// If the aws resource is not found, remove finalizer
-			// and finish reconciliation
 			if err = r.setResourceUnmanaged(ctx, current); err != nil {
 				return current, err
 			}
 			rlog.Info("deleted resource")
+
+			// Return nil resource so that patchStatus attempt is not made.
+			// Underlying K8s resource gets deleted after removing finalizer string and
+			// patchStatus call will return NotFound error.
 			return nil, nil
 		}
 		return current, err
@@ -511,8 +514,9 @@ func (r *resourceReconciler) deleteResource(
 	}
 	rlog.Info("deleted resource")
 
-	// Since the finalizer has been removed, the controller should successfully
-	// reconcile
+	// Return nil resource so that patchStatus attempt is not made.
+	// Underlying K8s resource gets deleted after removing finalizer string and
+	// patchStatus call will return NotFound error.
 	return nil, nil
 }
 
