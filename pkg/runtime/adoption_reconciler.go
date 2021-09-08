@@ -22,6 +22,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -213,12 +214,25 @@ func (r *adoptionReconciler) sync(
 	targetDescriptor.MarkManaged(described)
 	targetDescriptor.MarkAdopted(described)
 
-	if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
-		return r.onError(ctx, desired, err)
-	}
+	// Only create the described resource if it does not already exist
+	// in k8s cluster.
+	if err := r.apiReader.Get(ctx, types.NamespacedName{
+		Namespace: described.MetaObject().GetNamespace(),
+		Name:      described.MetaObject().GetName(),
+	}, described.RuntimeObject()); err != nil {
+		if apierrors.IsNotFound(err) {
+			// If Adopted AWS resource was not found in k8s, create it.
+			if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
+				return r.onError(ctx, desired, err)
+			}
 
-	if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
-		return r.onError(ctx, desired, err)
+			if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
+				return r.onError(ctx, desired, err)
+			}
+		} else {
+			// for any other error except NotFound, return error
+			return r.onError(ctx, desired, err)
+		}
 	}
 
 	if err := r.markManaged(ctx, desired); err != nil {
