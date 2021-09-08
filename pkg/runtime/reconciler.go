@@ -501,11 +501,16 @@ func (r *resourceReconciler) deleteResource(
 	// Now that external AWS service resources have been appropriately cleaned
 	// up, we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
-	if err = r.setResourceUnmanaged(ctx, current); err != nil {
-		return latest, err
+	if ackcompare.IsNotNil(latest) {
+		err = r.setResourceUnmanaged(ctx, latest)
+	} else {
+		err = r.setResourceUnmanaged(ctx, current)
 	}
-	rlog.Info("deleted resource")
-	return latest, nil
+	if err == nil {
+		rlog.Info("deleted resource")
+	}
+
+	return latest, err
 }
 
 // setResourceManaged marks the underlying CR in the supplied AWSResource with
@@ -644,11 +649,15 @@ func (r *resourceReconciler) HandleReconcileError(
 	latest acktypes.AWSResource,
 	err error,
 ) (ctrlrt.Result, error) {
-	if ackcompare.IsNotNil(latest) {
+	if ackcompare.IsNotNil(latest) && r.rd.IsManaged(latest) {
 		// The reconciliation loop may have returned an error, but if latest is
 		// not nil, there may be some changes available in the CR's Status
 		// struct (example: Conditions), and we want to make sure we save those
 		// changes before proceeding
+		//
+		// Attempt to patch the status only if the resource is managed.
+		// Otherwise, the underlying K8s resource gets deleted and
+		// patchStatus call will return NotFound error
 		//
 		// TODO(jaypipes): We ignore error handling here but I don't know if
 		// there is a more robust way to handle failures in the patch operation
