@@ -22,6 +22,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -53,6 +54,7 @@ type adoptionReconciler struct {
 // of an upstream controller-runtime.Manager
 func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
+	r.apiReader = mgr.GetAPIReader()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -130,7 +132,7 @@ func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
 	}
 
 	if res.DeletionTimestamp != nil {
-		return r.cleanup(ctx, *res)
+		return r.cleanup(ctx, res)
 	}
 
 	// Determine whether the reason is in a terminal state
@@ -212,31 +214,41 @@ func (r *adoptionReconciler) sync(
 	targetDescriptor.MarkManaged(described)
 	targetDescriptor.MarkAdopted(described)
 
-	if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
+	// Only create the described resource if it does not already exist
+	// in k8s cluster.
+	if err := r.apiReader.Get(ctx, types.NamespacedName{
+		Namespace: described.MetaObject().GetNamespace(),
+		Name:      described.MetaObject().GetName(),
+	}, described.RuntimeObject()); err != nil {
+		if apierrors.IsNotFound(err) {
+			// If Adopted AWS resource was not found in k8s, create it.
+			if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
+				return r.onError(ctx, desired, err)
+			}
+
+			if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
+				return r.onError(ctx, desired, err)
+			}
+		} else {
+			// for any other error except NotFound, return error
+			return r.onError(ctx, desired, err)
+		}
+	}
+
+	if err := r.markManaged(ctx, desired); err != nil {
 		return r.onError(ctx, desired, err)
 	}
 
-	if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
-		return r.onError(ctx, desired, err)
-	}
-
-	if err := r.markManaged(ctx, *desired); err != nil {
-		return r.onError(ctx, desired, err)
-	}
-
-	if err := r.onSuccess(ctx, desired); err != nil {
-		// Don't attempt to patch conditions again, directly return err
-		return err
-	}
-
-	return nil
+	// Don't attempt to patch conditions again, directly return result of
+	// 'r.onSuccess'
+	return r.onSuccess(ctx, desired)
 }
 
-// cleanup ensures that the supplied AWSResource's backing API resource is
-// destroyed along with all child dependent resources
+// cleanup removes the finalizer from AdoptedResource so that k8s object can
+// be deleted.
 func (r *adoptionReconciler) cleanup(
 	ctx context.Context,
-	current ackv1alpha1.AdoptedResource,
+	current *ackv1alpha1.AdoptedResource,
 ) error {
 	if err := r.markUnmanaged(ctx, current); err != nil {
 		return err
@@ -252,7 +264,15 @@ func (r *adoptionReconciler) getAdoptedResource(
 	req ctrlrt.Request,
 ) (*ackv1alpha1.AdoptedResource, error) {
 	ro := &ackv1alpha1.AdoptedResource{}
-	if err := r.kc.Get(ctx, req.NamespacedName, ro); err != nil {
+	// Here we use k8s APIReader to read the k8s object by making the
+	// direct call to k8s apiserver instead of using k8sClient.
+	// The reason is that k8sClient uses a cache and sometimes k8sClient can
+	// return stale copy of object.
+	// It is okay to make direct call to k8s apiserver because we are only
+	// making single read call for complete reconciler loop.
+	// See following issue for more details:
+	// https://github.com/aws-controllers-k8s/community/issues/894
+	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return ro, nil
@@ -279,16 +299,17 @@ func (r *adoptionReconciler) onSuccess(
 }
 
 // patchAdoptedCondition updates the adopted condition status of the adopted resource
+// The resource passed in the parameter gets updated with the conditions
 func (r *adoptionReconciler) patchAdoptedCondition(
 	ctx context.Context,
 	res *ackv1alpha1.AdoptedResource,
 	err error,
 ) error {
-	ko := res.DeepCopy()
+	base := res.DeepCopy()
 
 	// Adopted condition
 	var adoptedCondition *ackv1alpha1.Condition = nil
-	for _, condition := range ko.Status.Conditions {
+	for _, condition := range res.Status.Conditions {
 		if condition.Type == ackv1alpha1.ConditionTypeAdopted {
 			adoptedCondition = condition
 			break
@@ -299,7 +320,7 @@ func (r *adoptionReconciler) patchAdoptedCondition(
 		adoptedCondition = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeAdopted,
 		}
-		ko.Status.Conditions = append(ko.Status.Conditions, adoptedCondition)
+		res.Status.Conditions = append(res.Status.Conditions, adoptedCondition)
 	}
 
 	var errMessage string
@@ -312,11 +333,7 @@ func (r *adoptionReconciler) patchAdoptedCondition(
 		adoptedCondition.Status = corev1.ConditionTrue
 	}
 
-	return r.kc.Status().Patch(
-		ctx,
-		ko.DeepCopyObject(),
-		client.MergeFrom(res),
-	)
+	return r.patchStatus(ctx, res, base)
 }
 
 // isAdopted returns true if the AdoptedResource is in a terminal adoption state
@@ -344,39 +361,27 @@ func (r *adoptionReconciler) getTargetResourceGroupKind(
 }
 
 // markManaged places the supplied resource under the management of ACK.
+// It adds the finalizer string, patches the object in etcd and updates
+// the object 'res' in parameter with latest metadata.
 func (r *adoptionReconciler) markManaged(
 	ctx context.Context,
-	res ackv1alpha1.AdoptedResource,
+	res *ackv1alpha1.AdoptedResource,
 ) error {
-	orig := res.DeepCopyObject()
+	base := res.DeepCopy()
 	k8sctrlutil.AddFinalizer(&res.ObjectMeta, finalizerString)
-	err := r.kc.Patch(
-		ctx,
-		res.DeepCopyObject(),
-		client.MergeFrom(orig),
-	)
-	if err != nil {
-		return err
-	}
-	return nil
+	return r.patchMetadataAndSpec(ctx, res, base)
 }
 
 // markUnmanaged removes the supplied resource from management by ACK.
+// It removes the finalizer string, patches the object in etcd and updates
+// the object 'res' in parameter with latest metadata.
 func (r *adoptionReconciler) markUnmanaged(
 	ctx context.Context,
-	res ackv1alpha1.AdoptedResource,
+	res *ackv1alpha1.AdoptedResource,
 ) error {
-	orig := res.DeepCopyObject()
+	base := res.DeepCopy()
 	k8sctrlutil.RemoveFinalizer(&res.ObjectMeta, finalizerString)
-	err := r.kc.Patch(
-		ctx,
-		res.DeepCopyObject(),
-		client.MergeFrom(orig),
-	)
-	if err != nil {
-		return err
-	}
-	return nil
+	return r.patchMetadataAndSpec(ctx, res, base)
 }
 
 // handleReconcileError will handle errors from reconcile handlers, which
@@ -479,6 +484,45 @@ func (r *adoptionReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// patchMetadataAndSpec patches the Metadata and Spec for AdoptedResource into
+// k8s. The adopted resource 'res' also gets updated with content returned from
+// apiserver.
+// TODO(vijat@): Refactor this and use single 'patchMetadataAndSpec' method
+// for reconciler and adoptionReconciler
+func (r *adoptionReconciler) patchMetadataAndSpec(
+	ctx context.Context,
+	res *ackv1alpha1.AdoptedResource,
+	base *ackv1alpha1.AdoptedResource,
+) error {
+	// k8s Client Patch call updates the status of original object with the
+	// content returned from apiserver.
+	// Keep a copy of status field to reset the status of 'res' after patch call
+	resStatusCopy := res.DeepCopy().Status
+	err := r.kc.Patch(
+		ctx,
+		res,
+		client.MergeFrom(base),
+	)
+	res.Status = resStatusCopy
+	return err
+}
+
+// patchStatus patches the Status for AdoptedResource into k8s. The adopted
+// resource 'res' also gets updated with the content returned from apiserver.
+// TODO(vijat@): Refactor this and use single 'patchStatus' method
+// for reconciler and adoptionReconciler
+func (r *adoptionReconciler) patchStatus(
+	ctx context.Context,
+	res *ackv1alpha1.AdoptedResource,
+	base *ackv1alpha1.AdoptedResource,
+) error {
+	return r.kc.Status().Patch(
+		ctx,
+		res,
+		client.MergeFrom(base),
+	)
 }
 
 // NewAdoptionReconciler returns a new adoptionReconciler object
