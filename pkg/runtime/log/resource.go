@@ -44,7 +44,8 @@ func (rl *ResourceLogger) Debug(
 	msg string,
 	additionalValues ...interface{},
 ) {
-	AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
+	vals := expandResourceFields(rl.res, additionalValues...)
+	rl.log.V(1).Info(msg, vals...)
 }
 
 // Info writes a supplied log message about a resource that includes a
@@ -53,7 +54,8 @@ func (rl *ResourceLogger) Info(
 	msg string,
 	additionalValues ...interface{},
 ) {
-	AdaptResource(rl.log, rl.res, additionalValues...).V(0).Info(msg)
+	vals := expandResourceFields(rl.res, additionalValues...)
+	rl.log.V(0).Info(msg, vals...)
 }
 
 // Enter logs an entry to a function or code block
@@ -65,7 +67,8 @@ func (rl *ResourceLogger) Enter(
 		rl.blockDepth++
 		depth := strings.Repeat(">", rl.blockDepth)
 		msg := depth + " " + name
-		AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
+		vals := expandResourceFields(rl.res, additionalValues...)
+		rl.log.V(1).Info(msg, vals...)
 	}
 }
 
@@ -82,8 +85,8 @@ func (rl *ResourceLogger) Exit(
 			additionalValues = append(additionalValues, "error")
 			additionalValues = append(additionalValues, err)
 		}
-		AdaptResource(rl.log, rl.res, additionalValues...).V(1).Info(msg)
-		rl.blockDepth--
+		vals := expandResourceFields(rl.res, additionalValues...)
+		rl.log.V(1).Info(msg, vals...)
 	}
 }
 
@@ -121,23 +124,7 @@ func AdaptResource(
 	res acktypes.AWSResource,
 	additionalValues ...interface{},
 ) logr.Logger {
-	metaObj := res.MetaObject()
-	ns := metaObj.GetNamespace()
-	resName := metaObj.GetName()
-	generation := metaObj.GetGeneration()
-	rtObj := res.RuntimeObject()
-	kind := rtObj.GetObjectKind().GroupVersionKind().Kind
-	vals := []interface{}{
-		"kind", kind,
-		"namespace", ns,
-		"name", resName,
-		"generation", generation,
-	}
-	if len(additionalValues) > 0 {
-		for _, v := range additionalValues {
-			vals = append(vals, v)
-		}
-	}
+	vals := expandResourceFields(res, additionalValues...)
 	return log.WithValues(vals...)
 }
 
@@ -163,21 +150,20 @@ func InfoResource(
 	AdaptResource(log, res, additionalValues...).V(0).Info(msg)
 }
 
-// AdaptAdoptedResource returns a logger with log values set for the adopted
-// resource's kind, namespace, name, etc
-func AdaptAdoptedResource(
-	log logr.Logger,
-	res *v1alpha1.AdoptedResource,
+// expandResourceFields returns the key/value pairs for a resource that should
+// be used as structured data in log messages about the resource
+func expandResourceFields(
+	res acktypes.AWSResource,
 	additionalValues ...interface{},
-) logr.Logger {
-	ns := res.Namespace
-	resName := res.Name
-	generation := res.Generation
-	group := res.Spec.Kubernetes.Group
-	kind := res.Spec.Kubernetes.Kind
+) []interface{} {
+	metaObj := res.MetaObject()
+	ns := metaObj.GetNamespace()
+	resName := metaObj.GetName()
+	generation := metaObj.GetGeneration()
+	rtObj := res.RuntimeObject()
+	kind := rtObj.GetObjectKind().GroupVersionKind().Kind
 	vals := []interface{}{
-		"target_group", group,
-		"target_kind", kind,
+		"kind", kind,
 		"namespace", ns,
 		"name", resName,
 		"generation", generation,
@@ -185,6 +171,17 @@ func AdaptAdoptedResource(
 	if len(additionalValues) > 0 {
 		vals = append(vals, additionalValues...)
 	}
+	return vals
+}
+
+// AdaptAdoptedResource returns a logger with log values set for the adopted
+// resource's kind, namespace, name, etc
+func AdaptAdoptedResource(
+	log logr.Logger,
+	res *v1alpha1.AdoptedResource,
+	additionalValues ...interface{},
+) logr.Logger {
+	vals := expandAdoptedResourceFields(res, additionalValues...)
 	return log.WithValues(vals...)
 }
 
@@ -208,4 +205,29 @@ func InfoAdoptedResource(
 	additionalValues ...interface{},
 ) {
 	AdaptAdoptedResource(log, res, additionalValues...).V(0).Info(msg)
+}
+
+// expandAdoptedResourceFields returns the key/value pairs for an adopted
+// resource that should be used as structured data in log messages about the
+// adopted resource
+func expandAdoptedResourceFields(
+	res *v1alpha1.AdoptedResource,
+	additionalValues ...interface{},
+) []interface{} {
+	ns := res.Namespace
+	resName := res.Name
+	generation := res.Generation
+	group := res.Spec.Kubernetes.Group
+	kind := res.Spec.Kubernetes.Kind
+	vals := []interface{}{
+		"target_group", group,
+		"target_kind", kind,
+		"namespace", ns,
+		"name", resName,
+		"generation", generation,
+	}
+	if len(additionalValues) > 0 {
+		vals = append(vals, additionalValues...)
+	}
+	return vals
 }
