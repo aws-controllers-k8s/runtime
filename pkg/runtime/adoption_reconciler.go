@@ -140,10 +140,10 @@ func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
 		return nil
 	}
 
-	return r.sync(ctx, targetDescriptor, rm, res)
+	return r.Sync(ctx, targetDescriptor, rm, res)
 }
 
-func (r *adoptionReconciler) sync(
+func (r *adoptionReconciler) Sync(
 	ctx context.Context,
 	targetDescriptor acktypes.AWSResourceDescriptor,
 	rm acktypes.AWSResourceManager,
@@ -171,7 +171,10 @@ func (r *adoptionReconciler) sync(
 		GenerateName:    rmo.GetGenerateName(),
 	}
 
-	desiredMetadata := desired.Spec.Kubernetes.Metadata
+	var desiredMetadata *ackv1alpha1.PartialObjectMeta
+	if desired.Spec.Kubernetes != nil {
+		desiredMetadata = desired.Spec.Kubernetes.Metadata
+	}
 
 	// Attempt to use metadata values from the adopted resource target metadata
 	if desiredMetadata != nil {
@@ -235,6 +238,7 @@ func (r *adoptionReconciler) sync(
 		}
 	}
 
+	// TODO(vijtrip2@): Should adopted resource be marked as managed earlier ?
 	if err := r.markManaged(ctx, desired); err != nil {
 		return r.onError(ctx, desired, err)
 	}
@@ -489,7 +493,7 @@ func (r *adoptionReconciler) getRegion(
 // patchMetadataAndSpec patches the Metadata and Spec for AdoptedResource into
 // k8s. The adopted resource 'res' also gets updated with content returned from
 // apiserver.
-// TODO(vijat@): Refactor this and use single 'patchMetadataAndSpec' method
+// TODO(vijtrip2@): Refactor this and use single 'patchMetadataAndSpec' method
 // for reconciler and adoptionReconciler
 func (r *adoptionReconciler) patchMetadataAndSpec(
 	ctx context.Context,
@@ -511,7 +515,7 @@ func (r *adoptionReconciler) patchMetadataAndSpec(
 
 // patchStatus patches the Status for AdoptedResource into k8s. The adopted
 // resource 'res' also gets updated with the content returned from apiserver.
-// TODO(vijat@): Refactor this and use single 'patchStatus' method
+// TODO(vijtrip2): Refactor this and use single 'patchStatus' method
 // for reconciler and adoptionReconciler
 func (r *adoptionReconciler) patchStatus(
 	ctx context.Context,
@@ -533,13 +537,31 @@ func NewAdoptionReconciler(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 ) acktypes.Reconciler {
+	return NewAdoptionReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
+}
+
+// NewAdoptionReconcilerWithClient returns a new adoptionReconciler object with
+// specified k8s client and Reader. Currently this function is used for testing
+// purpose only because "adoptionReconciler" struct is not available outside
+// 'runtime' package for dependency injection.
+func NewAdoptionReconcilerWithClient(
+	sc acktypes.ServiceController,
+	log logr.Logger,
+	cfg ackcfg.Config,
+	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
+	kc client.Client,
+	apiReader client.Reader,
+) acktypes.AdoptedResourceReconciler {
 	return &adoptionReconciler{
 		reconciler: reconciler{
-			sc:      sc,
-			log:     log.WithName("adopted-reconciler"),
-			cfg:     cfg,
-			metrics: metrics,
-			cache:   cache,
+			sc:        sc,
+			log:       log.WithName("adopted-reconciler"),
+			cfg:       cfg,
+			metrics:   metrics,
+			cache:     cache,
+			kc:        kc,
+			apiReader: apiReader,
 		},
 	}
 }
