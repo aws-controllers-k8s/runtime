@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,14 +39,14 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
-const(
+const (
 	Namespace = "default"
-	Name = "adoptedRes"
+	Name      = "adoptedRes"
 )
 
 // Helper functions for tests
 
-func mockReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Client ,*ctrlrtclientmock.Reader) {
+func mockReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -70,7 +70,7 @@ func mockReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Cli
 		ackrtcache.Caches{},
 		kc,
 		apiReader,
-		), kc, apiReader
+	), kc, apiReader
 }
 
 func mockDescriptorAndAWSResource() (*ackmocks.AWSResourceDescriptor, *ackmocks.AWSResource) {
@@ -125,21 +125,21 @@ func setupMockApiReader(apiReader *ctrlrtclientmock.Reader, ctx context.Context,
 	apiReader.On("Get", ctx, types.NamespacedName{
 		Namespace: Namespace,
 		Name:      Name,
-	},res.RuntimeObject()).Return(k8serrors.NewNotFound(schema.GroupResource{}, ""))
+	}, res.RuntimeObject()).Return(k8serrors.NewNotFound(schema.GroupResource{}, ""))
 }
 
-func adoptedResource(namespace , name string) *ackv1alpha1.AdoptedResource {
+func adoptedResource(namespace, name string) *ackv1alpha1.AdoptedResource {
 	return &ackv1alpha1.AdoptedResource{
-		TypeMeta:   v1.TypeMeta{},
+		TypeMeta: v1.TypeMeta{},
 		ObjectMeta: v1.ObjectMeta{
-			Namespace:namespace,
-			Name:name,
+			Namespace: namespace,
+			Name:      name,
 		},
-		Spec:       ackv1alpha1.AdoptedResourceSpec{
+		Spec: ackv1alpha1.AdoptedResourceSpec{
 			Kubernetes: nil,
 			AWS:        &ackv1alpha1.AWSIdentifiers{NameOrID: "name"},
 		},
-		Status:     ackv1alpha1.AdoptedResourceStatus{},
+		Status: ackv1alpha1.AdoptedResourceStatus{},
 	}
 }
 
@@ -168,29 +168,19 @@ func TestSync_FailureInSettingIdentifiers(t *testing.T) {
 	// error occured
 	require.NotNil(err)
 	require.Equal("unable to set Identifier", err.Error())
-	// Identifiers are set from AdoptedResource into AWSResource
+	// Attempt to set Identifiers from AdoptedResource into AWSResource
 	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is not made to find observed state of AWSResource
+	// ReadOne call is not made to find observed state of AWSResource because
+	// of SetIdentifiers failure
 	manager.AssertNotCalled(t, "ReadOne", ctx, res)
 	// No calls to findout if the AWSResource already exists
 	apiReader.AssertNotCalled(t, "Get", ctx, types.NamespacedName{
 		Namespace: Namespace,
 		Name:      Name,
 	}, res.RuntimeObject())
-	// Create AWSResource should not happen
-	kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource should not happen
-	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource did not get marked as managed
-	kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=False
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("False", string(adoptedRes.Status.Conditions[0].Status))
+	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res)
+	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
 func TestSync_FailureInReadOne(t *testing.T) {
@@ -213,32 +203,21 @@ func TestSync_FailureInReadOne(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// error occured
 	require.NotNil(err)
 	require.Equal("failed to perform ReadOne", err.Error())
 	// Identifiers are set from AdoptedResource into AWSResource
 	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
 	// ReadOne call is made to find observed state of AWSResource
 	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// No calls to findout if the AWSResource already exists
+	// No calls to findout if the AWSResource already exists because of ReadOne
+	// failure
 	apiReader.AssertNotCalled(t, "Get", ctx, types.NamespacedName{
 		Namespace: Namespace,
 		Name:      Name,
 	}, res.RuntimeObject())
-	// Create AWSResource should not happen
-	kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource should not happen
-	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource did not get marked as managed
-	kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=False
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("False", string(adoptedRes.Status.Conditions[0].Status))
+	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res)
+	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
 func TestSync_AWSResourceAlreadyExists(t *testing.T) {
@@ -267,31 +246,11 @@ func TestSync_AWSResourceAlreadyExists(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// No error
 	require.Nil(err)
-	// Identifiers are set from AdoptedResource into AWSResource
-	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is made to find observed state of AWSResource
-	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// Get call to findout if the AWSResource already exists
-	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
-	}, res.RuntimeObject())
-	// Create AWSResource should not happen
-	kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource should not happen
-	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource gets marked as managed
-	kc.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=True
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("True", string(adoptedRes.Status.Conditions[0].Status))
+	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
+	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res)
+	assertManaged(true, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("True", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
 func TestSync_APIReaderUnknownError(t *testing.T) {
@@ -320,32 +279,12 @@ func TestSync_APIReaderUnknownError(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// error occured
 	require.NotNil(err)
 	require.Equal("unknown error", err.Error())
-	// Identifiers are set from AdoptedResource into AWSResource
-	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is made to find observed state of AWSResource
-	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// Get call to findout if the AWSResource already exists
-	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
-	}, res.RuntimeObject())
-	// Create AWSResource should not happen
-	kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource should not happen
-	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource did not get marked as managed
-	kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=False
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("False", string(adoptedRes.Status.Conditions[0].Status))
+	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
+	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res)
+	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
 func TestSync_ErrorInResourceCreation(t *testing.T) {
@@ -371,34 +310,15 @@ func TestSync_ErrorInResourceCreation(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// error occured
 	require.NotNil(err)
 	require.Equal("creation failure", err.Error())
-	// Identifiers are set from AdoptedResource into AWSResource
-	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is made to find observed state of AWSResource
-	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// Get call to findout if the AWSResource already exists
-	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
-	}, res.RuntimeObject())
-	// Create AWSResource
+	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
 	kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource should not happen
+	// Update status of AWSResource should not happen due to creation failure
 	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource did not get marked as managed
-	kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=False
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("False", string(adoptedRes.Status.Conditions[0].Status))
+	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
-
 
 func TestSync_ErrorInStatusUpdate(t *testing.T) {
 	// Setup
@@ -424,32 +344,12 @@ func TestSync_ErrorInStatusUpdate(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// error occured
 	require.NotNil(err)
 	require.Equal("status update failure", err.Error())
-	// Identifiers are set from AdoptedResource into AWSResource
-	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is made to find observed state of AWSResource
-	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// Get call to findout if the AWSResource already exists
-	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
-	}, res.RuntimeObject())
-	// Create AWSResource
-	kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource
-	statusWriter.AssertCalled(t, "Update", ctx, res.RuntimeObject())
-	// AdoptedResource did not get marked as managed
-	kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
-	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Only one kind of condition present
-	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=False
-	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("False", string(adoptedRes.Status.Conditions[0].Status))
+	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
+	assertAWSResourceCreation(true, t, ctx, kc, statusWriter, res)
+	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
 func TestSync_HappyCase(t *testing.T) {
@@ -476,30 +376,91 @@ func TestSync_HappyCase(t *testing.T) {
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
 
 	//Assertions
-	// No errors occured
 	require.Nil(err)
-	// Identifiers are set from AdoptedResource into AWSResource
-	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
-	// ReadOne call is made to find observed state of AWSResource
-	manager.AssertCalled(t, "ReadOne", ctx, res)
-	// Get call to findout if the AWSResource already exists
-	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
-	}, res.RuntimeObject())
-	// Create AWSResource
-	kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
-	// Update status of AWSResource
-	statusWriter.AssertCalled(t, "Update", ctx, res.RuntimeObject())
-	// Mark AdoptedResource as managed
-	kc.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
-	// Update conditions in AdoptedResourceStatus
+	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
+	assertAWSResourceCreation(true, t, ctx, kc, statusWriter, res)
+	assertManaged(true, t, ctx, kc, adoptedRes)
+	assertAdoptedCondition("True", require, t, ctx, kc, statusWriter, adoptedRes)
+}
+
+// Assertion Helpers
+
+// assertAdoptedCondition asserts that 'ConditionTypeAdopted' condition is
+// present in AdoptedResource status and that it's value is equal to
+// 'conditionStatus' parameter
+func assertAdoptedCondition(
+	conditionStatus string,
+	require *require.Assertions,
+	t *testing.T,
+	ctx context.Context,
+	kc *ctrlrtclientmock.Client,
+	statusWriter *ctrlrtclientmock.StatusWriter,
+	adoptedRes *ackv1alpha1.AdoptedResource,
+) {
 	kc.AssertCalled(t, "Status")
 	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only one kind of condition present
 	require.Equal(1, len(adoptedRes.Status.Conditions))
-	// verify ConditionTypeAdopted=True
 	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
-	require.Equal("True", string(adoptedRes.Status.Conditions[0].Status))
+	require.Equal(conditionStatus, string(adoptedRes.Status.Conditions[0].Status))
 }
 
+// assertManaged asserts that adoptedResource was patched when 'expectedManaged'
+// parameter is true.
+// If 'expectedManaged' parameter is false, this function asserts that
+// adoptedResource was never patched.
+func assertManaged(
+	expectedManaged bool,
+	t *testing.T,
+	ctx context.Context,
+	kc *ctrlrtclientmock.Client,
+	adoptedRes *ackv1alpha1.AdoptedResource,
+) {
+	if expectedManaged {
+		kc.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
+	} else {
+		kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
+	}
+}
+
+// assertAWSResourceCreation asserts that AWSResource was created and it's spec
+// was updated when 'expectedCreation' is true
+// If 'expectedCreation' is false, this function asserts that AWSResource was
+// neither created nor was the status updated.
+func assertAWSResourceCreation(
+	expectedCreation bool,
+	t *testing.T,
+	ctx context.Context,
+	kc *ctrlrtclientmock.Client,
+	statusWriter *ctrlrtclientmock.StatusWriter,
+	res *ackmocks.AWSResource,
+) {
+	if expectedCreation {
+		kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
+		statusWriter.AssertCalled(t, "Update", ctx, res.RuntimeObject())
+	} else {
+		kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
+		statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
+	}
+}
+
+// assertAWSResourceRead asserts that
+// a) Identifiers are set from AdoptedResource to AWSResource
+// b) ReadOne call is made to find observed state of AWSResource
+// c) APIReader.Get call is made to validate that AWSResource does not already
+// exist in k8s cluster
+func assertAWSResourceRead(
+	t *testing.T,
+	ctx context.Context,
+	manager *ackmocks.AWSResourceManager,
+	apiReader *ctrlrtclientmock.Reader,
+	adoptedRes *ackv1alpha1.AdoptedResource,
+	res *ackmocks.AWSResource,
+) {
+	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
+	manager.AssertCalled(t, "ReadOne", ctx, res)
+	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
+		Namespace: Namespace,
+		Name:      Name,
+	}, res.RuntimeObject())
+}
