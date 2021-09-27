@@ -17,6 +17,8 @@ import (
 	"errors"
 	"net/url"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
@@ -135,13 +137,29 @@ func (cfg *Config) SetupLogger() {
 	ctrlrt.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 }
 
+// PopulateAccountIdIfMissing uses sts GetCallerIdentity API to find
+// AWS AccountId when Config.AccountId is empty
+func (cfg *Config) PopulateAccountIdIfMissing() error {
+	if cfg.AccountID == "" {
+		// use sts to find AWS AccountId
+		session := session.Must(session.NewSession())
+		client := sts.New(session)
+		res, err := client.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+		if err == nil {
+			cfg.AccountID = *res.Account
+		}
+		return err
+	}
+	return nil
+}
+
 // Validate ensures the options are valid
 func (cfg *Config) Validate() error {
 	if cfg.AccountID == "" {
-		return errors.New("unable to start service controller as account ID is nil. Please pass --aws-account-id flag")
+		return errors.New("unable to start service controller as account ID is missing. Please pass --aws-account-id flag or set AWS_ACCOUNT_ID environment variable")
 	}
 	if cfg.Region == "" {
-		return errors.New("unable to start service controller as AWS region is nil. Please pass --aws-region flag")
+		return errors.New("unable to start service controller as AWS region is missing. Please pass --aws-region flag or set AWS_REGION environment variable")
 	}
 
 	if cfg.EndpointURL != "" {
