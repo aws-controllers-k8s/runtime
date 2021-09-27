@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net/url"
 
+	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -83,12 +84,12 @@ func (cfg *Config) BindFlags() {
 	)
 	flag.StringVar(
 		&cfg.AccountID, flagAWSAccountID,
-		"",
+		envutil.WithDefault("AWS_ACCOUNT_ID", ""),
 		"The AWS Account ID in which the service controller will create resources",
 	)
 	flag.StringVar(
 		&cfg.Region, flagAWSRegion,
-		"",
+		envutil.WithDefault("AWS_REGION", ""),
 		"The AWS Region in which the service controller will create its resources",
 	)
 	flag.StringVar(
