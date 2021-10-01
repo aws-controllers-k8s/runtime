@@ -15,8 +15,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -27,7 +31,6 @@ const (
 	flagEnableLeaderElection = "enable-leader-election"
 	flagMetricAddr           = "metrics-addr"
 	flagEnableDevLogging     = "enable-development-logging"
-	flagAWSAccountID         = "aws-account-id"
 	flagAWSRegion            = "aws-region"
 	flagAWSEndpointURL       = "aws-endpoint-url"
 	flagLogLevel             = "log-level"
@@ -35,6 +38,7 @@ const (
 	flagWatchNamespace       = "watch-namespace"
 	flagEnableWebhookServer  = "enable-webhook-server"
 	flagWebhookServerAddr    = "webhook-server-addr"
+	envVarAWSRegion          = "AWS_REGION"
 )
 
 // Config contains configuration otpions for ACK service controllers
@@ -82,13 +86,8 @@ func (cfg *Config) BindFlags() {
 			"otherwise a Zap production config will be used (encoder=jsonEncoder,logLevel=Info,stackTraceLevel=Error), sampling).",
 	)
 	flag.StringVar(
-		&cfg.AccountID, flagAWSAccountID,
-		"",
-		"The AWS Account ID in which the service controller will create resources",
-	)
-	flag.StringVar(
 		&cfg.Region, flagAWSRegion,
-		"",
+		envutil.WithDefault(envVarAWSRegion, ""),
 		"The AWS Region in which the service controller will create its resources",
 	)
 	flag.StringVar(
@@ -134,13 +133,31 @@ func (cfg *Config) SetupLogger() {
 	ctrlrt.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 }
 
+// SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
+// in Config
+func (cfg *Config) SetAWSAccountID() error {
+	// use sts to find AWS AccountId
+	session, err := session.NewSession()
+	if err != nil {
+		return fmt.Errorf("unable to create session: %v", err)
+	}
+	client := sts.New(session)
+	res, err := client.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+	if err != nil {
+		return fmt.Errorf("unable to get caller identity: %v", err)
+	}
+	cfg.AccountID = *res.Account
+	return nil
+}
+
 // Validate ensures the options are valid
 func (cfg *Config) Validate() error {
-	if cfg.AccountID == "" {
-		return errors.New("unable to start service controller as account ID is nil. Please pass --aws-account-id flag")
+	if err := cfg.SetAWSAccountID(); err != nil {
+		return errors.New("unable to determine account ID. Please make sure AWS credentials are setup in controller pod")
 	}
+
 	if cfg.Region == "" {
-		return errors.New("unable to start service controller as AWS region is nil. Please pass --aws-region flag")
+		return errors.New("unable to start service controller as AWS region is missing. Please pass --aws-region flag or set AWS_REGION environment variable")
 	}
 
 	if cfg.EndpointURL != "" {
