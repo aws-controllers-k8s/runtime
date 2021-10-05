@@ -87,6 +87,7 @@ func (rl *ResourceLogger) Exit(
 		}
 		vals := expandResourceFields(rl.res, additionalValues...)
 		rl.log.V(1).Info(msg, vals...)
+		rl.blockDepth--
 	}
 }
 
