@@ -155,6 +155,11 @@ func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error
 		"account", acctID,
 		"role", roleARN,
 		"region", region,
+		// All the fields for a resource that do not change during reconciliation
+		// can be initialized during resourceLogger creation
+		"kind", r.rd.GroupKind().Kind,
+		"namespace", req.Namespace,
+		"name", req.Name,
 	)
 	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 
