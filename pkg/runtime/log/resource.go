@@ -112,7 +112,7 @@ func NewResourceLogger(
 	additionalValues ...interface{},
 ) *ResourceLogger {
 	return &ResourceLogger{
-		log:        AdaptResource(log, res, additionalValues...),
+		log:        log.WithValues(additionalValues...),
 		res:        res,
 		blockDepth: 0,
 	}
@@ -158,15 +158,8 @@ func expandResourceFields(
 	additionalValues ...interface{},
 ) []interface{} {
 	metaObj := res.MetaObject()
-	ns := metaObj.GetNamespace()
-	resName := metaObj.GetName()
 	generation := metaObj.GetGeneration()
-	rtObj := res.RuntimeObject()
-	kind := rtObj.GetObjectKind().GroupVersionKind().Kind
 	vals := []interface{}{
-		"kind", kind,
-		"namespace", ns,
-		"name", resName,
 		"generation", generation,
 	}
 	if len(additionalValues) > 0 {
