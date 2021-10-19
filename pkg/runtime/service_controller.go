@@ -18,9 +18,14 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	kubernetes "k8s.io/client-go/kubernetes"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
@@ -87,6 +92,44 @@ func (c *serviceController) GetResourceManagerFactories() map[string]acktypes.AW
 	return c.rmFactories
 }
 
+// GetAdoptedResourceInstalled returns whether the AdoptedResource CRD has been
+// installed into the cluster, and is accessible by the service controller.
+func (c *serviceController) GetAdoptedResourceInstalled(mgr ctrlrt.Manager) (bool, error) {
+	clusterConfig := mgr.GetConfig()
+	clientSet, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		return false, err
+	}
+
+	gv := schema.GroupVersion{
+		Group:   ackv1alpha1.GroupVersion.Group,
+		Version: ackv1alpha1.GroupVersion.Version,
+	}
+
+	// Ensure GV is supported
+	if err = discovery.ServerSupportsVersion(clientSet, gv); err != nil {
+		return false, nil
+	}
+
+	restMapperClient, err := apiutil.NewDiscoveryRESTMapper(clusterConfig)
+	if err != nil {
+		return false, err
+	}
+
+	adoptionResourceGVR := schema.GroupVersionResource{
+		Group:    ackv1alpha1.GroupVersion.Group,
+		Version:  ackv1alpha1.GroupVersion.Version,
+		Resource: "adoptedresources",
+	}
+
+	// Ensure individual kind is supported
+	if _, err := restMapperClient.KindFor(adoptionResourceGVR); meta.IsNoMatchError(err) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 // WithLogger sets up the service controller with the supplied logger
 func (c *serviceController) WithLogger(log logr.Logger) acktypes.ServiceController {
 	c.log = log
@@ -130,7 +173,9 @@ func (c *serviceController) WithResourceManagerFactories(
 
 // BindControllerManager takes a `controller-runtime.Manager`, creates all the
 // AWSResourceReconcilers needed for the service and binds all of the
-// reconcilers within the service controller with that manager
+// reconcilers within the service controller with that manager. The adoption
+// reconciler will only be started if the types have been registered in the
+// cluster.
 func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
@@ -153,11 +198,20 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		c.reconcilers = append(c.reconcilers, rec)
 	}
 
-	rec := NewAdoptionReconciler(c, c.log, cfg, c.metrics, cache)
-	if err := rec.BindControllerManager(mgr); err != nil {
-		return err
+	adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
+	errLogger := c.log.WithName("adoption-setup")
+	if err != nil {
+		errLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
+	} else if !adoptionInstalled {
+		errLogger.Info("AdoptedResource CRD not installed. The adoption reconciler will not be started")
+	} else {
+		rec := NewAdoptionReconciler(c, c.log, cfg, c.metrics, cache)
+		if err := rec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		c.adoptionReconciler = rec
 	}
-	c.adoptionReconciler = rec
+
 	return nil
 }
 
