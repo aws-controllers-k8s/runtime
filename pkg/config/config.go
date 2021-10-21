@@ -153,7 +153,7 @@ func (cfg *Config) SetAWSAccountID() error {
 // Validate ensures the options are valid
 func (cfg *Config) Validate() error {
 	if err := cfg.SetAWSAccountID(); err != nil {
-		return errors.New("unable to determine account ID. Please make sure AWS credentials are setup in controller pod")
+		return fmt.Errorf("unable to determine account ID: %v", err)
 	}
 
 	if cfg.Region == "" {
