@@ -199,13 +199,13 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	}
 
 	adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
-	errLogger := c.log.WithName("adoption-setup")
+	adoptionLogger := c.log.WithName("adoption")
 	if err != nil {
-		errLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
+		adoptionLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
 	} else if !adoptionInstalled {
-		errLogger.Info("AdoptedResource CRD not installed. The adoption reconciler will not be started")
+		adoptionLogger.Info("AdoptedResource CRD not installed. The adoption reconciler will not be started")
 	} else {
-		rec := NewAdoptionReconciler(c, c.log, cfg, c.metrics, cache)
+		rec := NewAdoptionReconciler(c, adoptionLogger, cfg, c.metrics, cache)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
 		}
