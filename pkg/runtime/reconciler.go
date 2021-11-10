@@ -29,6 +29,7 @@ import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	"github.com/aws-controllers-k8s/runtime/pkg/condition"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -204,6 +205,9 @@ func (r *resourceReconciler) Sync(
 
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
+	r.resetConditions(ctx, desired)
+	defer r.ensureConditions(ctx, latest, err)
+
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
@@ -235,6 +239,56 @@ func (r *resourceReconciler) Sync(
 		return latest, err
 	}
 	return r.handleRequeues(ctx, latest)
+}
+
+// resetConditions strips the supplied resource of all objects in its
+// Status.Conditions collection. We do this at the start of each reconciliation
+// loop in order to ensure that the objects in the Status.Conditions collection
+// represent the state transitions that occurred in the last reconciliation
+// loop. In other words, Status.Conditions should refer to the latest observed
+// state read.
+func (r *resourceReconciler) resetConditions(
+	ctx context.Context,
+	res acktypes.AWSResource,
+) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.resetConditions")
+	defer exit(err)
+
+	ackcondition.Clear(res)
+}
+
+// ensureConditions examines the supplied resource's collection of Condition
+// objects and ensures that an ACK.ResourceSynced condition is present.
+func (r *resourceReconciler) ensureConditions(
+	ctx context.Context,
+	res acktypes.AWSResource,
+	reconcileErr error,
+) {
+	if ackcompare.IsNil(res) {
+		return
+	}
+
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.ensureConditions")
+	defer exit(err)
+
+	if syncedCond := ackcondition.Synced(res); syncedCond == nil {
+		rlog.Debug("resource missing ACK.ResourceSynced condition")
+		// only the resource manager will know whether the resource is in a
+		// stable sync state. Even if we got no error back from the
+		// create/update operations, we can only set this to Unknown.
+		condStatus := corev1.ConditionUnknown
+		if reconcileErr == ackerr.Terminal {
+			// A terminal condition by its very nature indicates a stable state
+			// for a resource being synced. The resource is considered synced
+			// because its state will not change.
+			condStatus = corev1.ConditionTrue
+		}
+		ackcondition.SetSynced(res, condStatus, nil, nil)
+	}
 }
 
 // createResource marks the CR as managed by ACK, calls one or more AWS APIs to

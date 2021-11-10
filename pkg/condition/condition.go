@@ -157,3 +157,10 @@ func LateInitializationInProgress(subject acktypes.ConditionManager) bool {
 	c := LateInitialized(subject)
 	return c != nil && c.Status == corev1.ConditionFalse
 }
+
+// Clear resets the resource's collection of Conditions to an empty list.
+func Clear(
+	subject acktypes.ConditionManager,
+) {
+	subject.ReplaceConditions([]*ackv1alpha1.Condition{})
+}

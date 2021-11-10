@@ -151,13 +151,29 @@ func TestReconcilerUpdate(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
 
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
+
+	// resourceReconciler.ensureConditions will ensure that if the resource
+	// manager has not set any Conditions on the resource, that at least an
+	// ACK.ResourceSynced condition with status Unknown will be set on the
+	// resource.
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, cond.Status, corev1.ConditionUnknown)
+	})
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -207,6 +223,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -214,6 +231,10 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 
 	// Note the change in annotations
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
@@ -261,6 +282,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -268,6 +290,10 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 	// Note no change to metadata...
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
@@ -310,6 +336,7 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -317,6 +344,10 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
@@ -343,6 +374,7 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 	ctx := context.TODO()
 
 	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	rmf, _ := managedResourceManagerFactoryMocks(desired, nil)
 	r, kc := reconcilerMocks(rmf)
@@ -371,6 +403,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -378,6 +411,10 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ReadOne", ctx, desired).Return(
@@ -423,6 +460,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	delta := ackcompare.NewDelta()
 
 	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
