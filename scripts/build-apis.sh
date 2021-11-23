@@ -18,5 +18,5 @@ echo "Building common Kubernetes API objects"
 common_config_output_dir=$ROOT_DIR/config
 
 controller-gen paths=$ROOT_DIR/apis/... \
-    crd:trivialVersions=true object:headerFile=$TEMPLATES_DIR/boilerplate.txt \
+    crd object:headerFile=$TEMPLATES_DIR/boilerplate.txt \
     output:crd:artifacts:config=$common_config_output_dir/crd/bases
