@@ -26,6 +26,11 @@ var (
 	NotManagedReason  = "This resource already exists but is not managed by ACK. " +
 		"To bring the resource under ACK management, you should explicitly adopt " +
 		"the resource by creating a services.k8s.aws/AdoptedResource"
+	ReferencesNotResolvedMessage = "Referenced resource(s) not synced"
+	ReferencesNotResolvedReason  = "This resource references other resource(s) which " +
+		"are not yet synced"
+	ReferencesResolvedMessage = "Resource reference(s) resolved successfully"
+	ReferencesResolvedReason  = "Resource reference(s) resolved successfully"
 )
 
 // Synced returns the Condition in the resource's Conditions collection that is
@@ -47,6 +52,13 @@ func Terminal(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 // nil.
 func LateInitialized(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeLateInitialized)
+}
+
+// ReferencesResolved returns the Condition in the resource's Conditions collection
+// that is of type ConditionTypeReferencesResolved. If no such condition is found,
+// returns nil.
+func ReferencesResolved(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeReferencesResolved)
 }
 
 // FirstOfType returns the first Condition in the resource's Conditions
@@ -148,6 +160,62 @@ func SetLateInitialized(
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
+}
+
+// SetReferencesResolved sets the resource's Condition of type ConditionTypeReferencesResolved
+// to the supplied status, optional message and reason.
+func SetReferencesResolved(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = ReferencesResolved(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeReferencesResolved,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// RemoveReferencesResolved removes the condition of type ConditionTypeReferencesResolved
+// from the resource's conditions
+func RemoveReferencesResolved(
+	subject acktypes.ConditionManager,
+) {
+	allConds := subject.Conditions()
+	var newConds []*ackv1alpha1.Condition
+	if c := ReferencesResolved(subject); c != nil {
+		for _, cond := range allConds {
+			if cond.Type != ackv1alpha1.ConditionTypeReferencesResolved {
+				newConds = append(newConds, cond)
+			}
+		}
+		subject.ReplaceConditions(newConds)
+	}
+}
+
+// WithReferencesResolvedCondition sets the ConditionTypeReferencesResolved in
+// AWSResource based on the err parameter and returns (AWSResource,error)
+func WithReferencesResolvedCondition(
+	resource acktypes.AWSResource,
+	err error,
+	) (acktypes.AWSResource, error) {
+	if err != nil {
+		errString := err.Error()
+		SetReferencesResolved(resource, corev1.ConditionFalse, &errString, nil)
+	} else {
+		SetReferencesResolved(resource, corev1.ConditionTrue, nil, nil)
+	}
+	return resource, err
 }
 
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
