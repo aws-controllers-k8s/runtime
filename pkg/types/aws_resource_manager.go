@@ -75,11 +75,13 @@ type AWSResourceManager interface {
 	// object passed in the parameter.
 	// This method also adds/updates the ConditionTypeLateInitialized for the AWSResource.
 	LateInitialize(context.Context, AWSResource) (AWSResource, error)
-	// ResolveReferences finds if there are any AWSResourceReference fields
-	// present inside AWSResource passed in the parameter and attempts to resolve
-	// those reference fields into target field.
-	// It returns an AWSResource with resolved references, and an error if the
-	// passed AWSResource's reference fields cannot be resolved.
+	// ResolveReferences finds if there are any Reference field(s) present
+	// inside AWSResource passed in the parameter and attempts to resolve
+	// those reference field(s) into target field(s).
+	// It returns an AWSResource with resolved reference(s), and an error if the
+	// passed AWSResource's reference field(s) cannot be resolved.
+	// This method also adds/updates the ConditionTypeReferencesResolved for the
+	// AWSResource.
 	ResolveReferences(context.Context, client.Reader, AWSResource) (AWSResource, error)
 }
 
