@@ -176,6 +176,9 @@ func TestReconcilerUpdate(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -203,6 +206,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -246,6 +250,9 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
 	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -261,6 +268,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -302,6 +310,9 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	)
 
 	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -317,6 +328,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -417,6 +429,9 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -442,6 +457,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	// Assert the error from late initialization
 	require.NotNil(err)
 	assert.Equal(requeueError, err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -492,6 +508,9 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -504,8 +523,86 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	// Assert the error from late initialization
 	require.NotNil(err)
 	assert.Equal(ackerr.Terminal, err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
+}
+
+func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	// resourceReconciler.ensureConditions will ensure that if the resource
+	// manager has not set any Conditions on the resource, that at least an
+	// ACK.ResourceSynced condition with status Unknown will be set on the
+	// resource.
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, cond.Status, corev1.ConditionUnknown)
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	resolveReferenceError := errors.New("failed to resolve reference")
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		nil, resolveReferenceError,
+	)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc := reconcilerMocks(rmf)
+
+	kc.On("Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj)).Return(nil)
+
+	// With the above mocks and below assertions, we check that if we got a
+	// non-error return from `AWSResourceManager.ReadOne()` and the
+	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
+	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
+	// method,
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertNotCalled(t, "ReadOne", ctx, desired)
+	rd.AssertNotCalled(t, "Delta", desired, latest)
+	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	// No changes to metadata or spec so Patch on the object shouldn't be done
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, client.MergeFrom(desiredRTObj))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 }

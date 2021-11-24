@@ -184,6 +184,9 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
+		// Resolve references before deleting the resource.
+		// Ignore any errors while resolving the references
+		res, _ = rm.ResolveReferences(ctx, r.apiReader, res)
 		return r.deleteResource(ctx, rm, res)
 	}
 	return r.Sync(ctx, rm, res)
@@ -211,9 +214,13 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
-	// TODO(jaypipes): Validate all dependent resources. The AWSResource
-	// interface needs to get some methods that return schema relationships,
-	// first though
+	rlog.Enter("rm.ResolveReferences")
+	resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
+	rlog.Exit("rm.ResolveReferences", err)
+	if err != nil {
+		return resolvedRefDesired, err
+	}
+	desired = resolvedRefDesired
 
 	rlog.Enter("rm.ReadOne")
 	latest, err = rm.ReadOne(ctx, desired)
