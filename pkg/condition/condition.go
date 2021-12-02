@@ -203,7 +203,7 @@ func RemoveReferencesResolved(
 func WithReferencesResolvedCondition(
 	resource acktypes.AWSResource,
 	err error,
-	) (acktypes.AWSResource, error) {
+) (acktypes.AWSResource, error) {
 	if err != nil {
 		errString := err.Error()
 		SetReferencesResolved(resource, corev1.ConditionFalse, &errString, nil)
