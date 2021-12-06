@@ -14,10 +14,13 @@
 package condition
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -206,7 +209,11 @@ func WithReferencesResolvedCondition(
 ) (acktypes.AWSResource, error) {
 	if err != nil {
 		errString := err.Error()
-		SetReferencesResolved(resource, corev1.ConditionFalse, &errString, nil)
+		conditionStatus := corev1.ConditionUnknown
+		if strings.Contains(errString, ackerr.ResourceReferenceTerminal.Error()) {
+			conditionStatus = corev1.ConditionFalse
+		}
+		SetReferencesResolved(resource, conditionStatus, &errString, nil)
 	} else {
 		SetReferencesResolved(resource, corev1.ConditionTrue, nil, nil)
 	}

@@ -22,6 +22,7 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcond "github.com/aws-controllers-k8s/runtime/pkg/condition"
+	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
@@ -268,9 +269,25 @@ func TestConditionSetters(t *testing.T) {
 				return false
 			}
 			return (subject[0].Type == ackv1alpha1.ConditionTypeReferencesResolved &&
-				subject[0].Status == corev1.ConditionFalse &&
+				subject[0].Status == corev1.ConditionUnknown &&
 				*subject[0].Message == errorMsg)
 		}),
 	)
 	ackcond.WithReferencesResolvedCondition(r, err)
+	// With Terminal Error
+	terminalError := ackerr.ResourceReferenceTerminal
+	r = &ackmocks.AWSResource{}
+	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	r.On(
+		"ReplaceConditions",
+		mock.MatchedBy(func(subject []*ackv1alpha1.Condition) bool {
+			if len(subject) != 1 {
+				return false
+			}
+			return (subject[0].Type == ackv1alpha1.ConditionTypeReferencesResolved &&
+				subject[0].Status == corev1.ConditionFalse &&
+				*subject[0].Message == terminalError.Error())
+		}),
+	)
+	ackcond.WithReferencesResolvedCondition(r, terminalError)
 }
