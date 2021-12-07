@@ -52,6 +52,16 @@ const (
 	// "True" status indicates that the resource fields have been late initialized
 	// "False" status indicates that the resource fields are in process of being late initialized.
 	ConditionTypeLateInitialized ConditionType = "ACK.LateInitialized"
+	// ConditionTypeReferencesResolved indicates whether all the references of
+	// type AWSResourceReference have been resolved or not.
+	//
+	// Absence of this condition means there are no references to be resolved.
+	// "True" status indicates that the resource references have been resolved.
+	// "Unknown" status indicates that the resource references are in process of
+	// being resolved
+	// "False" status indicates that the resource references failed to resolve.
+	// For Ex: When referenced resource is in terminal condition
+	ConditionTypeReferencesResolved ConditionType = "ACK.ReferencesResolved"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service

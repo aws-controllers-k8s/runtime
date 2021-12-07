@@ -35,3 +35,19 @@ type TargetKubernetesResource struct {
 	Kind     string             `json:"kind"`
 	Metadata *PartialObjectMeta `json:"metadata,omitempty"`
 }
+
+// AWSResourceReferenceWrapper provides a wrapper around *AWSResourceReference
+// type to provide more user friendly syntax for references using 'from' field
+// Ex:
+// APIIDRef:
+//   from:
+//     name: my-api
+type AWSResourceReferenceWrapper struct {
+	From *AWSResourceReference `json:"from,omitempty"`
+}
+
+// AWSResourceReference provides all the values necessary to reference another
+// k8s resource for finding the identifier(Id/ARN/Name)
+type AWSResourceReference struct {
+	Name *string `json:"name,omitempty"`
+}

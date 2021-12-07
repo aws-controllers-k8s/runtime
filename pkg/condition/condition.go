@@ -14,10 +14,13 @@
 package condition
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -47,6 +50,13 @@ func Terminal(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 // nil.
 func LateInitialized(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeLateInitialized)
+}
+
+// ReferencesResolved returns the Condition in the resource's Conditions collection
+// that is of type ConditionTypeReferencesResolved. If no such condition is found,
+// returns nil.
+func ReferencesResolved(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeReferencesResolved)
 }
 
 // FirstOfType returns the first Condition in the resource's Conditions
@@ -148,6 +158,66 @@ func SetLateInitialized(
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
+}
+
+// SetReferencesResolved sets the resource's Condition of type ConditionTypeReferencesResolved
+// to the supplied status, optional message and reason.
+func SetReferencesResolved(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = ReferencesResolved(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeReferencesResolved,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// RemoveReferencesResolved removes the condition of type ConditionTypeReferencesResolved
+// from the resource's conditions
+func RemoveReferencesResolved(
+	subject acktypes.ConditionManager,
+) {
+	allConds := subject.Conditions()
+	var newConds []*ackv1alpha1.Condition
+	if c := ReferencesResolved(subject); c != nil {
+		for _, cond := range allConds {
+			if cond.Type != ackv1alpha1.ConditionTypeReferencesResolved {
+				newConds = append(newConds, cond)
+			}
+		}
+		subject.ReplaceConditions(newConds)
+	}
+}
+
+// WithReferencesResolvedCondition sets the ConditionTypeReferencesResolved in
+// AWSResource based on the err parameter and returns (AWSResource,error)
+func WithReferencesResolvedCondition(
+	resource acktypes.AWSResource,
+	err error,
+) (acktypes.AWSResource, error) {
+	if err != nil {
+		errString := err.Error()
+		conditionStatus := corev1.ConditionUnknown
+		if strings.Contains(errString, ackerr.ResourceReferenceTerminal.Error()) {
+			conditionStatus = corev1.ConditionFalse
+		}
+		SetReferencesResolved(resource, conditionStatus, &errString, nil)
+	} else {
+		SetReferencesResolved(resource, corev1.ConditionTrue, nil, nil)
+	}
+	return resource, err
 }
 
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
