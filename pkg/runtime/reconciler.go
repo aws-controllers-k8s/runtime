@@ -130,8 +130,7 @@ func (r *reconciler) SecretValueFromReference(
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
 // a CR CRUD request
-func (r *resourceReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error) {
-	ctx := context.Background()
+func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
 	desired, err := r.getAWSResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -477,7 +476,7 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	err = r.kc.Patch(
 		ctx,
 		latest.RuntimeObject(),
-		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
+		client.MergeFrom(desired.DeepCopy().RuntimeObject()),
 	)
 	// Reset the status of latest object after patching.
 	latest.SetStatus(latestCopy)
@@ -506,7 +505,7 @@ func (r *resourceReconciler) patchResourceStatus(
 	err = r.kc.Status().Patch(
 		ctx,
 		latest.RuntimeObject(),
-		client.MergeFrom(desired.RuntimeObject().DeepCopyObject()),
+		client.MergeFrom(desired.DeepCopy().RuntimeObject()),
 	)
 	rlog.Exit("kc.Patch (status)", err)
 	if err != nil {
@@ -594,7 +593,7 @@ func (r *resourceReconciler) setResourceManaged(
 	exit := rlog.Trace("r.setResourceManaged")
 	defer exit(err)
 
-	orig := res.RuntimeObject().DeepCopyObject()
+	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkManaged(res)
 	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {
@@ -620,7 +619,7 @@ func (r *resourceReconciler) setResourceUnmanaged(
 	exit := rlog.Trace("r.setResourceUnmanaged")
 	defer exit(err)
 
-	orig := res.RuntimeObject().DeepCopyObject()
+	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkUnmanaged(res)
 	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {

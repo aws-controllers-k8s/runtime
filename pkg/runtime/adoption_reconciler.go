@@ -67,12 +67,11 @@ func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
 // a CR CRUD request
-func (r *adoptionReconciler) Reconcile(req ctrlrt.Request) (ctrlrt.Result, error) {
-	return r.handleReconcileError(r.reconcile(req))
+func (r *adoptionReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
+	return r.handleReconcileError(r.reconcile(ctx, req))
 }
 
-func (r *adoptionReconciler) reconcile(req ctrlrt.Request) error {
-	ctx := context.Background()
+func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
 	res, err := r.getAdoptedResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -160,15 +159,15 @@ func (r *adoptionReconciler) Sync(
 		return r.onError(ctx, desired, err)
 	}
 
-	rmo := described.RuntimeMetaObject()
+	ro := described.RuntimeObject()
 
 	// Use values from ReadOne output by default
 	targetMeta := &metav1.ObjectMeta{
-		Labels:          rmo.GetLabels(),
-		Annotations:     rmo.GetAnnotations(),
-		Finalizers:      rmo.GetFinalizers(),
-		OwnerReferences: rmo.GetOwnerReferences(),
-		GenerateName:    rmo.GetGenerateName(),
+		Labels:          ro.GetLabels(),
+		Annotations:     ro.GetAnnotations(),
+		Finalizers:      ro.GetFinalizers(),
+		OwnerReferences: ro.GetOwnerReferences(),
+		GenerateName:    ro.GetGenerateName(),
 	}
 
 	var desiredMetadata *ackv1alpha1.PartialObjectMeta
@@ -372,7 +371,7 @@ func (r *adoptionReconciler) markManaged(
 	res *ackv1alpha1.AdoptedResource,
 ) error {
 	base := res.DeepCopy()
-	k8sctrlutil.AddFinalizer(&res.ObjectMeta, finalizerString)
+	k8sctrlutil.AddFinalizer(res, finalizerString)
 	return r.patchMetadataAndSpec(ctx, res, base)
 }
 
@@ -384,7 +383,7 @@ func (r *adoptionReconciler) markUnmanaged(
 	res *ackv1alpha1.AdoptedResource,
 ) error {
 	base := res.DeepCopy()
-	k8sctrlutil.RemoveFinalizer(&res.ObjectMeta, finalizerString)
+	k8sctrlutil.RemoveFinalizer(res, finalizerString)
 	return r.patchMetadataAndSpec(ctx, res, base)
 }
 

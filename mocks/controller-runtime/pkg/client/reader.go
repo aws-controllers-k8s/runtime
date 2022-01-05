@@ -9,8 +9,6 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 
-	runtime "k8s.io/apimachinery/pkg/runtime"
-
 	types "k8s.io/apimachinery/pkg/types"
 )
 
@@ -20,11 +18,11 @@ type Reader struct {
 }
 
 // Get provides a mock function with given fields: ctx, key, obj
-func (_m *Reader) Get(ctx context.Context, key types.NamespacedName, obj runtime.Object) error {
+func (_m *Reader) Get(ctx context.Context, key types.NamespacedName, obj client.Object) error {
 	ret := _m.Called(ctx, key, obj)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.NamespacedName, runtime.Object) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, types.NamespacedName, client.Object) error); ok {
 		r0 = rf(ctx, key, obj)
 	} else {
 		r0 = ret.Error(0)
@@ -34,7 +32,7 @@ func (_m *Reader) Get(ctx context.Context, key types.NamespacedName, obj runtime
 }
 
 // List provides a mock function with given fields: ctx, list, opts
-func (_m *Reader) List(ctx context.Context, list runtime.Object, opts ...client.ListOption) error {
+func (_m *Reader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	_va := make([]interface{}, len(opts))
 	for _i := range opts {
 		_va[_i] = opts[_i]
@@ -45,7 +43,7 @@ func (_m *Reader) List(ctx context.Context, list runtime.Object, opts ...client.
 	ret := _m.Called(_ca...)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, runtime.Object, ...client.ListOption) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, client.ObjectList, ...client.ListOption) error); ok {
 		r0 = rf(ctx, list, opts...)
 	} else {
 		r0 = ret.Error(0)

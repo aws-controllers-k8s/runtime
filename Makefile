@@ -33,7 +33,7 @@ mocks: install-mockery ## Build mocks
 	@bin/mockery --quiet --name=ObjectKind --case=underscore --output=mocks/apimachinery/pkg/runtime/schema --dir="$(K8S_APIMACHINERY_DIR)/pkg/runtime/schema"
 	@echo "ok."
 	@echo -n "building mocks for sigs.k8s.io/controller-runtime/pkg/client ... "
-	@bin/mockery --quiet --name="(Client|Status|Reader)" --case=underscore --output=mocks/controller-runtime/pkg/client --dir="$(CONTROLLER_RUNTIME_DIR)/pkg/client"
+	@bin/mockery --quiet --name="(Object|Client|Status|Reader)" --case=underscore --output=mocks/controller-runtime/pkg/client --dir="$(CONTROLLER_RUNTIME_DIR)/pkg/client"
 	@echo "ok."
 
 help:           ## Show this help.

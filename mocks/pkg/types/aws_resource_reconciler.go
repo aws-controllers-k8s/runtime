@@ -73,20 +73,20 @@ func (_m *AWSResourceReconciler) HandleReconcileError(ctx context.Context, desir
 	return r0, r1
 }
 
-// Reconcile provides a mock function with given fields: _a0
-func (_m *AWSResourceReconciler) Reconcile(_a0 reconcile.Request) (reconcile.Result, error) {
-	ret := _m.Called(_a0)
+// Reconcile provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceReconciler) Reconcile(_a0 context.Context, _a1 reconcile.Request) (reconcile.Result, error) {
+	ret := _m.Called(_a0, _a1)
 
 	var r0 reconcile.Result
-	if rf, ok := ret.Get(0).(func(reconcile.Request) reconcile.Result); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func(context.Context, reconcile.Request) reconcile.Result); ok {
+		r0 = rf(_a0, _a1)
 	} else {
 		r0 = ret.Get(0).(reconcile.Result)
 	}
 
 	var r1 error
-	if rf, ok := ret.Get(1).(func(reconcile.Request) error); ok {
-		r1 = rf(_a0)
+	if rf, ok := ret.Get(1).(func(context.Context, reconcile.Request) error); ok {
+		r1 = rf(_a0, _a1)
 	} else {
 		r1 = ret.Error(1)
 	}

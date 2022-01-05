@@ -4,9 +4,9 @@ package mocks
 
 import (
 	compare "github.com/aws-controllers-k8s/runtime/pkg/compare"
-	mock "github.com/stretchr/testify/mock"
+	client "sigs.k8s.io/controller-runtime/pkg/client"
 
-	runtime "k8s.io/apimachinery/pkg/runtime"
+	mock "github.com/stretchr/testify/mock"
 
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 
@@ -35,15 +35,15 @@ func (_m *AWSResourceDescriptor) Delta(a types.AWSResource, b types.AWSResource)
 }
 
 // EmptyRuntimeObject provides a mock function with given fields:
-func (_m *AWSResourceDescriptor) EmptyRuntimeObject() runtime.Object {
+func (_m *AWSResourceDescriptor) EmptyRuntimeObject() client.Object {
 	ret := _m.Called()
 
-	var r0 runtime.Object
-	if rf, ok := ret.Get(0).(func() runtime.Object); ok {
+	var r0 client.Object
+	if rf, ok := ret.Get(0).(func() client.Object); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(runtime.Object)
+			r0 = ret.Get(0).(client.Object)
 		}
 	}
 
@@ -96,11 +96,11 @@ func (_m *AWSResourceDescriptor) MarkUnmanaged(_a0 types.AWSResource) {
 }
 
 // ResourceFromRuntimeObject provides a mock function with given fields: _a0
-func (_m *AWSResourceDescriptor) ResourceFromRuntimeObject(_a0 runtime.Object) types.AWSResource {
+func (_m *AWSResourceDescriptor) ResourceFromRuntimeObject(_a0 client.Object) types.AWSResource {
 	ret := _m.Called(_a0)
 
 	var r0 types.AWSResource
-	if rf, ok := ret.Get(0).(func(runtime.Object) types.AWSResource); ok {
+	if rf, ok := ret.Get(0).(func(client.Object) types.AWSResource); ok {
 		r0 = rf(_a0)
 	} else {
 		if ret.Get(0) != nil {

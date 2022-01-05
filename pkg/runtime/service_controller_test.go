@@ -14,21 +14,26 @@
 package runtime_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	k8sscheme "sigs.k8s.io/controller-runtime/pkg/scheme"
@@ -57,6 +62,39 @@ func init() {
 
 type fakeBook struct{}
 
+func (b *fakeBook) GetNamespace() string                                       { return "" }
+func (b *fakeBook) SetNamespace(namespace string)                              {}
+func (b *fakeBook) GetName() string                                            { return "" }
+func (b *fakeBook) SetName(name string)                                        {}
+func (b *fakeBook) GetGenerateName() string                                    { return "" }
+func (b *fakeBook) SetGenerateName(name string)                                {}
+func (b *fakeBook) GetUID() types.UID                                          { return "" }
+func (b *fakeBook) SetUID(uid types.UID)                                       {}
+func (b *fakeBook) GetResourceVersion() string                                 { return "" }
+func (b *fakeBook) SetResourceVersion(version string)                          {}
+func (b *fakeBook) GetGeneration() int64                                       { return 0 }
+func (b *fakeBook) SetGeneration(generation int64)                             {}
+func (b *fakeBook) GetSelfLink() string                                        { return "" }
+func (b *fakeBook) SetSelfLink(selfLink string)                                {}
+func (b *fakeBook) GetCreationTimestamp() metav1.Time                          { return metav1.Time{} }
+func (b *fakeBook) SetCreationTimestamp(timestamp metav1.Time)                 {}
+func (b *fakeBook) GetDeletionTimestamp() *metav1.Time                         { return nil }
+func (b *fakeBook) SetDeletionTimestamp(timestamp *metav1.Time)                {}
+func (b *fakeBook) GetDeletionGracePeriodSeconds() *int64                      { return nil }
+func (b *fakeBook) SetDeletionGracePeriodSeconds(i *int64)                     {}
+func (b *fakeBook) GetLabels() map[string]string                               { return nil }
+func (b *fakeBook) SetLabels(labels map[string]string)                         {}
+func (b *fakeBook) GetAnnotations() map[string]string                          { return nil }
+func (b *fakeBook) SetAnnotations(annotations map[string]string)               {}
+func (b *fakeBook) GetFinalizers() []string                                    { return nil }
+func (b *fakeBook) SetFinalizers(finalizers []string)                          {}
+func (b *fakeBook) GetOwnerReferences() []metav1.OwnerReference                { return nil }
+func (b *fakeBook) SetOwnerReferences(references []metav1.OwnerReference)      {}
+func (b *fakeBook) GetClusterName() string                                     { return "" }
+func (b *fakeBook) SetClusterName(clusterName string)                          {}
+func (b *fakeBook) GetManagedFields() []metav1.ManagedFieldsEntry              { return nil }
+func (b *fakeBook) SetManagedFields(managedFields []metav1.ManagedFieldsEntry) {}
+
 func (b *fakeBook) GetObjectKind() schema.ObjectKind { return nil }
 func (b *fakeBook) DeepCopy() *fakeBook              { return nil }
 func (b *fakeBook) DeepCopyInto(*fakeBook)           {}
@@ -64,13 +102,21 @@ func (b *fakeBook) DeepCopyObject() runtime.Object   { return nil }
 
 type fakeManager struct{}
 
+func (m *fakeManager) GetLogger() logr.Logger {
+	return logr.New(log.NullLogSink{})
+}
+
+func (m *fakeManager) GetControllerOptions() v1alpha1.ControllerConfigurationSpec {
+	return v1alpha1.ControllerConfigurationSpec{}
+}
+
 func (m *fakeManager) Add(ctrlmanager.Runnable) error                                 { return nil }
 func (m *fakeManager) Elected() <-chan struct{}                                       { return nil }
 func (m *fakeManager) SetFields(interface{}) error                                    { return nil }
 func (m *fakeManager) AddMetricsExtraHandler(path string, handler http.Handler) error { return nil }
 func (m *fakeManager) AddHealthzCheck(name string, check healthz.Checker) error       { return nil }
 func (m *fakeManager) AddReadyzCheck(name string, check healthz.Checker) error        { return nil }
-func (m *fakeManager) Start(<-chan struct{}) error                                    { return nil }
+func (m *fakeManager) Start(ctx context.Context) error                                { return nil }
 func (m *fakeManager) GetConfig() *rest.Config                                        { return &rest.Config{} }
 func (m *fakeManager) GetScheme() *runtime.Scheme                                     { return scheme }
 func (m *fakeManager) GetClient() client.Client                                       { return nil }
