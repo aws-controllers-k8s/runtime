@@ -18,15 +18,15 @@ import (
 	"time"
 
 	ackconfig "github.com/aws-controllers-k8s/runtime/pkg/config"
-	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource
 func GetDefaultTags(
 	config *ackconfig.Config,
-	metadata *acktypes.RuntimeMetaObject,
+	object rtclient.Object,
 ) map[string]string {
-	if metadata == nil || config == nil || len(config.ResourceTags) == 0 {
+	if object == nil || config == nil || len(config.ResourceTags) == 0 {
 		return nil
 	}
 	var populatedTags = make(map[string]string)
@@ -40,7 +40,7 @@ func GetDefaultTags(
 		if key == "" || val == "" {
 			continue
 		}
-		populatedValue := expandTagValue(&val, metadata)
+		populatedValue := expandTagValue(&val, object)
 		populatedTags[key] = *populatedValue
 	}
 	if len(populatedTags) == 0 {
@@ -51,9 +51,9 @@ func GetDefaultTags(
 
 func expandTagValue(
 	value *string,
-	metadata *acktypes.RuntimeMetaObject,
+	obj rtclient.Object,
 ) *string {
-	if value == nil || metadata == nil {
+	if value == nil || obj == nil {
 		return nil
 	}
 	var expandedValue string = ""
@@ -61,7 +61,7 @@ func expandTagValue(
 	case "%UTCNOW%":
 		expandedValue = time.Now().UTC().String()
 	case "%KUBERNETES_NAMESPACE%":
-		expandedValue = (*metadata).GetNamespace()
+		expandedValue = obj.GetNamespace()
 	default:
 		expandedValue = *value
 	}

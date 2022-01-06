@@ -15,7 +15,7 @@ package types
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8srt "k8s.io/apimachinery/pkg/runtime"
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
@@ -30,10 +30,10 @@ type AWSResourceDescriptor interface {
 	GroupKind() *metav1.GroupKind
 	// EmptyRuntimeObject returns an empty object prototype that may be used in
 	// apimachinery and k8s client operations
-	EmptyRuntimeObject() k8srt.Object
+	EmptyRuntimeObject() rtclient.Object
 	// ResourceFromRuntimeObject returns an AWSResource that has been
 	// initialized with the supplied runtime.Object
-	ResourceFromRuntimeObject(k8srt.Object) AWSResource
+	ResourceFromRuntimeObject(rtclient.Object) AWSResource
 	// Delta returns an `ackcompare.Delta` object containing the difference between
 	// one `AWSResource` and another.
 	Delta(a, b AWSResource) *ackcompare.Delta

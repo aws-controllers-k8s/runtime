@@ -29,7 +29,6 @@ import (
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
-	k8srtmocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -75,7 +74,7 @@ func mockReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Cli
 
 func mockDescriptorAndAWSResource() (*ackmocks.AWSResourceDescriptor, *ackmocks.AWSResource) {
 	des := &ackmocks.AWSResourceDescriptor{}
-	emptyRuntimeObject := &k8srtmocks.Object{}
+	emptyRuntimeObject := &ctrlrtclientmock.Object{}
 	res := &ackmocks.AWSResource{}
 	des.On("EmptyRuntimeObject").Return(emptyRuntimeObject)
 	des.On("ResourceFromRuntimeObject", emptyRuntimeObject).Return(res)
@@ -94,7 +93,6 @@ func setupMockClient(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock
 
 func setupMockAwsResource(res *ackmocks.AWSResource, adoptedRes *ackv1alpha1.AdoptedResource) {
 	res.On("SetIdentifiers", adoptedRes.Spec.AWS).Return(nil)
-	res.On("RuntimeObject").Return(&k8srtmocks.Object{})
 	res.On("SetObjectMeta", mock.AnythingOfType("ObjectMeta")).Run(func(args mock.Arguments) {})
 
 	metaObj := &k8sobj.Unstructured{}
@@ -102,8 +100,8 @@ func setupMockAwsResource(res *ackmocks.AWSResource, adoptedRes *ackv1alpha1.Ado
 	metaObj.SetName(Name)
 	res.On("MetaObject").Return(metaObj)
 
-	rmo := &ackmocks.RuntimeMetaObject{}
-	res.On("RuntimeMetaObject").Return(rmo)
+	rmo := &ctrlrtclientmock.Object{}
+	res.On("RuntimeObject").Return(rmo)
 
 	rmo.On("GetLabels").Return(make(map[string]string))
 	rmo.On("GetAnnotations").Return(make(map[string]string))

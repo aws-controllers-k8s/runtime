@@ -4,7 +4,7 @@ package mocks
 
 import (
 	mock "github.com/stretchr/testify/mock"
-	runtime "k8s.io/apimachinery/pkg/runtime"
+	client "sigs.k8s.io/controller-runtime/pkg/client"
 
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 
@@ -101,32 +101,16 @@ func (_m *AWSResource) ReplaceConditions(_a0 []*v1alpha1.Condition) {
 	_m.Called(_a0)
 }
 
-// RuntimeMetaObject provides a mock function with given fields:
-func (_m *AWSResource) RuntimeMetaObject() types.RuntimeMetaObject {
-	ret := _m.Called()
-
-	var r0 types.RuntimeMetaObject
-	if rf, ok := ret.Get(0).(func() types.RuntimeMetaObject); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(types.RuntimeMetaObject)
-		}
-	}
-
-	return r0
-}
-
 // RuntimeObject provides a mock function with given fields:
-func (_m *AWSResource) RuntimeObject() runtime.Object {
+func (_m *AWSResource) RuntimeObject() client.Object {
 	ret := _m.Called()
 
-	var r0 runtime.Object
-	if rf, ok := ret.Get(0).(func() runtime.Object); ok {
+	var r0 client.Object
+	if rf, ok := ret.Get(0).(func() client.Object); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(runtime.Object)
+			r0 = ret.Get(0).(client.Object)
 		}
 	}
 
