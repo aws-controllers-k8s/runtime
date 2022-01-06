@@ -18,13 +18,13 @@ import (
 	"time"
 
 	ackconfig "github.com/aws-controllers-k8s/runtime/pkg/config"
-	k8sctrlrtclient "sigs.k8s.io/controller-runtime/pkg/client"
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource
 func GetDefaultTags(
 	config *ackconfig.Config,
-	object k8sctrlrtclient.Object,
+	object rtclient.Object,
 ) map[string]string {
 	if object == nil || config == nil || len(config.ResourceTags) == 0 {
 		return nil
@@ -51,7 +51,7 @@ func GetDefaultTags(
 
 func expandTagValue(
 	value *string,
-	obj k8sctrlrtclient.Object,
+	obj rtclient.Object,
 ) *string {
 	if value == nil || obj == nil {
 		return nil

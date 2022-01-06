@@ -15,7 +15,7 @@ package types
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sctrlrtclient "sigs.k8s.io/controller-runtime/pkg/client"
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 )
@@ -33,7 +33,7 @@ type AWSResource interface {
 	IsBeingDeleted() bool
 	// RuntimeObject returns the Kubernetes apimachinery/runtime representation
 	// of the AWSResource
-	RuntimeObject() k8sctrlrtclient.Object
+	RuntimeObject() rtclient.Object
 	// MetaObject returns the Kubernetes apimachinery/apis/meta/v1.Object
 	// representation of the AWSResource
 	// TODO(vijtrip2) Consider removing MetaObject method since RuntimeObject
