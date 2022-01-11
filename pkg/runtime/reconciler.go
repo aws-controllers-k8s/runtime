@@ -507,12 +507,15 @@ func (r *resourceReconciler) patchResourceStatus(
 		latest.RuntimeObject(),
 		client.MergeFrom(desired.DeepCopy().RuntimeObject()),
 	)
-	rlog.Exit("kc.Patch (status)", err)
-	if err != nil {
-		return err
+	if err == nil {
+		rlog.Debug("patched resource status")
+	} else if apierrors.IsNotFound(err) {
+		// reset the NotFound error so it is not printed in controller logs
+		// providing false positive error
+		err = nil
 	}
-	rlog.Debug("patched resource status", "latest", latest)
-	return nil
+	rlog.Exit("kc.Patch (status)", err)
+	return err
 }
 
 // deleteResource ensures that the supplied AWSResource's backing API resource
@@ -723,7 +726,7 @@ func (r *resourceReconciler) HandleReconcileError(
 		// PatchStatus even when resource is unmanaged. This helps in setting
 		// conditions when resolving resource-reference fails, which happens
 		// before resource is marked as managed.
-		// It is okay to patch status when resource is unmanaged due to deletion
+		// It is okay to patch status when resource is not present due to deletion
 		// because a NotFound error is thrown which will be ignored.
 		//
 		// TODO(jaypipes): We ignore error handling here but I don't know if
