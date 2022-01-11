@@ -714,15 +714,17 @@ func (r *resourceReconciler) HandleReconcileError(
 	latest acktypes.AWSResource,
 	err error,
 ) (ctrlrt.Result, error) {
-	if ackcompare.IsNotNil(latest) && r.rd.IsManaged(latest) {
+	if ackcompare.IsNotNil(latest) {
 		// The reconciliation loop may have returned an error, but if latest is
 		// not nil, there may be some changes available in the CR's Status
 		// struct (example: Conditions), and we want to make sure we save those
 		// changes before proceeding
 		//
-		// Attempt to patch the status only if the resource is managed.
-		// Otherwise, the underlying K8s resource gets deleted and
-		// patchStatus call will return NotFound error
+		// PatchStatus even when resource is unmanaged. This helps in setting
+		// conditions when resolving resource-reference fails, which happens
+		// before resource is marked as managed.
+		// It is okay to patch status when resource is unmanaged due to deletion
+		// because a NotFound error is thrown which will be ignored.
 		//
 		// TODO(jaypipes): We ignore error handling here but I don't know if
 		// there is a more robust way to handle failures in the patch operation
