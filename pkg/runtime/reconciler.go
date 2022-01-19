@@ -208,7 +208,9 @@ func (r *resourceReconciler) Sync(
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
 	r.resetConditions(ctx, desired)
-	defer r.ensureConditions(ctx, latest, err)
+	defer func() {
+		r.ensureConditions(ctx, latest, err)
+	}()
 
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
