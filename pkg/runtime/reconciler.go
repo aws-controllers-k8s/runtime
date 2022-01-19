@@ -208,7 +208,9 @@ func (r *resourceReconciler) Sync(
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
 	r.resetConditions(ctx, desired)
-	defer r.ensureConditions(ctx, latest, err)
+	defer func() {
+		r.ensureConditions(ctx, latest, err)
+	}()
 
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
@@ -242,6 +244,15 @@ func (r *resourceReconciler) Sync(
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
 	if latest, err = r.lateInitializeResource(ctx, rm, latest); err != nil {
+		// TODO(vijtrip2): move this condition handling to generated
+		// AWSResourceManager.LateInitialize() method
+
+		// Whenever late initialization fails for a resource, set ACK.ResourceSynced
+		// condition explicitly to "False"
+		// Setting this explicitly to False is required because ACK.ResourceSynced
+		// condition can be True due to successful Create/Update call OR no
+		// Create/Update call in reconciler loop
+		ackcondition.SetSynced(latest, corev1.ConditionFalse, nil, nil)
 		return latest, err
 	}
 	return r.handleRequeues(ctx, latest)
@@ -287,11 +298,16 @@ func (r *resourceReconciler) ensureConditions(
 		// stable sync state. Even if we got no error back from the
 		// create/update operations, we can only set this to Unknown.
 		condStatus := corev1.ConditionUnknown
-		if reconcileErr == ackerr.Terminal {
-			// A terminal condition by its very nature indicates a stable state
-			// for a resource being synced. The resource is considered synced
-			// because its state will not change.
-			condStatus = corev1.ConditionTrue
+		if reconcileErr != nil {
+			if reconcileErr == ackerr.Terminal {
+				// A terminal condition by its very nature indicates a stable state
+				// for a resource being synced. The resource is considered synced
+				// because its state will not change.
+				condStatus = corev1.ConditionTrue
+			} else {
+				// For any other reconciler error, set synced condition to false
+				condStatus = corev1.ConditionFalse
+			}
 		}
 		ackcondition.SetSynced(res, condStatus, nil, nil)
 	}
@@ -407,6 +423,10 @@ func (r *resourceReconciler) updateResource(
 			return latest, err
 		}
 		rlog.Info("updated resource")
+	} else {
+		// If there is no delta between desired state and latest state, it is
+		// safe to set ACK.ResourceSynced condition to true.
+		ackcondition.SetSynced(latest, corev1.ConditionTrue, nil, nil)
 	}
 	return latest, nil
 }

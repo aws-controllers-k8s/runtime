@@ -283,6 +283,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 
 	ctx := context.TODO()
 	arn := ackv1alpha1.AWSResourceName("mybook-arn")
@@ -299,10 +300,24 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// ensureConditions method will add ACK.ResourceSynced condition as Unknown
 	latest.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		hasSynced := false
+		for _, condition := range conditions {
+			if condition.Type != ackv1alpha1.ConditionTypeResourceSynced {
+				continue
+			}
+
+			hasSynced = true
+			assert.Equal(condition.Status, corev1.ConditionUnknown)
+		}
+
+		assert.True(hasSynced)
+	})
 	// Note no change to metadata...
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
@@ -423,11 +438,29 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	syncCondition := ackv1alpha1.Condition{
+		Type:   ackv1alpha1.ConditionTypeResourceSynced,
+		Status: corev1.ConditionFalse,
+	}
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{}).Times(2)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{&syncCondition})
 	latest.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		hasSynced := false
+		for _, condition := range conditions {
+			if condition.Type != ackv1alpha1.ConditionTypeResourceSynced {
+				continue
+			}
+
+			hasSynced = true
+			assert.Equal(condition.Status, corev1.ConditionFalse)
+		}
+
+		assert.True(hasSynced)
+	})
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -484,7 +517,6 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 
 	latest, _, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	terminalCondition := ackv1alpha1.Condition{
 		Type:    ackv1alpha1.ConditionTypeTerminal,
@@ -492,6 +524,13 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 		Reason:  &condition.NotManagedReason,
 		Message: &condition.NotManagedMessage,
 	}
+	// Return empty conditions for first two times
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{}).Times(2)
+	// Once the terminal condition is added, return terminal condition
+	// These calls will be made from ensureConditions method, which sets
+	// ACK.ResourceSynced condition correctly
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{&terminalCondition})
+
 	latest.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return([]*ackv1alpha1.Condition{&terminalCondition}).Run(func(args mock.Arguments) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		hasTerminal := false
@@ -521,7 +560,6 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	r, _ := reconcilerMocks(rmf)
 
 	_, err := r.Sync(ctx, rm, desired)
-	// Assert the error from late initialization
 	require.NotNil(err)
 	assert.Equal(ackerr.Terminal, err)
 	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
