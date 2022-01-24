@@ -424,9 +424,12 @@ func (r *resourceReconciler) updateResource(
 		}
 		rlog.Info("updated resource")
 	} else {
-		// If there is no delta between desired state and latest state, it is
+		// If there is no delta between desired state and latest state, and
+		// ACK.ResourceSynced condition is not already set, it is
 		// safe to set ACK.ResourceSynced condition to true.
-		ackcondition.SetSynced(latest, corev1.ConditionTrue, nil, nil)
+		if ackcondition.Synced(latest) == nil {
+			ackcondition.SetSynced(latest, corev1.ConditionTrue, nil, nil)
+		}
 	}
 	return latest, nil
 }
