@@ -83,6 +83,8 @@ type AWSResourceManager interface {
 	// This method also adds/updates the ConditionTypeReferencesResolved for the
 	// AWSResource.
 	ResolveReferences(context.Context, client.Reader, AWSResource) (AWSResource, error)
+	// IsSynced returns true if a resource is synced.
+	IsSynced(context.Context, AWSResource) (bool, error)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
