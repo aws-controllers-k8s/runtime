@@ -224,10 +224,16 @@ func (r *adoptionReconciler) Sync(
 	}, described.RuntimeObject()); err != nil {
 		if apierrors.IsNotFound(err) {
 			// If Adopted AWS resource was not found in k8s, create it.
+
+			// Before creation, Keep the copy of original described object
+			// because after the create call, Status gets set to empty
+			describedCopy := described.DeepCopy()
 			if err := r.kc.Create(ctx, described.RuntimeObject()); err != nil {
 				return r.onError(ctx, desired, err)
 			}
-
+			// reset the status of described object to original value before
+			// making the Status Update call
+			described.SetStatus(describedCopy)
 			if err := r.kc.Status().Update(ctx, described.RuntimeObject()); err != nil {
 				return r.onError(ctx, desired, err)
 			}

@@ -108,6 +108,8 @@ func setupMockAwsResource(res *ackmocks.AWSResource, adoptedRes *ackv1alpha1.Ado
 	rmo.On("GetFinalizers").Return(make([]string, 0))
 	rmo.On("GetOwnerReferences").Return(make([]v1.OwnerReference, 0))
 	rmo.On("GetGenerateName").Return("")
+	res.On("DeepCopy").Return(res)
+	res.On("SetStatus", res).Run(func(args mock.Arguments) {})
 }
 
 func setupMockManager(manager *ackmocks.AWSResourceManager, ctx context.Context, res *ackmocks.AWSResource) {
@@ -435,9 +437,13 @@ func assertAWSResourceCreation(
 ) {
 	if expectedCreation {
 		kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
+		res.AssertCalled(t, "DeepCopy")
+		res.AssertCalled(t, "SetStatus", res)
 		statusWriter.AssertCalled(t, "Update", ctx, res.RuntimeObject())
 	} else {
 		kc.AssertNotCalled(t, "Create", ctx, res.RuntimeObject())
+		res.AssertNotCalled(t, "DeepCopy")
+		res.AssertNotCalled(t, "SetStatus", res)
 		statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
 	}
 }
