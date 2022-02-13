@@ -14,33 +14,48 @@
 package cache
 
 import (
-	"os"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/jaypipes/envutil"
 	kubernetes "k8s.io/client-go/kubernetes"
 )
 
 const (
-	// defaultNamespace is the default namespace to use if the environment
-	// variable NAMESPACE is not found. The NAMESPACE variable is injected
-	// using the kubernetes downward api.
-	defaultNamespace = "ack-system"
+	// envVarACKSystemNamespace is the string key for the environment variable
+	// storing the Kubernetes Namespace we use for ConfigMaps and other ACK
+	// system configuration needs.
+	envVarACKSystemNamespace = "ACK_SYSTEM_NAMESPACE"
+
+	// envVarDeprecatedK8sNamespace is the string key for the old, deprecated
+	// environment variable storing the Kubernetes Namespace we use for
+	// ConfigMaps and other ACK system configuration needs.
+	envVarDeprecatedK8sNamespace = "K8S_NAMESPACE"
+
+	// defaultACKSystemNamespace is the namespace we look up the CARM account
+	// map ConfigMap in if the environment variable ACK_SYSTEM_NAMESPACE is not
+	// found.
+	defaultACKSystemNamespace = "ack-system"
 
 	// informerDefaultResyncPeriod is the period at which ShouldResync
 	// is considered.
+	// NOTE(jaypipes): setting this to zero means we are telling the client-go
+	// caching system not to set up resyncs with an authoritative state source
+	// (i.e. a Kubernetes API server) on a periodic basis.
 	informerResyncPeriod = 0 * time.Second
 )
 
-// currentNamespace is the namespace in which the current service
-// controller Pod is running
-var currentNamespace string
+// ackSystemNamespace is the namespace in which we look up ACK system
+// configuration (ConfigMaps, etc)
+var ackSystemNamespace string
 
 func init() {
-	currentNamespace = os.Getenv("K8S_NAMESPACE")
-	if currentNamespace == "" {
-		currentNamespace = defaultNamespace
-	}
+	ackSystemNamespace = envutil.WithDefault(
+		envVarACKSystemNamespace, envutil.WithDefault(
+			envVarDeprecatedK8sNamespace,
+			defaultACKSystemNamespace,
+		),
+	)
 }
 
 // Caches is used to interact with the different caches

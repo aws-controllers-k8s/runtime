@@ -57,7 +57,7 @@ func resourceMatchACKRoleAccountsConfigMap(raw interface{}) bool {
 func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{}) {
 	informer := informersv1.NewConfigMapInformer(
 		clientSet,
-		currentNamespace,
+		ackSystemNamespace,
 		informerResyncPeriod,
 		k8scache.Indexers{},
 	)

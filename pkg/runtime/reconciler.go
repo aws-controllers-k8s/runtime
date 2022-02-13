@@ -111,7 +111,7 @@ func (r *reconciler) SecretValueFromReference(
 		Name:      ref.Name,
 	}
 	var secret corev1.Secret
-	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
+	if err := r.apiReader.Get(ctx, nsn, &secret); err != nil {
 		return "", ackerr.SecretNotFound
 	}
 
