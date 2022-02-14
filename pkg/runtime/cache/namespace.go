@@ -76,12 +76,13 @@ func NewNamespaceCache(log logr.Logger) *NamespaceCache {
 	}
 }
 
-// isIgnoredNamespace returns true if an object is of type corev1.Namespace
-// and its metadata name is one of 'ack-system', 'kube-system' or 'kube-public'
+// isIgnoredNamespace returns true if an object is of type corev1.Namespace and
+// its metadata name is the ACK system namespace, 'kube-system' or
+// 'kube-public'
 func isIgnoredNamespace(raw interface{}) bool {
 	object, ok := raw.(*corev1.Namespace)
 	return ok &&
-		(object.ObjectMeta.Name == "ack-system" ||
+		(object.ObjectMeta.Name == ackSystemNamespace ||
 			object.ObjectMeta.Name == "kube-system" ||
 			object.ObjectMeta.Name == "kube-public")
 }
