@@ -13,6 +13,10 @@
 
 package v1alpha1
 
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
 // AWSIdentifiers provide all unique ways to reference an AWS resource.
 type AWSIdentifiers struct {
 	// ARN is the AWS Resource Name for the resource. It is a globally
@@ -26,14 +30,34 @@ type AWSIdentifiers struct {
 	AdditionalKeys map[string]string `json:"additionalKeys,omitempty"`
 }
 
-// TargetKubernetesResource provides all the values necessary to identify a given ACK type
-// and override any metadata values when creating a resource of that type.
-type TargetKubernetesResource struct {
-	// +kubebuilder:validation:Required
-	Group string `json:"group"`
-	// +kubebuilder:validation:Required
-	Kind     string             `json:"kind"`
-	Metadata *PartialObjectMeta `json:"metadata,omitempty"`
+// NamespacedTargetKubernetesResource provides all the values necessary to identify an ACK
+// resource of a given type (within the same namespace).
+type NamespacedTargetKubernetesResource struct {
+	metav1.GroupKind `json:""`
+	Name             *string `json:"name"`
+}
+
+// AdoptedResourceTarget provides the values necessary to create a
+// Kubernetes resource and override any of its metadata values.
+type AdoptedResourceTarget struct {
+	metav1.GroupKind `json:""`
+	Metadata         *PartialObjectMeta `json:"metadata,omitempty"`
+}
+
+// ResourceFieldSelector provides the values necessary to identify an individual
+// path on an individual K8s resource.
+type ResourceFieldSelector struct {
+	Resource NamespacedTargetKubernetesResource `json:"resource"`
+	Path     *string                            `json:"path"`
+}
+
+// FieldExportOutputSelector provides the values necessary to identify the
+// output path for a field export (within the same namespace).
+type FieldExportOutputSelector struct {
+	Name *string `json:"name"`
+	// Namespace is marked as optional, so we cannot compose `NamespacedName`
+	Namespace *string                `json:"namespace,omitempty"`
+	Type      *FieldExportOutputType `json:"type"`
 }
 
 // AWSResourceReferenceWrapper provides a wrapper around *AWSResourceReference
