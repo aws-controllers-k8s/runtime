@@ -213,7 +213,7 @@ func (r *resourceReconciler) Sync(
 
 	r.resetConditions(ctx, desired)
 	defer func() {
-		r.ensureConditions(rm, ctx, latest, err)
+		r.ensureConditions(ctx, rm, latest, err)
 	}()
 
 	isAdopted := IsAdopted(desired)
@@ -274,8 +274,8 @@ func (r *resourceReconciler) resetConditions(
 // ensureConditions examines the supplied resource's collection of Condition
 // objects and ensures that an ACK.ResourceSynced condition is present.
 func (r *resourceReconciler) ensureConditions(
-	rm acktypes.AWSResourceManager,
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	res acktypes.AWSResource,
 	reconcileErr error,
 ) {
@@ -292,9 +292,12 @@ func (r *resourceReconciler) ensureConditions(
 	// determine the Synced condition using "rm.IsSynced" method
 	if ackcondition.Synced(res) == nil {
 		condStatus := corev1.ConditionFalse
-		if synced, _ := rm.IsSynced(ctx, res); synced {
+		synced := false
+		rlog.Enter("rm.IsSynced")
+		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
 			condStatus = corev1.ConditionTrue
 		}
+		rlog.Exit("rm.IsSynced", err)
 		if reconcileErr != nil {
 			if reconcileErr == ackerr.Terminal {
 				// A terminal condition by its very nature indicates a stable state
