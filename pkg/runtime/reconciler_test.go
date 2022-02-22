@@ -165,7 +165,7 @@ func TestReconcilerUpdate(t *testing.T) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		assert.Equal(t, 1, len(conditions))
 		cond := conditions[0]
-		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
 		assert.Equal(t, corev1.ConditionTrue, cond.Status)
 	})
 
@@ -241,7 +241,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		assert.Equal(t, 1, len(conditions))
 		cond := conditions[0]
-		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
 		// Synced condition is false because rm.IsSynced() method returns
 		// False
 		assert.Equal(t, corev1.ConditionFalse, cond.Status)
@@ -320,9 +320,9 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		assert.Equal(t, 1, len(conditions))
 		cond := conditions[0]
-		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
 		// Synced condition is false because rm.IsSynced() method returns
-		// False
+		// an error
 		assert.Equal(t, corev1.ConditionFalse, cond.Status)
 	})
 
@@ -469,7 +469,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 			}
 
 			hasSynced = true
-			assert.Equal(condition.Status, corev1.ConditionTrue)
+			assert.Equal(corev1.ConditionTrue, condition.Status)
 		}
 		assert.True(hasSynced)
 	})
@@ -609,7 +609,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 			// Even though mocked IsSynced method returns (true, nil),
 			// the reconciler error from late initialization correctly causes
 			// the ResourceSynced condition to be False
-			assert.Equal(condition.Status, corev1.ConditionFalse)
+			assert.Equal(corev1.ConditionFalse, condition.Status)
 		}
 		assert.True(hasSynced)
 	})
@@ -694,8 +694,8 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 			}
 
 			hasTerminal = true
-			assert.Equal(condition.Message, terminalCondition.Message)
-			assert.Equal(condition.Reason, terminalCondition.Reason)
+			assert.Equal(terminalCondition.Message, condition.Message)
+			assert.Equal(terminalCondition.Reason, condition.Reason)
 		}
 		assert.True(hasTerminal)
 	}).Once()
@@ -711,8 +711,8 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 			}
 
 			hasTerminal = true
-			assert.Equal(condition.Message, terminalCondition.Message)
-			assert.Equal(condition.Reason, terminalCondition.Reason)
+			assert.Equal(terminalCondition.Message, condition.Message)
+			assert.Equal(terminalCondition.Reason, condition.Reason)
 		}
 		assert.True(hasTerminal)
 
@@ -724,7 +724,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 			hasSynced = true
 			// The terminal error from reconciler correctly causes
 			// the ResourceSynced condition to be True
-			assert.Equal(condition.Status, corev1.ConditionTrue)
+			assert.Equal(corev1.ConditionTrue, condition.Status)
 		}
 		assert.True(hasSynced)
 	})
@@ -782,10 +782,10 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		assert.Equal(t, 1, len(conditions))
 		cond := conditions[0]
-		assert.Equal(t, cond.Type, ackv1alpha1.ConditionTypeResourceSynced)
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
 		// The non-terminal reconciler error causes the ResourceSynced
 		// condition to be False
-		assert.Equal(t, cond.Status, corev1.ConditionFalse)
+		assert.Equal(t, corev1.ConditionFalse, cond.Status)
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
