@@ -17,9 +17,11 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	jq "github.com/itchyny/gojq"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +40,10 @@ import (
 
 const (
 	fieldExportFinalizerString = "finalizers.services.k8s.aws/FieldExport"
+)
+
+var (
+	pathDoesNotExistError = errors.New("path does not exist in this object")
 )
 
 // fieldExportReconciler is responsible for reconciling the state of any field
@@ -158,6 +164,13 @@ func (r *fieldExportReconciler) Sync(
 	from *acktypes.AWSResource,
 	desired *ackv1alpha1.FieldExport,
 ) error {
+	// Get the field from the resource
+	value, err := r.getSourcePathFromResource(*from, *desired.Spec.From.Path)
+	if err != nil {
+		return err
+	} else if value == nil {
+		return pathDoesNotExistError
+	}
 
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
@@ -199,7 +212,7 @@ func (r *fieldExportReconciler) getFieldExport(
 }
 
 // getSourceResource returns an ACK resource given a resource descriptor
-// and its respective namespaced name
+// and its respective namespaced name.
 func (r *fieldExportReconciler) getSourceResource(
 	ctx context.Context,
 	rd acktypes.AWSResourceDescriptor,
@@ -211,6 +224,56 @@ func (r *fieldExportReconciler) getSourceResource(
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
 	return &res, nil
+}
+
+// getSourcePathFromResource returns the value from the resource as referenced
+// by the given path. This method currently only supports a single field, and
+// will return the first one it finds if multiple are selected. This method only
+// supports primitives of type `int`, `bool` and `string`.
+func (r *fieldExportReconciler) getSourcePathFromResource(
+	from acktypes.AWSResource,
+	path string,
+) (interface{}, error) {
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(from.RuntimeObject())
+	if err != nil {
+		return nil, err
+	}
+
+	query, err := jq.Parse(path)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to parse path")
+	}
+
+	iter := query.Run(obj)
+
+	// Currently we only support exporting a single selection
+	result, ok := iter.Next()
+	if !ok {
+		return nil, nil
+	}
+
+	// Handle query errors
+	if err, ok := result.(error); ok {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Parse to supported primitive types
+	intResult, ok := result.(int)
+	if ok {
+		return intResult, nil
+	}
+	boolResult, ok := result.(bool)
+	if ok {
+		return boolResult, nil
+	}
+	stringResult, ok := result.(string)
+	if ok {
+		return stringResult, nil
+	}
+
+	return nil, nil
 }
 
 // onError will patch the FieldExport with the given error and return the
