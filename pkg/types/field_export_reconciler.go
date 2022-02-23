@@ -17,6 +17,7 @@ import (
 	"context"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 )
 
 // FieldExportReconciler is responsible for reconciling a field export CR.
@@ -28,8 +29,12 @@ type FieldExportReconciler interface {
 	// actively monitoring the resources.
 	Sync(
 		context.Context,
-		AWSResourceDescriptor,
-		AWSResourceManager,
+		*AWSResource,
 		*ackv1alpha1.FieldExport,
+	) error
+	// BindServiceResourceToManager binds a given AWS resource descriptor to the
+	// controller manager
+	BindServiceResourceManager(
+		ctrlrt.Manager,
 	) error
 }

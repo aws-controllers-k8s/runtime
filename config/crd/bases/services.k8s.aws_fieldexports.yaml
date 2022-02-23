@@ -74,6 +74,8 @@ spec:
                       `NamespacedName`
                     type: string
                   type:
+                    description: FieldExportOutputType represents all types that can
+                      be produced by a field export operation
                     type: string
                 required:
                 - name

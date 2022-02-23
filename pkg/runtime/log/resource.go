@@ -225,3 +225,63 @@ func expandAdoptedResourceFields(
 	}
 	return vals
 }
+
+// AdaptFieldExport returns a logger with log values set for the adopted
+// resource's kind, namespace, name, etc
+func AdaptFieldExport(
+	log logr.Logger,
+	res *v1alpha1.FieldExport,
+	additionalValues ...interface{},
+) logr.Logger {
+	vals := expandFieldExportFields(res, additionalValues...)
+	return log.WithValues(vals...)
+}
+
+// DebugFieldExport writes a supplied log message about a field export that
+// includes a set of standard log values for the resource's kind, namespace, name, etc
+func DebugFieldExport(
+	log logr.Logger,
+	res *v1alpha1.FieldExport,
+	msg string,
+	additionalValues ...interface{},
+) {
+	AdaptFieldExport(log, res, additionalValues...).V(1).Info(msg)
+}
+
+// InfoFieldExport writes a supplied log message about a field export that
+// includes a set of standard log values for the resource's kind, namespace, name, etc
+func InfoFieldExport(
+	log logr.Logger,
+	res *v1alpha1.FieldExport,
+	msg string,
+	additionalValues ...interface{},
+) {
+	AdaptFieldExport(log, res, additionalValues...).V(0).Info(msg)
+}
+
+// expandFieldExportFields returns the key/value pairs for an adopted
+// resource that should be used as structured data in log messages about the
+// field export
+func expandFieldExportFields(
+	res *v1alpha1.FieldExport,
+	additionalValues ...interface{},
+) []interface{} {
+	ns := res.Namespace
+	resName := res.Name
+	generation := res.Generation
+	vals := []interface{}{
+		"source_name", res.Spec.From.Resource.Name,
+		"source_kind", res.Spec.From.Resource.Kind,
+		"source_path", res.Spec.From.Path,
+		"target_name", res.Spec.To.Name,
+		"target_namespace", res.Spec.To.Namespace,
+		"target_type", res.Spec.To.Type,
+		"namespace", ns,
+		"name", resName,
+		"generation", generation,
+	}
+	if len(additionalValues) > 0 {
+		vals = append(vals, additionalValues...)
+	}
+	return vals
+}

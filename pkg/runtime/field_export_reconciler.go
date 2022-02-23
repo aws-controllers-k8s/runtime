@@ -19,6 +19,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -30,6 +32,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -42,6 +45,8 @@ const (
 // It implements the upstream controller-runtime `Reconciler` interface.
 type fieldExportReconciler struct {
 	reconciler
+	// rd is only used if binding to an ACK resource (not `FieldExport`)
+	rd *acktypes.AWSResourceDescriptor
 }
 
 // BindControllerManager sets up the AWSResourceReconciler with an instance
@@ -59,6 +64,25 @@ func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error 
 	).Complete(r)
 }
 
+// BindServiceResourceToManager binds a given AWS resource descriptor to the
+// controller manager
+func (r *fieldExportReconciler) BindServiceResourceManager(mgr ctrlrt.Manager) error {
+	r.kc = mgr.GetClient()
+	r.apiReader = mgr.GetAPIReader()
+
+	if r.rd == nil {
+		return errors.New("cannot bind resource field export reconciler with nil resource descriptor")
+	}
+
+	return ctrlrt.NewControllerManagedBy(
+		mgr,
+	).For(
+		(*r.rd).EmptyRuntimeObject(),
+	).WithEventFilter(
+		predicate.GenerationChangedPredicate{},
+	).Complete(r)
+}
+
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
 // a CR CRUD request
 func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
@@ -66,25 +90,81 @@ func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Reques
 }
 
 func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
-	return nil
+	// Determine if we are reconciling an ACK resource
+	if r.rd != nil {
+		return nil
+	}
+
+	// We are reconciling a field export CR
+	return r.reconcileFieldExport(ctx, req)
 }
 
+func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ctrlrt.Request) error {
+	res, err := r.getFieldExport(ctx, req)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// resource wasn't found. just ignore these.
+			return nil
+		}
+		return err
+	}
+
+	if res.DeletionTimestamp != nil {
+		return r.cleanup(ctx, res)
+	}
+
+	if err := r.markManaged(ctx, res); err != nil {
+		return r.onError(ctx, res, err)
+	}
+
+	sourceGK := res.Spec.From.Resource.GroupKind
+	sourceName := types.NamespacedName{
+		Name: *res.Spec.From.Resource.Name,
+		// We only support pulling from resources in
+		// the same namespace
+		Namespace: req.Namespace,
+	}
+
+	// Check if the target API group matches with the controller
+	var controllerRMF acktypes.AWSResourceManagerFactory
+	for _, v := range r.sc.GetResourceManagerFactories() {
+		controllerRMF = v
+		break
+	}
+	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
+		ackrtlog.DebugFieldExport(r.log, res, "target resource API group is not of this service. no-op")
+		return nil
+	}
+
+	// Look up the rmf for the given target resource GVK
+	rmf, ok := (r.sc.GetResourceManagerFactories())[sourceGK.String()]
+	if !ok {
+		return ackerr.ResourceManagerFactoryNotFound
+	}
+
+	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
+	if err != nil {
+		return ackerr.NotFound
+	}
+
+	// Attempt an initial export
+	return r.Sync(ctx, sourceObject, res)
+}
+
+// Sync will attempt to take the exported field value from the source ACK
+// resource and write it into the destination field export output type.
 func (r *fieldExportReconciler) Sync(
 	ctx context.Context,
-	targetDescriptor acktypes.AWSResourceDescriptor,
-	rm acktypes.AWSResourceManager,
+	from *acktypes.AWSResource,
 	desired *ackv1alpha1.FieldExport,
 ) error {
-	if err := r.markManaged(ctx, desired); err != nil {
-		return r.onError(ctx, desired, err)
-	}
 
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
 	return r.onSuccess(ctx, desired)
 }
 
-// cleanup removes the finalizer from AdoptedResource so that k8s object can
+// cleanup removes the finalizer from FieldExport so that k8s object can
 // be deleted.
 func (r *fieldExportReconciler) cleanup(
 	ctx context.Context,
@@ -93,13 +173,13 @@ func (r *fieldExportReconciler) cleanup(
 	if err := r.markUnmanaged(ctx, current); err != nil {
 		return err
 	}
-	// Additional logic?
+
 	return nil
 }
 
-// getAdoptedResource returns an AdoptedResource representing the requested Kubernetes
+// getFieldExport returns a FieldExport representing the requested Kubernetes
 // namespaced object
-func (r *fieldExportReconciler) getAdoptedResource(
+func (r *fieldExportReconciler) getFieldExport(
 	ctx context.Context,
 	req ctrlrt.Request,
 ) (*ackv1alpha1.FieldExport, error) {
@@ -118,7 +198,22 @@ func (r *fieldExportReconciler) getAdoptedResource(
 	return ro, nil
 }
 
-// onError will patch the adopted resource with the given error and return the
+// getSourceResource returns an ACK resource given a resource descriptor
+// and its respective namespaced name
+func (r *fieldExportReconciler) getSourceResource(
+	ctx context.Context,
+	rd acktypes.AWSResourceDescriptor,
+	name types.NamespacedName,
+) (*acktypes.AWSResource, error) {
+	obj := rd.EmptyRuntimeObject()
+	if err := r.apiReader.Get(ctx, name, obj); err != nil {
+		return nil, err
+	}
+	res := rd.ResourceFromRuntimeObject(obj)
+	return &res, nil
+}
+
+// onError will patch the FieldExport with the given error and return the
 // same error back
 func (r *fieldExportReconciler) onError(
 	ctx context.Context,
@@ -129,7 +224,7 @@ func (r *fieldExportReconciler) onError(
 	return err
 }
 
-// onSuccess will patch the adopted resource with a adopted condition and
+// onSuccess will patch the FieldExport with a synced condition and
 // return any errors that occurred while patching
 func (r *fieldExportReconciler) onSuccess(
 	ctx context.Context,
@@ -200,9 +295,12 @@ func (r *fieldExportReconciler) markManaged(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
-	base := res.DeepCopy()
-	k8sctrlutil.AddFinalizer(res, fieldExportFinalizerString)
-	return r.patchMetadataAndSpec(ctx, res, base)
+	if !k8sctrlutil.ContainsFinalizer(res, fieldExportFinalizerString) {
+		base := res.DeepCopy()
+		k8sctrlutil.AddFinalizer(res, fieldExportFinalizerString)
+		return r.patchMetadataAndSpec(ctx, res, base)
+	}
+	return nil
 }
 
 // markUnmanaged removes the supplied resource from management by ACK.
@@ -277,8 +375,9 @@ func NewFieldExportReconciler(
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
-) acktypes.Reconciler {
-	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
+	rd *acktypes.AWSResourceDescriptor,
+) acktypes.FieldExportReconciler {
+	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
 }
 
 // NewFieldExportReconcilerWithClient returns a new FieldExportReconciler object with
@@ -293,6 +392,7 @@ func NewFieldExportReconcilerWithClient(
 	cache ackrtcache.Caches,
 	kc client.Client,
 	apiReader client.Reader,
+	rd *acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
 	return &fieldExportReconciler{
 		reconciler: reconciler{
@@ -304,5 +404,6 @@ func NewFieldExportReconcilerWithClient(
 			kc:        kc,
 			apiReader: apiReader,
 		},
+		rd: rd,
 	}
 }

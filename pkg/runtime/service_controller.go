@@ -72,6 +72,9 @@ type serviceController struct {
 	// process and is bound to the `controller-runtime.Manager` in
 	// `BindControllerManager`
 	fieldExportReconciler acktypes.Reconciler
+	// resourceFieldExportReconcilers is a slice containing
+	// FieldExportReconciler objects that are bound to each resource
+	resourceFieldExportReconcilers []acktypes.FieldExportReconciler
 	// log refers to the logr.Logger object handling logging for the service
 	// controller
 	log logr.Logger
@@ -207,14 +210,6 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		cache.Run(clientSet)
 	}
 
-	for _, rmf := range c.rmFactories {
-		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
-		if err := rec.BindControllerManager(mgr); err != nil {
-			return err
-		}
-		c.reconcilers = append(c.reconcilers, rec)
-	}
-
 	adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
 	adoptionLogger := c.log.WithName("adoption")
 	if err != nil {
@@ -236,11 +231,25 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	} else if !exporterInstalled {
 		exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
 	} else {
-		rec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache)
+		rec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, nil)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
 		}
 		c.fieldExportReconciler = rec
+	}
+
+	for _, rmf := range c.rmFactories {
+		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
+		if err := rec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		rd := rmf.ResourceDescriptor()
+		feRec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, &rd)
+		if err := feRec.BindServiceResourceManager(mgr); err != nil {
+			return err
+		}
+		c.reconcilers = append(c.reconcilers, rec)
+		c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
 	}
 
 	return nil
