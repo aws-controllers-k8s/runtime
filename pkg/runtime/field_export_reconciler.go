@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	jq "github.com/itchyny/gojq"
@@ -172,6 +173,14 @@ func (r *fieldExportReconciler) Sync(
 		return pathDoesNotExistError
 	}
 
+	switch *desired.Spec.To.Kind {
+	case ackv1alpha1.FieldExportOutputTypeConfigMap:
+		if err = r.writeToConfigMap(ctx, value, desired); err != nil {
+			return err
+		}
+	case ackv1alpha1.FieldExportOutputTypeSecret:
+	}
+
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
 	return r.onSuccess(ctx, desired)
@@ -274,6 +283,53 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 	}
 
 	return nil, nil
+}
+
+// writeToConfigMap will patch an existing config map to add an exported field
+// value. By default the key will be "<namespace>.<name>" using values from the
+// exporter that created it.
+func (r *fieldExportReconciler) writeToConfigMap(
+	ctx context.Context,
+	sourceValue interface{},
+	desired *ackv1alpha1.FieldExport,
+) error {
+	// Construct the data key
+	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
+
+	// Get the initial configmap
+	nsn := types.NamespacedName{
+		Name: *desired.Spec.To.Name,
+	}
+	if desired.Spec.To.Namespace != nil {
+		nsn.Namespace = *desired.Spec.To.Namespace
+	} else {
+		nsn.Namespace = desired.Namespace
+	}
+
+	cm := &corev1.ConfigMap{}
+	err := r.kc.Get(ctx, nsn, cm)
+	if err != nil {
+		return errors.Wrap(err, "unable to get existing config map")
+	}
+
+	// Update the field
+	stringValue, ok := sourceValue.(string)
+	if !ok {
+		return errors.New("unable to cast value to string")
+	}
+	patch := client.StrategicMergeFrom(cm.DeepCopy())
+	if cm.Data == nil {
+		cm.Data = make(map[string]string, 1)
+	}
+	cm.Data[key] = stringValue
+
+	ackrtlog.InfoFieldExport(r.log, desired, "patching target config map")
+	err = r.kc.Patch(ctx, cm, patch)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // onError will patch the FieldExport with the given error and return the
