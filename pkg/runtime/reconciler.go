@@ -346,20 +346,6 @@ func (r *resourceReconciler) createResource(
 		return nil, err
 	}
 
-	// Once the desired resource is marked as managed (i.e. Finalizer is added
-	// inside the resource metadata and the resource is patched inside etcd), the
-	// patch operation updates the desired resource spec with spec present in
-	// etcd. This means if any references were resolved, they get reset after
-	// the patch call. So we resolve the references again before calling the
-	// rm.Create() method.
-	rlog.Enter("rm.ResolveReferences")
-	resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
-	rlog.Exit("rm.ResolveReferences", err)
-	if err != nil {
-		return resolvedRefDesired, err
-	}
-	desired = resolvedRefDesired
-
 	rlog.Enter("rm.Create")
 	latest, err = rm.Create(ctx, desired)
 	rlog.Exit("rm.Create", err)
