@@ -56,8 +56,9 @@ type ResourceFieldSelector struct {
 type FieldExportOutputSelector struct {
 	Name *string `json:"name"`
 	// Namespace is marked as optional, so we cannot compose `NamespacedName`
-	Namespace *string                `json:"namespace,omitempty"`
-	Kind      *FieldExportOutputType `json:"kind"`
+	Namespace *string `json:"namespace,omitempty"`
+	// +kubebuilder:validation:Enum=configmap;secret
+	Kind *FieldExportOutputType `json:"kind"`
 }
 
 // AWSResourceReferenceWrapper provides a wrapper around *AWSResourceReference

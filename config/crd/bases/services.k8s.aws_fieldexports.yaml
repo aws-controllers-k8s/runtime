@@ -67,19 +67,22 @@ spec:
                   to identify the output path for a field export (within the same
                   namespace).
                 properties:
+                  kind:
+                    description: FieldExportOutputType represents all types that can
+                      be produced by a field export operation
+                    enum:
+                    - configmap
+                    - secret
+                    type: string
                   name:
                     type: string
                   namespace:
                     description: Namespace is marked as optional, so we cannot compose
                       `NamespacedName`
                     type: string
-                  type:
-                    description: FieldExportOutputType represents all types that can
-                      be produced by a field export operation
-                    type: string
                 required:
+                - kind
                 - name
-                - type
                 type: object
             required:
             - from
