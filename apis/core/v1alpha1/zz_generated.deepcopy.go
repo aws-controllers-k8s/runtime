@@ -322,8 +322,8 @@ func (in *FieldExportOutputSelector) DeepCopyInto(out *FieldExportOutputSelector
 		*out = new(string)
 		**out = **in
 	}
-	if in.Type != nil {
-		in, out := &in.Type, &out.Type
+	if in.Kind != nil {
+		in, out := &in.Kind, &out.Kind
 		*out = new(FieldExportOutputType)
 		**out = **in
 	}

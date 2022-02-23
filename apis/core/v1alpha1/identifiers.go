@@ -57,7 +57,7 @@ type FieldExportOutputSelector struct {
 	Name *string `json:"name"`
 	// Namespace is marked as optional, so we cannot compose `NamespacedName`
 	Namespace *string                `json:"namespace,omitempty"`
-	Type      *FieldExportOutputType `json:"type"`
+	Kind      *FieldExportOutputType `json:"kind"`
 }
 
 // AWSResourceReferenceWrapper provides a wrapper around *AWSResourceReference

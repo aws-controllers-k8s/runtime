@@ -275,7 +275,7 @@ func expandFieldExportFields(
 		"source_path", res.Spec.From.Path,
 		"target_name", res.Spec.To.Name,
 		"target_namespace", res.Spec.To.Namespace,
-		"target_type", res.Spec.To.Type,
+		"target_kind", res.Spec.To.Kind,
 		"namespace", ns,
 		"name", resName,
 		"generation", generation,
