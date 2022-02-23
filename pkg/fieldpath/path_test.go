@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aws-controllers-k8s/runtime/pkg/fieldpath"
+	awssdkmodel "github.com/aws/aws-sdk-go/private/model/api"
 )
 
 func TestBasics(t *testing.T) {

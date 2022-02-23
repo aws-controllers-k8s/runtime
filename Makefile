@@ -6,6 +6,11 @@ K8S_APIMACHINERY_VERSION = $(shell go list -m -f '{{ .Version }}' k8s.io/apimach
 K8S_APIMACHINERY_DIR = "$(GOPATH)/pkg/mod/k8s.io/apimachinery@$(K8S_APIMACHINERY_VERSION)"
 CONTROLLER_RUNTIME_VERSION = $(shell go list -m -f '{{ .Version }}' sigs.k8s.io/controller-runtime)
 CONTROLLER_RUNTIME_DIR = "$(GOPATH)/pkg/mod/sigs.k8s.io/controller-runtime@$(CONTROLLER_RUNTIME_VERSION)"
+
+# We need to use the codegen tag when building and testing because the
+# aws-sdk-go/private/model/api package is gated behind a build tag "codegen"...
+GO_TAGS=-tags codegen
+
 .PHONY: all test clean-mocks mocks
 
 all: test
