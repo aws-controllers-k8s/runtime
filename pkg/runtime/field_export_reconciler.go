@@ -16,6 +16,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	jq "github.com/itchyny/gojq"
@@ -86,7 +87,8 @@ func (r *fieldExportReconciler) BindServiceResourceManager(mgr ctrlrt.Manager) e
 	).For(
 		(*r.rd).EmptyRuntimeObject(),
 	).WithEventFilter(
-		predicate.GenerationChangedPredicate{},
+		// Update on both status and spec changes
+		predicate.ResourceVersionChangedPredicate{},
 	).Complete(r)
 }
 
@@ -99,13 +101,14 @@ func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Reques
 func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
 	// Determine if we are reconciling an ACK resource
 	if r.rd != nil {
-		return nil
+		return r.reconcileResource(ctx, req)
 	}
 
 	// We are reconciling a field export CR
 	return r.reconcileFieldExport(ctx, req)
 }
 
+// reconcileFieldExport handles updates to `FieldExport` resources
 func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ctrlrt.Request) error {
 	res, err := r.getFieldExport(ctx, req)
 	if err != nil {
@@ -155,7 +158,36 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	}
 
 	// Attempt an initial export
-	return r.Sync(ctx, sourceObject, res)
+	return r.Sync(ctx, &sourceObject, res)
+}
+
+// reconcileResource handles updates to any other (not `FieldExport`) ACK
+// resources
+func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlrt.Request) error {
+	res, err := r.getSourceResource(ctx, *r.rd, req.NamespacedName)
+	if err != nil {
+		return err
+	}
+
+	// Get each of the exports referencing this AWS resource
+	kind := (*r.rd).GroupKind().Kind
+	exports, err := r.filterAllExports(ctx,
+		kind,
+		res.MetaObject().GetNamespace(),
+		res.MetaObject().GetName(),
+	)
+	if err != nil {
+		return err
+	}
+
+	// Iterate through each export and sync it
+	for _, export := range exports {
+		if err = r.Sync(ctx, &res, &export); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Sync will attempt to take the exported field value from the source ACK
@@ -229,13 +261,13 @@ func (r *fieldExportReconciler) getSourceResource(
 	ctx context.Context,
 	rd acktypes.AWSResourceDescriptor,
 	name types.NamespacedName,
-) (*acktypes.AWSResource, error) {
+) (acktypes.AWSResource, error) {
 	obj := rd.EmptyRuntimeObject()
 	if err := r.apiReader.Get(ctx, name, obj); err != nil {
 		return nil, err
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
-	return &res, nil
+	return res, nil
 }
 
 // getSourcePathFromResource returns the value from the resource as referenced
@@ -375,6 +407,41 @@ func (r *fieldExportReconciler) writeToSecret(
 	}
 
 	return nil
+}
+
+// filterAllExports will list all FieldExport CRs and filter them based on
+// whether they contain a reference to the given AWS resource.
+func (r *fieldExportReconciler) filterAllExports(
+	ctx context.Context,
+	kind string,
+	namespace string,
+	name string,
+) ([]ackv1alpha1.FieldExport, error) {
+	listed := &ackv1alpha1.FieldExportList{}
+	opts := []client.ListOption{
+		client.InNamespace(namespace),
+	}
+	if err := r.apiReader.List(ctx, listed, opts...); err != nil {
+		return []ackv1alpha1.FieldExport{}, err
+	}
+
+	exports := []ackv1alpha1.FieldExport{}
+	for _, export := range listed.Items {
+		// Ensure we are working with managed exports
+		if !k8sctrlutil.ContainsFinalizer(&export, fieldExportFinalizerString) {
+			continue
+		}
+
+		// Check the reference matches our source resource
+		if !strings.EqualFold(export.Spec.From.Resource.Kind, kind) ||
+			!strings.EqualFold(*export.Spec.From.Resource.Name, name) {
+			continue
+		}
+
+		exports = append(exports, export)
+	}
+
+	return exports, nil
 }
 
 // onError will patch the FieldExport with the given error and return the
