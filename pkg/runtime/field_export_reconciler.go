@@ -179,6 +179,9 @@ func (r *fieldExportReconciler) Sync(
 			return err
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
+		if err = r.writeToSecret(ctx, *value, desired); err != nil {
+			return err
+		}
 	}
 
 	// Don't attempt to patch conditions again, directly return result of
@@ -323,6 +326,49 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm.Data[key] = sourceValue
 
 	ackrtlog.InfoFieldExport(r.log, desired, "patching target config map")
+	err = r.kc.Patch(ctx, cm, patch)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeToSecret will patch an existing secret to add an exported field value.
+// By default the key will be "<namespace>.<name>" using values from the
+// exporter that created it.
+func (r *fieldExportReconciler) writeToSecret(
+	ctx context.Context,
+	sourceValue string,
+	desired *ackv1alpha1.FieldExport,
+) error {
+	// Construct the data key
+	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
+
+	// Get the initial secret
+	nsn := types.NamespacedName{
+		Name: *desired.Spec.To.Name,
+	}
+	if desired.Spec.To.Namespace != nil {
+		nsn.Namespace = *desired.Spec.To.Namespace
+	} else {
+		nsn.Namespace = desired.Namespace
+	}
+
+	cm := &corev1.Secret{}
+	err := r.kc.Get(ctx, nsn, cm)
+	if err != nil {
+		return errors.Wrap(err, "unable to get existing secret")
+	}
+
+	// Update the field
+	patch := client.StrategicMergeFrom(cm.DeepCopy())
+	if cm.Data == nil {
+		cm.Data = make(map[string][]byte, 1)
+	}
+	cm.Data[key] = []byte(sourceValue)
+
+	ackrtlog.InfoFieldExport(r.log, desired, "patching target secret")
 	err = r.kc.Patch(ctx, cm, patch)
 	if err != nil {
 		return err
