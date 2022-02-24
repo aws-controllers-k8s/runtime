@@ -175,7 +175,7 @@ func (r *fieldExportReconciler) Sync(
 
 	switch *desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
-		if err = r.writeToConfigMap(ctx, value, desired); err != nil {
+		if err = r.writeToConfigMap(ctx, *value, desired); err != nil {
 			return err
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
@@ -242,7 +242,7 @@ func (r *fieldExportReconciler) getSourceResource(
 func (r *fieldExportReconciler) getSourcePathFromResource(
 	from acktypes.AWSResource,
 	path string,
-) (interface{}, error) {
+) (*string, error) {
 	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(from.RuntimeObject())
 	if err != nil {
 		return nil, err
@@ -268,18 +268,21 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 		}
 	}
 
-	// Parse to supported primitive types
-	intResult, ok := result.(int)
+	// If it's already a string
+	var stringResult string
+	stringResult, ok = result.(string)
 	if ok {
-		return intResult, nil
+		return &stringResult, nil
 	}
 	boolResult, ok := result.(bool)
 	if ok {
-		return boolResult, nil
+		stringResult = fmt.Sprintf("%t", boolResult)
+		return &stringResult, nil
 	}
-	stringResult, ok := result.(string)
+	intResult, ok := result.(int)
 	if ok {
-		return stringResult, nil
+		stringResult = fmt.Sprintf("%d", intResult)
+		return &stringResult, nil
 	}
 
 	return nil, nil
@@ -290,7 +293,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 // exporter that created it.
 func (r *fieldExportReconciler) writeToConfigMap(
 	ctx context.Context,
-	sourceValue interface{},
+	sourceValue string,
 	desired *ackv1alpha1.FieldExport,
 ) error {
 	// Construct the data key
@@ -313,15 +316,11 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	}
 
 	// Update the field
-	stringValue, ok := sourceValue.(string)
-	if !ok {
-		return errors.New("unable to cast value to string")
-	}
 	patch := client.StrategicMergeFrom(cm.DeepCopy())
 	if cm.Data == nil {
 		cm.Data = make(map[string]string, 1)
 	}
-	cm.Data[key] = stringValue
+	cm.Data[key] = sourceValue
 
 	ackrtlog.InfoFieldExport(r.log, desired, "patching target config map")
 	err = r.kc.Patch(ctx, cm, patch)
