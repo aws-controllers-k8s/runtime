@@ -126,14 +126,6 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 		return err
 	}
 
-	if res.DeletionTimestamp != nil {
-		return r.cleanup(ctx, res)
-	}
-
-	if err := r.markManaged(ctx, res); err != nil {
-		return r.onError(ctx, res, err)
-	}
-
 	sourceGK := res.Spec.From.Resource.GroupKind
 	sourceName := types.NamespacedName{
 		Name: *res.Spec.From.Resource.Name,
@@ -151,6 +143,14 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
 		ackrtlog.DebugFieldExport(r.log, res, "target resource API group is not of this service. no-op")
 		return nil
+	}
+
+	if res.DeletionTimestamp != nil {
+		return r.cleanup(ctx, res)
+	}
+
+	if err := r.markManaged(ctx, res); err != nil {
+		return r.onError(ctx, res, err)
 	}
 
 	// Look up the rmf for the given target resource GVK
