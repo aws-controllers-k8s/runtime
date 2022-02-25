@@ -39,13 +39,13 @@ import (
 )
 
 const (
-	Namespace = "default"
-	Name      = "adoptedRes"
+	AdoptedResourceNamespace = "default"
+	AdoptedResourceName      = "adoptedRes"
 )
 
 // Helper functions for tests
 
-func mockReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+func mockAdoptionReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -86,7 +86,7 @@ func mockManager() *ackmocks.AWSResourceManager {
 	return &ackmocks.AWSResourceManager{}
 }
 
-func setupMockClient(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, adoptedRes *ackv1alpha1.AdoptedResource) {
+func setupMockClientForAdoptedResource(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, adoptedRes *ackv1alpha1.AdoptedResource) {
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -101,8 +101,8 @@ func setupMockAwsResource(
 	res.On("SetObjectMeta", mock.AnythingOfType("ObjectMeta")).Run(func(args mock.Arguments) {})
 
 	metaObj := &k8sobj.Unstructured{}
-	metaObj.SetNamespace(Namespace)
-	metaObj.SetName(Name)
+	metaObj.SetNamespace(AdoptedResourceNamespace)
+	metaObj.SetName(AdoptedResourceName)
 	res.On("MetaObject").Return(metaObj)
 
 	rmo := &ctrlrtclientmock.Object{}
@@ -126,10 +126,10 @@ func setupMockDescriptor(descriptor *ackmocks.AWSResourceDescriptor, res *ackmoc
 	descriptor.On("MarkAdopted", res).Run(func(args mock.Arguments) {})
 }
 
-func setupMockApiReader(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *ackmocks.AWSResource) {
+func setupMockApiReaderForAdoptedResource(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *ackmocks.AWSResource) {
 	apiReader.On("Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject()).Return(k8serrors.NewNotFound(schema.GroupResource{}, ""))
 }
 
@@ -154,17 +154,17 @@ func TestSync_FailureInSettingIdentifiers(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	res.On("SetIdentifiers", adoptedRes.Spec.AWS).Return(errors.New("unable to set Identifier"))
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 
 	// Call
 	err := r.Sync(ctx, descriptor, manager, adoptedRes)
@@ -180,11 +180,11 @@ func TestSync_FailureInSettingIdentifiers(t *testing.T) {
 	manager.AssertNotCalled(t, "ReadOne", ctx, res)
 	// No calls to findout if the AWSResource already exists
 	apiReader.AssertNotCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject())
 	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(false, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -192,16 +192,16 @@ func TestSync_FailureInReadOne(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	manager.On("ReadOne", ctx, res).Return(res, errors.New("failed to perform ReadOne"))
 
 	// Call
@@ -217,11 +217,11 @@ func TestSync_FailureInReadOne(t *testing.T) {
 	// No calls to findout if the AWSResource already exists because of ReadOne
 	// failure
 	apiReader.AssertNotCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject())
 	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(false, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -229,22 +229,22 @@ func TestSync_AWSResourceAlreadyExists(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 
 	apiReader.On("Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject()).Return(nil)
 
 	// Call
@@ -254,7 +254,7 @@ func TestSync_AWSResourceAlreadyExists(t *testing.T) {
 	require.Nil(err)
 	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
 	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(true, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(true, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("True", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -262,22 +262,22 @@ func TestSync_APIReaderUnknownError(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 
 	apiReader.On("Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject()).Return(errors.New("unknown error"))
 
 	// Call
@@ -288,7 +288,7 @@ func TestSync_APIReaderUnknownError(t *testing.T) {
 	require.Equal("unknown error", err.Error())
 	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
 	assertAWSResourceCreation(false, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(false, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -296,19 +296,19 @@ func TestSync_ErrorInResourceCreation(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
-	setupMockApiReader(apiReader, ctx, res)
+	setupMockApiReaderForAdoptedResource(apiReader, ctx, res)
 	kc.On("Create", ctx, res.RuntimeObject()).Return(errors.New("creation failure"))
 
 	// Call
@@ -321,7 +321,7 @@ func TestSync_ErrorInResourceCreation(t *testing.T) {
 	kc.AssertCalled(t, "Create", ctx, res.RuntimeObject())
 	// Update status of AWSResource should not happen due to creation failure
 	statusWriter.AssertNotCalled(t, "Update", ctx, res.RuntimeObject())
-	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(false, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -329,19 +329,19 @@ func TestSync_ErrorInStatusUpdate(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
-	setupMockApiReader(apiReader, ctx, res)
+	setupMockApiReaderForAdoptedResource(apiReader, ctx, res)
 	kc.On("Create", ctx, res.RuntimeObject()).Return(nil)
 	statusWriter.On("Update", ctx, res.RuntimeObject()).Return(errors.New("status update failure"))
 
@@ -353,7 +353,7 @@ func TestSync_ErrorInStatusUpdate(t *testing.T) {
 	require.Equal("status update failure", err.Error())
 	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
 	assertAWSResourceCreation(true, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(false, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(false, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("False", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -361,19 +361,19 @@ func TestSync_HappyCase(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockReconciler()
+	r, kc, apiReader := mockAdoptionReconciler()
 	descriptor, res, resDeepCopy := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	adoptedRes := adoptedResource(Namespace, Name)
+	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
-	setupMockClient(kc, statusWriter, ctx, adoptedRes)
+	setupMockClientForAdoptedResource(kc, statusWriter, ctx, adoptedRes)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
-	setupMockApiReader(apiReader, ctx, res)
+	setupMockApiReaderForAdoptedResource(apiReader, ctx, res)
 	kc.On("Create", ctx, res.RuntimeObject()).Return(nil)
 	statusWriter.On("Update", ctx, res.RuntimeObject()).Return(nil)
 
@@ -384,7 +384,7 @@ func TestSync_HappyCase(t *testing.T) {
 	require.Nil(err)
 	assertAWSResourceRead(t, ctx, manager, apiReader, adoptedRes, res)
 	assertAWSResourceCreation(true, t, ctx, kc, statusWriter, res, resDeepCopy)
-	assertManaged(true, t, ctx, kc, adoptedRes)
+	assertAdoptedResourceManaged(true, t, ctx, kc, adoptedRes)
 	assertAdoptedCondition("True", require, t, ctx, kc, statusWriter, adoptedRes)
 }
 
@@ -410,21 +410,20 @@ func assertAdoptedCondition(
 	require.Equal(conditionStatus, string(adoptedRes.Status.Conditions[0].Status))
 }
 
-// assertManaged asserts that adoptedResource was patched when 'expectedManaged'
-// parameter is true.
-// If 'expectedManaged' parameter is false, this function asserts that
-// adoptedResource was never patched.
-func assertManaged(
+// assertAdoptedResourceManaged asserts that the object was patched when
+// 'expectedManaged' parameter is true. If 'expectedManaged' parameter is false,
+// this function asserts that the object was never patched.
+func assertAdoptedResourceManaged(
 	expectedManaged bool,
 	t *testing.T,
 	ctx context.Context,
 	kc *ctrlrtclientmock.Client,
-	adoptedRes *ackv1alpha1.AdoptedResource,
+	object *ackv1alpha1.AdoptedResource,
 ) {
 	if expectedManaged {
-		kc.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
+		kc.AssertCalled(t, "Patch", ctx, object, mock.AnythingOfType("*client.mergeFromPatch"))
 	} else {
-		kc.AssertNotCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
+		kc.AssertNotCalled(t, "Patch", ctx, object, mock.AnythingOfType("*client.mergeFromPatch"))
 	}
 }
 
@@ -470,7 +469,7 @@ func assertAWSResourceRead(
 	res.AssertCalled(t, "SetIdentifiers", adoptedRes.Spec.AWS)
 	manager.AssertCalled(t, "ReadOne", ctx, res)
 	apiReader.AssertCalled(t, "Get", ctx, types.NamespacedName{
-		Namespace: Namespace,
-		Name:      Name,
+		Namespace: AdoptedResourceNamespace,
+		Name:      AdoptedResourceName,
 	}, res.RuntimeObject())
 }

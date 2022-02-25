@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -46,6 +47,11 @@ const (
 
 var (
 	pathDoesNotExistError = errors.New("path does not exist in this object")
+)
+
+// Remove the global to make it easier to mock
+var (
+	UnstructuredConverter runtime.UnstructuredConverter = runtime.DefaultUnstructuredConverter
 )
 
 // fieldExportReconciler is responsible for reconciling the state of any field
@@ -158,7 +164,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	}
 
 	// Attempt an initial export
-	return r.Sync(ctx, &sourceObject, res)
+	return r.Sync(ctx, sourceObject, *res)
 }
 
 // reconcileResource handles updates to any other (not `FieldExport`) ACK
@@ -167,6 +173,11 @@ func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlr
 	res, err := r.getSourceResource(ctx, *r.rd, req.NamespacedName)
 	if err != nil {
 		return err
+	}
+
+	// Ensure our current object is synced
+	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
+		return nil
 	}
 
 	// Get each of the exports referencing this AWS resource
@@ -182,7 +193,7 @@ func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlr
 
 	// Iterate through each export and sync it
 	for _, export := range exports {
-		if err = r.Sync(ctx, &res, &export); err != nil {
+		if err = r.Sync(ctx, res, export); err != nil {
 			return err
 		}
 	}
@@ -194,11 +205,11 @@ func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlr
 // resource and write it into the destination field export output type.
 func (r *fieldExportReconciler) Sync(
 	ctx context.Context,
-	from *acktypes.AWSResource,
-	desired *ackv1alpha1.FieldExport,
+	from acktypes.AWSResource,
+	desired ackv1alpha1.FieldExport,
 ) error {
 	// Get the field from the resource
-	value, err := r.getSourcePathFromResource(*from, *desired.Spec.From.Path)
+	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
 		return err
 	} else if value == nil {
@@ -207,18 +218,18 @@ func (r *fieldExportReconciler) Sync(
 
 	switch *desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
-		if err = r.writeToConfigMap(ctx, *value, desired); err != nil {
+		if err = r.writeToConfigMap(ctx, *value, &desired); err != nil {
 			return err
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
-		if err = r.writeToSecret(ctx, *value, desired); err != nil {
+		if err = r.writeToSecret(ctx, *value, &desired); err != nil {
 			return err
 		}
 	}
 
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
-	return r.onSuccess(ctx, desired)
+	return r.onSuccess(ctx, &desired)
 }
 
 // cleanup removes the finalizer from FieldExport so that k8s object can
@@ -273,12 +284,13 @@ func (r *fieldExportReconciler) getSourceResource(
 // getSourcePathFromResource returns the value from the resource as referenced
 // by the given path. This method currently only supports a single field, and
 // will return the first one it finds if multiple are selected. This method only
-// supports primitives of type `int`, `bool` and `string`.
+// supports primitives of type `int`, `bool` and `string`. Returns value as a
+// string or `nil` if the value could not be found or converted to a string.
 func (r *fieldExportReconciler) getSourcePathFromResource(
 	from acktypes.AWSResource,
 	path string,
 ) (*string, error) {
-	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(from.RuntimeObject())
+	obj, err := UnstructuredConverter.ToUnstructured(from.RuntimeObject())
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +357,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	}
 
 	cm := &corev1.ConfigMap{}
-	err := r.kc.Get(ctx, nsn, cm)
+	err := r.apiReader.Get(ctx, nsn, cm)
 	if err != nil {
 		return errors.Wrap(err, "unable to get existing config map")
 	}

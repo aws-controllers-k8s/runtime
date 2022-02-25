@@ -29,8 +29,8 @@ type FieldExportReconciler interface {
 	// actively monitoring the resources.
 	Sync(
 		context.Context,
-		*AWSResource,
-		*ackv1alpha1.FieldExport,
+		AWSResource,
+		ackv1alpha1.FieldExport,
 	) error
 	// BindServiceResourceToManager binds a given AWS resource descriptor to the
 	// controller manager
