@@ -188,7 +188,11 @@ func (r *resourceReconciler) reconcile(
 		res, _ = rm.ResolveReferences(ctx, r.apiReader, res)
 		return r.deleteResource(ctx, rm, res)
 	}
-	return r.Sync(ctx, rm, res)
+	latest, err := r.Sync(ctx, rm, res)
+	if err != nil {
+		return latest, err
+	}
+	return r.handleRequeues(ctx, latest)
 }
 
 // Sync ensures that the supplied AWSResource's backing API resource
@@ -209,7 +213,7 @@ func (r *resourceReconciler) Sync(
 
 	r.resetConditions(ctx, desired)
 	defer func() {
-		r.ensureConditions(ctx, latest, err)
+		r.ensureConditions(ctx, rm, latest, err)
 	}()
 
 	isAdopted := IsAdopted(desired)
@@ -244,18 +248,9 @@ func (r *resourceReconciler) Sync(
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
 	if latest, err = r.lateInitializeResource(ctx, rm, latest); err != nil {
-		// TODO(vijtrip2): move this condition handling to generated
-		// AWSResourceManager.LateInitialize() method
-
-		// Whenever late initialization fails for a resource, set ACK.ResourceSynced
-		// condition explicitly to "False"
-		// Setting this explicitly to False is required because ACK.ResourceSynced
-		// condition can be True due to successful Create/Update call OR no
-		// Create/Update call in reconciler loop
-		ackcondition.SetSynced(latest, corev1.ConditionFalse, nil, nil)
 		return latest, err
 	}
-	return r.handleRequeues(ctx, latest)
+	return latest, nil
 }
 
 // resetConditions strips the supplied resource of all objects in its
@@ -280,6 +275,7 @@ func (r *resourceReconciler) resetConditions(
 // objects and ensures that an ACK.ResourceSynced condition is present.
 func (r *resourceReconciler) ensureConditions(
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	res acktypes.AWSResource,
 	reconcileErr error,
 ) {
@@ -292,24 +288,37 @@ func (r *resourceReconciler) ensureConditions(
 	exit := rlog.Trace("r.ensureConditions")
 	defer exit(err)
 
-	if syncedCond := ackcondition.Synced(res); syncedCond == nil {
-		rlog.Debug("resource missing ACK.ResourceSynced condition")
-		// only the resource manager will know whether the resource is in a
-		// stable sync state. Even if we got no error back from the
-		// create/update operations, we can only set this to Unknown.
-		condStatus := corev1.ConditionUnknown
+	// If the ACK.ResourceSynced condition is not set using the custom hooks,
+	// determine the Synced condition using "rm.IsSynced" method
+	if ackcondition.Synced(res) == nil {
+		condStatus := corev1.ConditionFalse
+		synced := false
+		condMessage := ackcondition.NotSyncedMessage
+		var condReason string
+		rlog.Enter("rm.IsSynced")
+		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
+			condStatus = corev1.ConditionTrue
+			condMessage = ackcondition.SyncedMessage
+		} else if err != nil {
+			condReason = err.Error()
+		}
+		rlog.Exit("rm.IsSynced", err)
+
 		if reconcileErr != nil {
+			condReason = reconcileErr.Error()
 			if reconcileErr == ackerr.Terminal {
 				// A terminal condition by its very nature indicates a stable state
 				// for a resource being synced. The resource is considered synced
 				// because its state will not change.
 				condStatus = corev1.ConditionTrue
+				condMessage = ackcondition.SyncedMessage
 			} else {
 				// For any other reconciler error, set synced condition to false
 				condStatus = corev1.ConditionFalse
+				condMessage = ackcondition.NotSyncedMessage
 			}
 		}
-		ackcondition.SetSynced(res, condStatus, nil, nil)
+		ackcondition.SetSynced(res, condStatus, &condMessage, &condReason)
 	}
 }
 
