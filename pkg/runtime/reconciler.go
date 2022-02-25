@@ -355,6 +355,14 @@ func (r *resourceReconciler) createResource(
 		return nil, err
 	}
 
+	rlog.Enter("rm.ResolveReferences")
+	resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
+	rlog.Exit("rm.ResolveReferences", err)
+	if err != nil {
+		return resolvedRefDesired, err
+	}
+	desired = resolvedRefDesired
+
 	rlog.Enter("rm.Create")
 	latest, err = rm.Create(ctx, desired)
 	rlog.Exit("rm.Create", err)
