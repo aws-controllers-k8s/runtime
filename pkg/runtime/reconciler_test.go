@@ -31,7 +31,7 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
-	"github.com/aws-controllers-k8s/runtime/pkg/condition"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -245,6 +245,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 		// Synced condition is false because rm.IsSynced() method returns
 		// False
 		assert.Equal(t, corev1.ConditionFalse, cond.Status)
+		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
@@ -312,6 +313,8 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 
+	syncedError := errors.New("rm.IsSynced failed")
+
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	latest.On(
 		"ReplaceConditions",
@@ -324,6 +327,8 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 		// Synced condition is false because rm.IsSynced() method returns
 		// an error
 		assert.Equal(t, corev1.ConditionFalse, cond.Status)
+		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
+		assert.Equal(t, syncedError.Error(), *cond.Reason)
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
@@ -337,7 +342,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("IsSynced", ctx, latest).Return(
-		true, errors.New("rm.IsSynced Error"))
+		true, syncedError)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(
@@ -470,6 +475,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 			hasSynced = true
 			assert.Equal(corev1.ConditionTrue, condition.Status)
+			assert.Equal(ackcondition.SyncedMessage, *condition.Message)
 		}
 		assert.True(hasSynced)
 	})
@@ -592,6 +598,8 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
 
+	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
+
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
@@ -610,6 +618,8 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 			// the reconciler error from late initialization correctly causes
 			// the ResourceSynced condition to be False
 			assert.Equal(corev1.ConditionFalse, condition.Status)
+			assert.Equal(ackcondition.NotSyncedMessage, *condition.Message)
+			assert.Equal(requeueError.Error(), *condition.Reason)
 		}
 		assert.True(hasSynced)
 	})
@@ -631,7 +641,6 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	).Once()
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
-	requeueError := requeue.NeededAfter(errors.New("error from late initialization"), time.Duration(0)*time.Second)
 	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
@@ -674,8 +683,8 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	terminalCondition := ackv1alpha1.Condition{
 		Type:    ackv1alpha1.ConditionTypeTerminal,
 		Status:  corev1.ConditionTrue,
-		Reason:  &condition.NotManagedReason,
-		Message: &condition.NotManagedMessage,
+		Reason:  &ackcondition.NotManagedReason,
+		Message: &ackcondition.NotManagedMessage,
 	}
 	// Return empty conditions for first two times
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{}).Times(2)
@@ -725,6 +734,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 			// The terminal error from reconciler correctly causes
 			// the ResourceSynced condition to be True
 			assert.Equal(corev1.ConditionTrue, condition.Status)
+			assert.Equal(ackcondition.SyncedMessage, *condition.Message)
 		}
 		assert.True(hasSynced)
 	})
@@ -770,6 +780,8 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 
+	resolveReferenceError := errors.New("failed to resolve reference")
+
 	// resourceReconciler.ensureConditions will ensure that if the resource
 	// manager has not set any Conditions on the resource, that at least an
 	// ACK.ResourceSynced condition with status Unknown will be set on the
@@ -786,10 +798,11 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 		// The non-terminal reconciler error causes the ResourceSynced
 		// condition to be False
 		assert.Equal(t, corev1.ConditionFalse, cond.Status)
+		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
+		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	resolveReferenceError := errors.New("failed to resolve reference")
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
 		nil, resolveReferenceError,
 	)
