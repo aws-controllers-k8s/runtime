@@ -161,7 +161,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 
 	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
 	if err != nil {
-		return ackerr.NotFound
+		return r.onError(ctx, res, err)
 	}
 
 	// Attempt an initial export
@@ -213,19 +213,19 @@ func (r *fieldExportReconciler) Sync(
 	// Get the field from the resource
 	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
-		return err
+		return r.onError(ctx, &desired, err)
 	} else if value == nil {
-		return pathDoesNotExistError
+		return r.onError(ctx, &desired, pathDoesNotExistError)
 	}
 
 	switch *desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
 		if err = r.writeToConfigMap(ctx, *value, &desired); err != nil {
-			return err
+			return r.onError(ctx, &desired, err)
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
 		if err = r.writeToSecret(ctx, *value, &desired); err != nil {
-			return err
+			return r.onError(ctx, &desired, err)
 		}
 	}
 
