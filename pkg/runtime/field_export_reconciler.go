@@ -399,21 +399,21 @@ func (r *fieldExportReconciler) writeToSecret(
 		nsn.Namespace = desired.Namespace
 	}
 
-	cm := &corev1.Secret{}
-	err := r.kc.Get(ctx, nsn, cm)
+	secret := &corev1.Secret{}
+	err := r.apiReader.Get(ctx, nsn, secret)
 	if err != nil {
 		return errors.Wrap(err, "unable to get existing secret")
 	}
 
 	// Update the field
-	patch := client.StrategicMergeFrom(cm.DeepCopy())
-	if cm.Data == nil {
-		cm.Data = make(map[string][]byte, 1)
+	patch := client.StrategicMergeFrom(secret.DeepCopy())
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte, 1)
 	}
-	cm.Data[key] = []byte(sourceValue)
+	secret.Data[key] = []byte(sourceValue)
 
 	ackrtlog.InfoFieldExport(r.log, desired, "patching target secret")
-	err = r.kc.Patch(ctx, cm, patch)
+	err = r.kc.Patch(ctx, secret, patch)
 	if err != nil {
 		return err
 	}

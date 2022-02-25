@@ -14,6 +14,7 @@
 package runtime_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -81,21 +82,33 @@ func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ct
 	statusWriter.On("Patch", ctx, fieldExport, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, fieldExport, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", ctx, mock.AnythingOfType("*v1.Secret"), mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
 func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *ackmocks.AWSResource) {
 	apiReader.On("Get", ctx, types.NamespacedName{
 		Namespace: FieldExportNamespace,
-		Name:      "fake-export-configmap",
+		Name:      "fake-export-output",
 	}, mock.AnythingOfType("*v1.ConfigMap")).Return(nil)
+	apiReader.On("Get", ctx, types.NamespacedName{
+		Namespace: FieldExportNamespace,
+		Name:      "fake-export-output",
+	}, mock.AnythingOfType("*v1.Secret")).Return(nil)
 }
 
 func strPtr(str string) *string {
 	return &str
 }
 
-func fieldExport(namespace, name string) *ackv1alpha1.FieldExport {
-	exportType := ackv1alpha1.FieldExportOutputTypeConfigMap
+func fieldExportConfigMap(namespace, name string) *ackv1alpha1.FieldExport {
+	return fieldExportWithPath(namespace, name, ackv1alpha1.FieldExportOutputTypeConfigMap, ".spec.name")
+}
+
+func fieldExportSecret(namespace, name string) *ackv1alpha1.FieldExport {
+	return fieldExportWithPath(namespace, name, ackv1alpha1.FieldExportOutputTypeSecret, ".spec.name")
+}
+
+func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOutputType, path string) *ackv1alpha1.FieldExport {
 	return &ackv1alpha1.FieldExport{
 		TypeMeta: v1.TypeMeta{},
 		ObjectMeta: v1.ObjectMeta{
@@ -104,7 +117,7 @@ func fieldExport(namespace, name string) *ackv1alpha1.FieldExport {
 		},
 		Spec: ackv1alpha1.FieldExportSpec{
 			From: &ackv1alpha1.ResourceFieldSelector{
-				Path: strPtr(".spec.name"),
+				Path: &path,
 				Resource: ackv1alpha1.NamespacedTargetKubernetesResource{
 					GroupKind: v1.GroupKind{
 						Group: "fake-api-group",
@@ -114,8 +127,8 @@ func fieldExport(namespace, name string) *ackv1alpha1.FieldExport {
 				},
 			},
 			To: &ackv1alpha1.FieldExportOutputSelector{
-				Name: strPtr("fake-export-configmap"),
-				Kind: &exportType,
+				Name: strPtr("fake-export-output"),
+				Kind: &kind,
 			},
 		},
 		Status: ackv1alpha1.FieldExportStatus{},
@@ -170,12 +183,34 @@ func mockSourceResource() (
 }
 
 //Tests
-func TestSync_FailureInGetResource(t *testing.T) {
-
-}
 
 func TestSync_FailureInGetField(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, ".doesnt.exist")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.NotNil(err)
+	require.Equal("path does not exist in this object", err.Error())
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(false, t, ctx, kc)
 }
 
 func TestSync_FailureInPatchConfigMap(t *testing.T) {
@@ -189,7 +224,7 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 	r, kc, apiReader := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
-	fieldExport := fieldExport(FieldExportNamespace, FieldExportName)
+	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
 	statusWriter := &ctrlrtclientmock.StatusWriter{}
@@ -206,10 +241,36 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 
 	//Assertions
 	require.Nil(err)
-	assertPatchedConfigMap(t, ctx, kc)
+	assertPatchedConfigMap(true, t, ctx, kc)
+	assertPatchedSecret(false, t, ctx, kc)
 }
 
 func TestSync_HappyCaseSecret(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportSecret(FieldExportNamespace, FieldExportName)
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.Nil(err)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(true, t, ctx, kc)
 }
 
 func TestSync_HappyCaseResourceUpdated(t *testing.T) {
@@ -220,7 +281,7 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 
 // Assertions
 
-func assertPatchedConfigMap(t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client) {
+func assertPatchedConfigMap(expected bool, t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client) {
 	dataMatcher := mock.MatchedBy(func(cm *corev1.ConfigMap) bool {
 		if cm.Data == nil {
 			return false
@@ -232,5 +293,28 @@ func assertPatchedConfigMap(t *testing.T, ctx context.Context, kc *ctrlrtclientm
 		}
 		return val == "test-book-name"
 	})
-	kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	if expected {
+		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	} else {
+		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	}
+}
+
+func assertPatchedSecret(expected bool, t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client) {
+	dataMatcher := mock.MatchedBy(func(cm *corev1.Secret) bool {
+		if cm.Data == nil {
+			return false
+		}
+		key := fmt.Sprintf("%s.%s", FieldExportNamespace, FieldExportName)
+		val, ok := cm.Data[key]
+		if !ok {
+			return false
+		}
+		return bytes.Equal(val, []byte("test-book-name"))
+	})
+	if expected {
+		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	} else {
+		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	}
 }
