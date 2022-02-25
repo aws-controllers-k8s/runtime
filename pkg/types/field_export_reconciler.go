@@ -17,6 +17,8 @@ import (
 	"context"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 )
 
@@ -37,4 +39,11 @@ type FieldExportReconciler interface {
 	BindServiceResourceManager(
 		ctrlrt.Manager,
 	) error
+	// FilterAllExports will list all FieldExport CRs and filter them based on
+	// whether they contain a reference to the given AWS resource.
+	FilterAllExports(
+		context.Context,
+		metav1.GroupKind,
+		types.NamespacedName,
+	) ([]ackv1alpha1.FieldExport, error)
 }

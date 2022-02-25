@@ -244,7 +244,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			return err
 		}
 		rd := rmf.ResourceDescriptor()
-		feRec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, &rd)
+		feRec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, rd)
 		if err := feRec.BindServiceResourceManager(mgr); err != nil {
 			return err
 		}

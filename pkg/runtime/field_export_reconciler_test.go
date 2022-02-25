@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -40,16 +42,30 @@ import (
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
+	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
 const (
 	FieldExportNamespace = "default"
 	FieldExportName      = "exportedField"
+	SourceResourceName   = "my-book"
+)
+
+var (
+	BookGVK = k8srtschema.GroupVersionKind{
+		Group:   "bookstore.services.k8s.aws",
+		Kind:    "Book",
+		Version: "v1alpha1",
+	}
 )
 
 // Helper functions for tests
 
 func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+	return mockFieldExportReconcilerWithResourceDescriptor(nil)
+}
+
+func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -73,8 +89,22 @@ func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientm
 		ackrtcache.Caches{},
 		kc,
 		apiReader,
-		nil,
+		rd,
 	), kc, apiReader
+}
+
+func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupKind").Return(
+		&metav1.GroupKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(
+		&fakeBook{},
+	)
+	return rd
 }
 
 func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, fieldExport *ackv1alpha1.FieldExport) {
@@ -112,18 +142,19 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 	return &ackv1alpha1.FieldExport{
 		TypeMeta: v1.TypeMeta{},
 		ObjectMeta: v1.ObjectMeta{
-			Namespace: namespace,
-			Name:      name,
+			Namespace:  namespace,
+			Name:       name,
+			Finalizers: []string{"finalizers.services.k8s.aws/FieldExport"},
 		},
 		Spec: ackv1alpha1.FieldExportSpec{
 			From: &ackv1alpha1.ResourceFieldSelector{
 				Path: &path,
 				Resource: ackv1alpha1.NamespacedTargetKubernetesResource{
 					GroupKind: v1.GroupKind{
-						Group: "fake-api-group",
-						Kind:  "fake-kind",
+						Group: BookGVK.Group,
+						Kind:  BookGVK.Kind,
 					},
-					Name: strPtr("fake-resource"),
+					Name: strPtr(SourceResourceName),
 				},
 			},
 			To: &ackv1alpha1.FieldExportOutputSelector{
@@ -135,12 +166,39 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 	}
 }
 
+func randomFieldExportList() []ackv1alpha1.FieldExport {
+	// Matching cases
+	defaultConfigMap := fieldExportConfigMap(FieldExportNamespace, "export-1")
+	defaultSecret := fieldExportSecret(FieldExportNamespace, "export-2")
+
+	// Non-matching cases
+	differentSourceName := fieldExportConfigMap(FieldExportNamespace, "export-3")
+	differentSourceName.Spec.From.Resource.Name = strPtr("some-other-name")
+	differentSourceKind := fieldExportConfigMap(FieldExportNamespace, "export-4")
+	differentSourceKind.Spec.From.Resource.Kind = "some-other-kind"
+	notFinalized := fieldExportConfigMap(FieldExportNamespace, "export-5")
+	notFinalized.Finalizers = []string{}
+
+	return []ackv1alpha1.FieldExport{
+		*defaultConfigMap,
+		*defaultSecret,
+		*differentSourceName,
+		*differentSourceKind,
+		*notFinalized,
+	}
+}
+
 func setupMockUnstructuredConverter() {
 	conv := &apimachineryruntimemock.UnstructuredConverter{}
 	conv.On("ToUnstructured", mock.AnythingOfType("*mocks.Object")).Return(
 		map[string]interface{}{
 			"spec": map[string]interface{}{
-				"name": "test-book-name",
+				"name":  "test-book-name",
+				"other": 1,
+			},
+			"status": map[string]interface{}{
+				"other":  "abc",
+				"other2": 3,
 			},
 		}, nil,
 	)
@@ -154,13 +212,7 @@ func mockSourceResource() (
 	*k8sobj.Unstructured, // NON-mocked k8s apimachinery meta object
 ) {
 	objKind := &k8srtschemamocks.ObjectKind{}
-	objKind.On("GroupVersionKind").Return(
-		k8srtschema.GroupVersionKind{
-			Group:   "bookstore.services.k8s.aws",
-			Kind:    "Book",
-			Version: "v1alpha1",
-		},
-	)
+	objKind.On("GroupVersionKind").Return(BookGVK)
 
 	rtObj := &ctrlrtclientmock.Object{}
 	rtObj.On("GetObjectKind").Return(objKind)
@@ -214,7 +266,31 @@ func TestSync_FailureInGetField(t *testing.T) {
 }
 
 func TestSync_FailureInPatchConfigMap(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
 
+	//Mock behavior setup
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
+
+	// Call
+	err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.NotNil(err)
+	require.Equal("patching denied", err.Error())
+	assertPatchedConfigMap(true, t, ctx, kc)
+	assertPatchedSecret(false, t, ctx, kc)
 }
 
 func TestSync_HappyCaseConfigMap(t *testing.T) {
@@ -273,10 +349,71 @@ func TestSync_HappyCaseSecret(t *testing.T) {
 	assertPatchedSecret(true, t, ctx, kc)
 }
 
-func TestSync_HappyCaseResourceUpdated(t *testing.T) {
+func TestFilterAllExports_HappyCase(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, _, apiReader := mockFieldExportReconciler()
+	ctx := context.TODO()
+	mockExports := randomFieldExportList()
+	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
+		Run(func(args mock.Arguments) {
+			// Replace the field export list argument pointer with our mocks
+			list := args.Get(1).(*ackv1alpha1.FieldExportList)
+			mockList := ackv1alpha1.FieldExportList{
+				Items: mockExports,
+			}
+			*list = mockList
+		})
+	gk := metav1.GroupKind{
+		Group: BookGVK.Group,
+		Kind:  BookGVK.Kind,
+	}
+	sourceNsn := types.NamespacedName{
+		Namespace: FieldExportNamespace,
+		Name:      SourceResourceName,
+	}
+
+	// Call
+	exports, err := r.FilterAllExports(ctx, gk, sourceNsn)
+
+	//Assertions
+	require.Nil(err)
+	require.EqualValues(exports, mockExports[:2])
 }
 
 func TestSync_HappyCaseResourceNoExports(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, _, apiReader := mockFieldExportReconciler()
+	ctx := context.TODO()
+	mockExports := randomFieldExportList()
+
+	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
+		Run(func(args mock.Arguments) {
+			// Replace the field export list argument pointer with our mocks
+			list := args.Get(1).(*ackv1alpha1.FieldExportList)
+			mockList := ackv1alpha1.FieldExportList{
+				Items: mockExports,
+			}
+			*list = mockList
+		})
+	gk := metav1.GroupKind{
+		Group: BookGVK.Group,
+		Kind:  BookGVK.Kind,
+	}
+	sourceNsn := types.NamespacedName{
+		Namespace: FieldExportNamespace,
+		Name:      "doesnt-exist",
+	}
+
+	// Call
+	exports, err := r.FilterAllExports(ctx, gk, sourceNsn)
+
+	//Assertions
+	require.Nil(err)
+	require.Len(exports, 0)
 }
 
 // Assertions

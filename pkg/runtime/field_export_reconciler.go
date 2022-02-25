@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -181,11 +182,12 @@ func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlr
 	}
 
 	// Get each of the exports referencing this AWS resource
-	kind := (*r.rd).GroupKind().Kind
-	exports, err := r.filterAllExports(ctx,
-		kind,
-		res.MetaObject().GetNamespace(),
-		res.MetaObject().GetName(),
+	exports, err := r.FilterAllExports(ctx,
+		*(*r.rd).GroupKind(),
+		types.NamespacedName{
+			Namespace: res.MetaObject().GetNamespace(),
+			Name:      res.MetaObject().GetName(),
+		},
 	)
 	if err != nil {
 		return err
@@ -421,17 +423,14 @@ func (r *fieldExportReconciler) writeToSecret(
 	return nil
 }
 
-// filterAllExports will list all FieldExport CRs and filter them based on
-// whether they contain a reference to the given AWS resource.
-func (r *fieldExportReconciler) filterAllExports(
+func (r *fieldExportReconciler) FilterAllExports(
 	ctx context.Context,
-	kind string,
-	namespace string,
-	name string,
+	gk metav1.GroupKind,
+	nsn types.NamespacedName,
 ) ([]ackv1alpha1.FieldExport, error) {
 	listed := &ackv1alpha1.FieldExportList{}
 	opts := []client.ListOption{
-		client.InNamespace(namespace),
+		client.InNamespace(nsn.Namespace),
 	}
 	if err := r.apiReader.List(ctx, listed, opts...); err != nil {
 		return []ackv1alpha1.FieldExport{}, err
@@ -445,8 +444,8 @@ func (r *fieldExportReconciler) filterAllExports(
 		}
 
 		// Check the reference matches our source resource
-		if !strings.EqualFold(export.Spec.From.Resource.Kind, kind) ||
-			!strings.EqualFold(*export.Spec.From.Resource.Name, name) {
+		if !strings.EqualFold(export.Spec.From.Resource.Kind, gk.Kind) ||
+			!strings.EqualFold(*export.Spec.From.Resource.Name, nsn.Name) {
 			continue
 		}
 
@@ -618,7 +617,7 @@ func NewFieldExportReconciler(
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
-	rd *acktypes.AWSResourceDescriptor,
+	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
 	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
 }
@@ -635,7 +634,7 @@ func NewFieldExportReconcilerWithClient(
 	cache ackrtcache.Caches,
 	kc client.Client,
 	apiReader client.Reader,
-	rd *acktypes.AWSResourceDescriptor,
+	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
 	return &fieldExportReconciler{
 		reconciler: reconciler{
@@ -647,6 +646,6 @@ func NewFieldExportReconcilerWithClient(
 			kc:        kc,
 			apiReader: apiReader,
 		},
-		rd: rd,
+		rd: &rd,
 	}
 }
