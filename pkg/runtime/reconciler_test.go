@@ -139,6 +139,81 @@ func managerFactoryMocks(
 	return rmf, rd
 }
 
+func TestReconcilerCreate_CheckReferencesResolveTwice(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
+		assert.Equal(t, corev1.ConditionTrue, cond.Status)
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	).Times(2)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, ackerr.NotFound,
+	).Once()
+	rm.On("ReadOne", ctx, latest).Return(
+		latest, nil,
+	)
+	rm.On("Create", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc := reconcilerMocks(rmf)
+
+	// pointers returned from "client.MergeFrom" fails the equality check during
+	// assertion even when parameters inside two objects are same.
+	// hence we use mock.AnythingOfType parameter to assert patch call
+	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	// With the above mocks and below assertions, we check that if we got a
+	// NotFound error return from `AWSResourceManager.ReadOne()` that we end
+	// up calling the AWSResourceManager.Create() call in the Reconciler.Sync()
+	// method,
+	_, err := r.Sync(ctx, rm, desired)
+	require.Nil(err)
+	// Make sure references are resolved twice for the resource creation.
+	// Once before ReadOne call and one after marking the resource managed.
+	rm.AssertNumberOfCalls(t, "ResolveReferences", 2)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rm.AssertCalled(t, "Create", ctx, desired)
+	// No changes to metadata or spec so Patch on the object shouldn't be done
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
+	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertCalled(t, "IsSynced", ctx, latest)
+}
+
 func TestReconcilerUpdate(t *testing.T) {
 	require := require.New(t)
 
@@ -172,7 +247,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
 		desired, nil,
-	)
+	).Once()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -204,6 +279,8 @@ func TestReconcilerUpdate(t *testing.T) {
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	// Assert that References are resolved only once during resource update
+	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
