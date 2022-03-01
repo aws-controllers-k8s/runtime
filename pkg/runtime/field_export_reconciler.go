@@ -69,6 +69,11 @@ type fieldExportReconciler struct {
 func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
+
+	if r.rd != nil {
+		return errors.New("cannot bind field export reconciler with non-nil resource descriptor")
+	}
+
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -472,7 +477,19 @@ func (r *fieldExportReconciler) onSuccess(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
+	r.patchClearConditions(ctx, res)
 	return nil
+}
+
+// patchRecoverableCondition updates the removes all conditions from the field
+// export CR.
+func (r *fieldExportReconciler) patchClearConditions(
+	ctx context.Context,
+	res *ackv1alpha1.FieldExport,
+) error {
+	base := res.DeepCopy()
+	res.Status.Conditions = []*ackv1alpha1.Condition{}
+	return r.patchStatus(ctx, res, base)
 }
 
 // patchRecoverableCondition updates the recoverable condition status of the
@@ -636,6 +653,11 @@ func NewFieldExportReconcilerWithClient(
 	apiReader client.Reader,
 	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
+	// Only take the pointer if the struct is non-nil
+	var rdp *acktypes.AWSResourceDescriptor
+	if rd != nil {
+		rdp = &rd
+	}
 	return &fieldExportReconciler{
 		reconciler: reconciler{
 			sc:        sc,
@@ -646,6 +668,6 @@ func NewFieldExportReconcilerWithClient(
 			kc:        kc,
 			apiReader: apiReader,
 		},
-		rd: &rd,
+		rd: rdp,
 	}
 }
