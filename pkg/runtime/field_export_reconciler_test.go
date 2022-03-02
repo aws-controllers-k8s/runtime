@@ -109,10 +109,8 @@ func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
 
 func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, fieldExport *ackv1alpha1.FieldExport) {
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, fieldExport, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, fieldExport, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, mock.AnythingOfType("*v1.Secret"), mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
 func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *ackmocks.AWSResource) {
@@ -275,13 +273,16 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
 
 	//Mock behavior setup
+	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
+
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
 	setupMockApiReaderForFieldExport(apiReader, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
-	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
 
 	// Call
 	err := r.Sync(ctx, sourceResource, *fieldExport)

@@ -8,9 +8,13 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	manager "sigs.k8s.io/controller-runtime/pkg/manager"
 
+	pkgtypes "k8s.io/apimachinery/pkg/types"
+
 	reconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
+
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 )
@@ -46,6 +50,29 @@ func (_m *FieldExportReconciler) BindServiceResourceManager(_a0 manager.Manager)
 	}
 
 	return r0
+}
+
+// FilterAllExports provides a mock function with given fields: _a0, _a1, _a2
+func (_m *FieldExportReconciler) FilterAllExports(_a0 context.Context, _a1 v1.GroupKind, _a2 pkgtypes.NamespacedName) ([]v1alpha1.FieldExport, error) {
+	ret := _m.Called(_a0, _a1, _a2)
+
+	var r0 []v1alpha1.FieldExport
+	if rf, ok := ret.Get(0).(func(context.Context, v1.GroupKind, pkgtypes.NamespacedName) []v1alpha1.FieldExport); ok {
+		r0 = rf(_a0, _a1, _a2)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]v1alpha1.FieldExport)
+		}
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, v1.GroupKind, pkgtypes.NamespacedName) error); ok {
+		r1 = rf(_a0, _a1, _a2)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // Reconcile provides a mock function with given fields: _a0, _a1
