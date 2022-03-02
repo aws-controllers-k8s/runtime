@@ -52,7 +52,7 @@ type ResourceFieldSelector struct {
 }
 
 // FieldExportOutputSelector provides the values necessary to identify the
-// output path for a field export (within the same namespace).
+// output path for a field export.
 type FieldExportOutputSelector struct {
 	Name *string `json:"name"`
 	// Namespace is marked as optional, so we cannot compose `NamespacedName`

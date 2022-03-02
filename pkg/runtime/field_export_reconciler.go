@@ -113,7 +113,7 @@ func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Reques
 func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
 	// Determine if we are reconciling an ACK resource
 	if r.rd != nil {
-		return r.reconcileResource(ctx, req)
+		return r.reconcileSourceResource(ctx, req)
 	}
 
 	// We are reconciling a field export CR
@@ -122,7 +122,7 @@ func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Reques
 
 // reconcileFieldExport handles updates to `FieldExport` resources
 func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ctrlrt.Request) error {
-	res, err := r.getFieldExport(ctx, req)
+	feObject, err := r.getFieldExport(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
@@ -131,9 +131,9 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 		return err
 	}
 
-	sourceGK := res.Spec.From.Resource.GroupKind
+	sourceGK := feObject.Spec.From.Resource.GroupKind
 	sourceName := types.NamespacedName{
-		Name: *res.Spec.From.Resource.Name,
+		Name: *feObject.Spec.From.Resource.Name,
 		// We only support pulling from resources in
 		// the same namespace
 		Namespace: req.Namespace,
@@ -146,16 +146,16 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 		break
 	}
 	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
-		ackrtlog.DebugFieldExport(r.log, res, "target resource API group is not of this service. no-op")
+		ackrtlog.DebugFieldExport(r.log, feObject, "target resource API group is not of this service. no-op")
 		return nil
 	}
 
-	if res.DeletionTimestamp != nil {
-		return r.cleanup(ctx, res)
+	if feObject.DeletionTimestamp != nil {
+		return r.cleanup(ctx, feObject)
 	}
 
-	if err := r.markManaged(ctx, res); err != nil {
-		return r.onError(ctx, res, err)
+	if err := r.markManaged(ctx, feObject); err != nil {
+		return r.onError(ctx, feObject, err)
 	}
 
 	// Look up the rmf for the given target resource GVK
@@ -166,16 +166,16 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 
 	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
 	if err != nil {
-		return r.onError(ctx, res, err)
+		return nil
 	}
 
 	// Attempt an initial export
-	return r.Sync(ctx, sourceObject, *res)
+	return r.Sync(ctx, sourceObject, *feObject)
 }
 
-// reconcileResource handles updates to any other (not `FieldExport`) ACK
+// reconcileSourceResource handles updates to any other (not `FieldExport`) ACK
 // resources
-func (r *fieldExportReconciler) reconcileResource(ctx context.Context, req ctrlrt.Request) error {
+func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req ctrlrt.Request) error {
 	res, err := r.getSourceResource(ctx, *r.rd, req.NamespacedName)
 	if err != nil {
 		return err
@@ -376,11 +376,12 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	}
 	cm.Data[key] = sourceValue
 
-	ackrtlog.InfoFieldExport(r.log, desired, "patching target config map")
+	ackrtlog.DebugFieldExport(r.log, desired, "patching target config map")
 	err = r.kc.Patch(ctx, cm, patch)
 	if err != nil {
 		return err
 	}
+	ackrtlog.InfoFieldExport(r.log, desired, "patched target config map")
 
 	return nil
 }
@@ -419,11 +420,12 @@ func (r *fieldExportReconciler) writeToSecret(
 	}
 	secret.Data[key] = []byte(sourceValue)
 
-	ackrtlog.InfoFieldExport(r.log, desired, "patching target secret")
+	ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
 	err = r.kc.Patch(ctx, secret, patch)
 	if err != nil {
 		return err
 	}
+	ackrtlog.InfoFieldExport(r.log, desired, "patched target secret")
 
 	return nil
 }
@@ -477,13 +479,12 @@ func (r *fieldExportReconciler) onSuccess(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
-	r.patchClearConditions(ctx, res)
+	r.clearConditions(ctx, res)
 	return nil
 }
 
-// patchRecoverableCondition updates the removes all conditions from the field
-// export CR.
-func (r *fieldExportReconciler) patchClearConditions(
+// clearConditions removes all conditions from the field export CR.
+func (r *fieldExportReconciler) clearConditions(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {

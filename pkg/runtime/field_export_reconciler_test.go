@@ -166,7 +166,7 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 	}
 }
 
-func randomFieldExportList() []ackv1alpha1.FieldExport {
+func mockFieldExportList() []ackv1alpha1.FieldExport {
 	// Matching cases
 	defaultConfigMap := fieldExportConfigMap(FieldExportNamespace, "export-1")
 	defaultSecret := fieldExportSecret(FieldExportNamespace, "export-2")
@@ -355,7 +355,7 @@ func TestFilterAllExports_HappyCase(t *testing.T) {
 	// Mock resource creation
 	r, _, apiReader := mockFieldExportReconciler()
 	ctx := context.TODO()
-	mockExports := randomFieldExportList()
+	mockExports := mockFieldExportList()
 	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
 		Run(func(args mock.Arguments) {
 			// Replace the field export list argument pointer with our mocks
@@ -388,7 +388,7 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 	// Mock resource creation
 	r, _, apiReader := mockFieldExportReconciler()
 	ctx := context.TODO()
-	mockExports := randomFieldExportList()
+	mockExports := mockFieldExportList()
 
 	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
 		Run(func(args mock.Arguments) {
