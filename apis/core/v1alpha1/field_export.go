@@ -26,7 +26,7 @@ type FieldExportSpec struct {
 // FieldExportStatus defines the observed status of the FieldExport.
 type FieldExportStatus struct {
 	// A collection of `ackv1alpha1.Condition` objects that describe the various
-	// terminal states of the adopted resource CR and its target custom resource
+	// recoverable states of the field CR
 	Conditions []*Condition `json:"conditions"`
 }
 

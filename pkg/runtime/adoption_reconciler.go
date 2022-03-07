@@ -541,7 +541,7 @@ func NewAdoptionReconciler(
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
-) acktypes.Reconciler {
+) acktypes.AdoptedResourceReconciler {
 	return NewAdoptionReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
 }
 

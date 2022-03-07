@@ -60,18 +60,22 @@ var (
 // It implements the upstream controller-runtime `Reconciler` interface.
 type fieldExportReconciler struct {
 	reconciler
+	// resourceReconciler indicates that the reconciler should be reconciling
+	// AWS resources
+	resourceReconciler bool
 	// rd is only used if binding to an ACK resource (not `FieldExport`)
-	rd *acktypes.AWSResourceDescriptor
+	rd acktypes.AWSResourceDescriptor
 }
 
-// BindControllerManager sets up the AWSResourceReconciler with an instance
-// of an upstream controller-runtime.Manager
-func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
+// BindControllerManagerForFieldExport sets up the AWSResourceReconciler with an
+// instance of an upstream controller-runtime.Manager, watching for changes in
+// `FieldExport` CRs
+func (r *fieldExportReconciler) BindControllerManagerForFieldExport(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
 
-	if r.rd != nil {
-		return errors.New("cannot bind field export reconciler with non-nil resource descriptor")
+	if r.resourceReconciler {
+		return errors.New("cannot bind to field export. reconciler marked for reconciling AWS resources")
 	}
 
 	return ctrlrt.NewControllerManagedBy(
@@ -84,20 +88,21 @@ func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error 
 	).Complete(r)
 }
 
-// BindServiceResourceToManager binds a given AWS resource descriptor to the
-// controller manager
-func (r *fieldExportReconciler) BindServiceResourceManager(mgr ctrlrt.Manager) error {
+// BindControllerManagerForAWSResource sets up the AWSResourceReconciler with an
+// instance of an upstream controller-runtime.Manager, watching for changes in
+// AWS Resource CRs
+func (r *fieldExportReconciler) BindControllerManagerForAWSResource(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
 
-	if r.rd == nil {
-		return errors.New("cannot bind resource field export reconciler with nil resource descriptor")
+	if !r.resourceReconciler {
+		return errors.New("cannot bind to AWS resource. reconciler marked for reconciling field exports")
 	}
 
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
-		(*r.rd).EmptyRuntimeObject(),
+		r.rd.EmptyRuntimeObject(),
 	).WithEventFilter(
 		// Update on both status and spec changes
 		predicate.ResourceVersionChangedPredicate{},
@@ -112,7 +117,7 @@ func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Reques
 
 func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
 	// Determine if we are reconciling an ACK resource
-	if r.rd != nil {
+	if r.resourceReconciler {
 		return r.reconcileSourceResource(ctx, req)
 	}
 
@@ -176,7 +181,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 // reconcileSourceResource handles updates to any other (not `FieldExport`) ACK
 // resources
 func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req ctrlrt.Request) error {
-	res, err := r.getSourceResource(ctx, *r.rd, req.NamespacedName)
+	res, err := r.getSourceResource(ctx, r.rd, req.NamespacedName)
 	if err != nil {
 		return err
 	}
@@ -188,7 +193,7 @@ func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req
 
 	// Get each of the exports referencing this AWS resource
 	exports, err := r.FilterAllExports(ctx,
-		*(*r.rd).GroupKind(),
+		*r.rd.GroupKind(),
 		types.NamespacedName{
 			Namespace: res.MetaObject().GetNamespace(),
 			Name:      res.MetaObject().GetName(),
@@ -628,16 +633,28 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 	return ctrlrt.Result{}, err
 }
 
-// NewFieldExportReconciler returns a new FieldExportReconciler object
-func NewFieldExportReconciler(
+// NewFieldExportReconcilerForFieldExport returns a new FieldExportReconciler object
+func NewFieldExportReconcilerForFieldExport(
+	sc acktypes.ServiceController,
+	log logr.Logger,
+	cfg ackcfg.Config,
+	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
+) acktypes.FieldExportReconciler {
+	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, nil, false)
+}
+
+// NewFieldExportReconcilerForAWSResource returns a new FieldExportReconciler object
+func NewFieldExportReconcilerForAWSResource(
 	sc acktypes.ServiceController,
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 	rd acktypes.AWSResourceDescriptor,
+	resourceReconciler bool,
 ) acktypes.FieldExportReconciler {
-	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
+	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd, true)
 }
 
 // NewFieldExportReconcilerWithClient returns a new FieldExportReconciler object with
@@ -653,12 +670,8 @@ func NewFieldExportReconcilerWithClient(
 	kc client.Client,
 	apiReader client.Reader,
 	rd acktypes.AWSResourceDescriptor,
+	resourceReconciler bool,
 ) acktypes.FieldExportReconciler {
-	// Only take the pointer if the struct is non-nil
-	var rdp *acktypes.AWSResourceDescriptor
-	if rd != nil {
-		rdp = &rd
-	}
 	return &fieldExportReconciler{
 		reconciler: reconciler{
 			sc:        sc,
@@ -669,6 +682,7 @@ func NewFieldExportReconcilerWithClient(
 			kc:        kc,
 			apiReader: apiReader,
 		},
-		rd: rdp,
+		rd:                 rd,
+		resourceReconciler: resourceReconciler,
 	}
 }

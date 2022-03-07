@@ -41,7 +41,6 @@ import (
 	apimachineryruntimemock "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
-	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
@@ -62,10 +61,10 @@ var (
 // Helper functions for tests
 
 func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
-	return mockFieldExportReconcilerWithResourceDescriptor(nil)
+	return mockFieldExportReconcilerWithResourceDescriptor(mockResourceDescriptor(), false)
 }
 
-func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor, resourceReconciler bool) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -74,8 +73,8 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 	cfg := ackcfg.Config{}
 	metrics := ackmetrics.NewMetrics("bookstore")
 
-	sc := &ackmocks.ServiceController{}
-	rmfactory := ackmocks.AWSResourceManagerFactory{}
+	sc := &mocks.ServiceController{}
+	rmfactory := mocks.AWSResourceManagerFactory{}
 	rmFactoryMap := make(map[string]acktypes.AWSResourceManagerFactory)
 	rmFactoryMap["services.k8s.aws"] = &rmfactory
 	sc.On("GetResourceManagerFactories").Return(rmFactoryMap)
@@ -90,6 +89,7 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 		kc,
 		apiReader,
 		rd,
+		resourceReconciler,
 	), kc, apiReader
 }
 
@@ -113,7 +113,7 @@ func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ct
 	kc.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
-func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *ackmocks.AWSResource) {
+func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *mocks.AWSResource) {
 	apiReader.On("Get", ctx, types.NamespacedName{
 		Namespace: FieldExportNamespace,
 		Name:      "fake-export-output",
@@ -205,7 +205,7 @@ func setupMockUnstructuredConverter() {
 }
 
 func mockSourceResource() (
-	*ackmocks.AWSResource, // mocked resource
+	*mocks.AWSResource, // mocked resource
 	*ctrlrtclientmock.Object, // mocked k8s controller-runtime RuntimeObject
 	*k8sobj.Unstructured, // NON-mocked k8s apimachinery meta object
 ) {
@@ -222,12 +222,12 @@ func mockSourceResource() (
 	metaObj.SetName("mybook")
 	metaObj.SetGeneration(int64(1))
 
-	res := &ackmocks.AWSResource{}
+	res := &mocks.AWSResource{}
 	res.On("MetaObject").Return(metaObj)
 	res.On("RuntimeObject").Return(rtObj)
 	res.On("DeepCopy").Return(res)
 	// DoNothing on SetStatus call.
-	res.On("SetStatus", res).Return(func(res ackmocks.AWSResource) {})
+	res.On("SetStatus", res).Return(func(res mocks.AWSResource) {})
 
 	return res, rtObj, metaObj
 }

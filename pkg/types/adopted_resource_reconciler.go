@@ -17,6 +17,7 @@ import (
 	"context"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 )
 
 // AdoptedResourceReconciler is responsible for reconciling an adopted resource
@@ -25,6 +26,9 @@ import (
 // interface.
 type AdoptedResourceReconciler interface {
 	Reconciler
+	// BindControllerManager sets up the AdoptedResourceReconciler with an
+	// instance of an upstream controller-runtime.Manager
+	BindControllerManager(ctrlrt.Manager) error
 	// Sync ensures that the supplied AdoptedResource creates the matching
 	// AWSResource based on observed state from ReadOne method
 	//

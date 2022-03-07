@@ -24,8 +24,8 @@ type FieldExportReconciler struct {
 	mock.Mock
 }
 
-// BindControllerManager provides a mock function with given fields: _a0
-func (_m *FieldExportReconciler) BindControllerManager(_a0 manager.Manager) error {
+// BindControllerManagerForAWSResource provides a mock function with given fields: _a0
+func (_m *FieldExportReconciler) BindControllerManagerForAWSResource(_a0 manager.Manager) error {
 	ret := _m.Called(_a0)
 
 	var r0 error
@@ -38,8 +38,8 @@ func (_m *FieldExportReconciler) BindControllerManager(_a0 manager.Manager) erro
 	return r0
 }
 
-// BindServiceResourceManager provides a mock function with given fields: _a0
-func (_m *FieldExportReconciler) BindServiceResourceManager(_a0 manager.Manager) error {
+// BindControllerManagerForFieldExport provides a mock function with given fields: _a0
+func (_m *FieldExportReconciler) BindControllerManagerForFieldExport(_a0 manager.Manager) error {
 	ret := _m.Called(_a0)
 
 	var r0 error

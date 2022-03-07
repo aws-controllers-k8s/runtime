@@ -231,8 +231,8 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	} else if !exporterInstalled {
 		exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
 	} else {
-		rec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, nil)
-		if err := rec.BindControllerManager(mgr); err != nil {
+		rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, cache)
+		if err := rec.BindControllerManagerForFieldExport(mgr); err != nil {
 			return err
 		}
 		c.fieldExportReconciler = rec
@@ -244,8 +244,8 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			return err
 		}
 		rd := rmf.ResourceDescriptor()
-		feRec := NewFieldExportReconciler(c, exporterLogger, cfg, c.metrics, cache, rd)
-		if err := feRec.BindServiceResourceManager(mgr); err != nil {
+		feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd, true)
+		if err := feRec.BindControllerManagerForAWSResource(mgr); err != nil {
 			return err
 		}
 		c.reconcilers = append(c.reconcilers, rec)

@@ -31,6 +31,9 @@ import (
 // those controllers.
 type AWSResourceReconciler interface {
 	Reconciler
+	// BindControllerManager sets up the AWSResourceReconciler with an instance
+	// of an upstream controller-runtime.Manager
+	BindControllerManager(ctrlrt.Manager) error
 	// GroupKind returns the
 	// sigs.k8s.io/apimachinery/pkg/apis/meta/v1.GroupKind containing the API
 	// group and kind reconciled by this reconciler
