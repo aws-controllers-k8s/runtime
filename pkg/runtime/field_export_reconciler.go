@@ -22,7 +22,6 @@ import (
 	jq "github.com/itchyny/gojq"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -129,11 +128,7 @@ func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Reques
 func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ctrlrt.Request) error {
 	feObject, err := r.getFieldExport(ctx, req)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// resource wasn't found. just ignore these.
-			return nil
-		}
-		return err
+		return client.IgnoreNotFound(err)
 	}
 
 	sourceGK := feObject.Spec.From.Resource.GroupKind
@@ -142,6 +137,10 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 		// We only support pulling from resources in
 		// the same namespace
 		Namespace: req.Namespace,
+	}
+
+	if feObject.DeletionTimestamp != nil {
+		return r.cleanup(ctx, feObject)
 	}
 
 	// Check if the target API group matches with the controller
@@ -153,10 +152,6 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
 		ackrtlog.DebugFieldExport(r.log, feObject, "target resource API group is not of this service. no-op")
 		return nil
-	}
-
-	if feObject.DeletionTimestamp != nil {
-		return r.cleanup(ctx, feObject)
 	}
 
 	if err := r.markManaged(ctx, feObject); err != nil {
@@ -171,7 +166,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 
 	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Attempt an initial export
@@ -184,11 +179,6 @@ func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req
 	res, err := r.getSourceResource(ctx, r.rd, req.NamespacedName)
 	if err != nil {
 		return err
-	}
-
-	// Ensure our current object is synced
-	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
-		return nil
 	}
 
 	// Get each of the exports referencing this AWS resource
@@ -287,9 +277,16 @@ func (r *fieldExportReconciler) getSourceResource(
 ) (acktypes.AWSResource, error) {
 	obj := rd.EmptyRuntimeObject()
 	if err := r.apiReader.Get(ctx, name, obj); err != nil {
-		return nil, err
+		// Don't throw an error if the source object can't be found
+		return nil, client.IgnoreNotFound(err)
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
+
+	// Ensure our current object is synced
+	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
+		return nil, nil
+	}
+
 	return res, nil
 }
 
@@ -304,7 +301,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 ) (*string, error) {
 	obj, err := UnstructuredConverter.ToUnstructured(from.RuntimeObject())
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 
 	query, err := jq.Parse(path)
@@ -527,11 +524,11 @@ func (r *fieldExportReconciler) patchRecoverableCondition(
 	var errMessage string
 	if err != nil {
 		errMessage = err.Error()
-		recoverableCondition.Status = corev1.ConditionFalse
+		recoverableCondition.Status = corev1.ConditionTrue
 		recoverableCondition.Message = &errMessage
 	} else {
 		recoverableCondition.Message = nil
-		recoverableCondition.Status = corev1.ConditionTrue
+		recoverableCondition.Status = corev1.ConditionFalse
 	}
 
 	return r.patchStatus(ctx, res, base)
@@ -575,9 +572,12 @@ func (r *fieldExportReconciler) markUnmanaged(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
-	base := res.DeepCopy()
-	k8sctrlutil.RemoveFinalizer(res, fieldExportFinalizerString)
-	return r.patchMetadataAndSpec(ctx, res, base)
+	if k8sctrlutil.ContainsFinalizer(res, fieldExportFinalizerString) {
+		base := res.DeepCopy()
+		k8sctrlutil.RemoveFinalizer(res, fieldExportFinalizerString)
+		return r.patchMetadataAndSpec(ctx, res, base)
+	}
+	return nil
 }
 
 // patchMetadataAndSpec patches the Metadata and Spec for FieldExport into
