@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -286,19 +287,18 @@ func (r *fieldExportReconciler) getSourceResource(
 ) (acktypes.AWSResource, error) {
 	obj := rd.EmptyRuntimeObject()
 	if err := r.apiReader.Get(ctx, name, obj); err != nil {
-		// Don't throw an error if the source object can't be found
 		return nil, err
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
 
 	// Ensure our current object is synced
-	// if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
-	// 	return nil, fmt.Errorf(
-	// 		"resource does not have the %s condition set to %s",
-	// 		ackv1alpha1.ConditionTypeResourceSynced,
-	// 		corev1.ConditionTrue,
-	// 	)
-	// }
+	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
+		return nil, fmt.Errorf(
+			"resource does not have the %s condition set to %s",
+			ackv1alpha1.ConditionTypeResourceSynced,
+			corev1.ConditionTrue,
+		)
+	}
 
 	return res, nil
 }
