@@ -21,6 +21,14 @@ const (
 	DefaultRequeueAfterDuration time.Duration = 30 * time.Second
 )
 
+// None returns a new NoRequeue to instruct the ACK runtime to not requeue
+// the processing item but to continue logging the error.
+func None(err error) *NoRequeue {
+	return &NoRequeue{
+		err: err,
+	}
+}
+
 // Needed returns a new RequeueNeeded to instruct the ACK runtime to requeue
 // the processing item without been logged as error.
 func Needed(err error) *RequeueNeeded {
@@ -43,6 +51,31 @@ func NeededAfter(
 		duration,
 	}
 }
+
+// An error to instruct the ACK runtime to process an error, but not requeue the
+// object that raised it. This should be used when there was a non-terminal
+// error, but one that cannot be fixed by requeuing. e.g. a FieldExport failed
+// because the source resource wasn't found.
+type NoRequeue struct {
+	err error
+}
+
+func (e *NoRequeue) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *NoRequeue) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+// Ensure NoRequeue implements the error interface
+var _ error = &NoRequeue{}
 
 // An error to instruct the ACK runtime to requeue the processing item without
 // been logged as error.  This should be used when a "error condition"
@@ -89,7 +122,7 @@ func (e *RequeueNeededAfter) Error() string {
 
 func (e *RequeueNeededAfter) Duration() time.Duration {
 	if e == nil {
-		return time.Duration(0)*time.Second
+		return time.Duration(0) * time.Second
 	}
 	return e.duration
 }

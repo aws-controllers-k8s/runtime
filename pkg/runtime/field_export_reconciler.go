@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
-	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
@@ -166,7 +165,10 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 
 	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
 	if err != nil {
-		return err
+		if client.IgnoreNotFound(err) != nil {
+			return r.onError(ctx, feObject, requeue.None(err))
+		}
+		return nil
 	}
 
 	// Attempt an initial export
@@ -178,7 +180,12 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req ctrlrt.Request) error {
 	res, err := r.getSourceResource(ctx, r.rd, req.NamespacedName)
 	if err != nil {
-		return err
+		if client.IgnoreNotFound(err) != nil {
+			// Can't attach this error to any particular FieldExport object, so
+			// it will only be displayed in the controller logs.
+			return requeue.None(err)
+		}
+		return nil
 	}
 
 	// Get each of the exports referencing this AWS resource
@@ -210,12 +217,14 @@ func (r *fieldExportReconciler) Sync(
 	from acktypes.AWSResource,
 	desired ackv1alpha1.FieldExport,
 ) error {
+	r.clearConditions(ctx, &desired)
+
 	// Get the field from the resource
 	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
 		return r.onError(ctx, &desired, err)
 	} else if value == nil {
-		return r.onError(ctx, &desired, pathDoesNotExistError)
+		return r.onError(ctx, &desired, requeue.None(pathDoesNotExistError))
 	}
 
 	switch *desired.Spec.To.Kind {
@@ -278,14 +287,18 @@ func (r *fieldExportReconciler) getSourceResource(
 	obj := rd.EmptyRuntimeObject()
 	if err := r.apiReader.Get(ctx, name, obj); err != nil {
 		// Don't throw an error if the source object can't be found
-		return nil, client.IgnoreNotFound(err)
+		return nil, err
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
 
 	// Ensure our current object is synced
-	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
-		return nil, nil
-	}
+	// if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
+	// 	return nil, fmt.Errorf(
+	// 		"resource does not have the %s condition set to %s",
+	// 		ackv1alpha1.ConditionTypeResourceSynced,
+	// 		corev1.ConditionTrue,
+	// 	)
+	// }
 
 	return res, nil
 }
@@ -301,12 +314,12 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 ) (*string, error) {
 	obj, err := UnstructuredConverter.ToUnstructured(from.RuntimeObject())
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	query, err := jq.Parse(path)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to parse path")
+		return nil, &terminalError{err: errors.Wrap(err, "unable to parse path")}
 	}
 
 	iter := query.Run(obj)
@@ -320,7 +333,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 	// Handle query errors
 	if err, ok := result.(error); ok {
 		if err != nil {
-			return nil, err
+			return nil, &terminalError{err: errors.Wrap(err, "unable to execute query")}
 		}
 	}
 
@@ -471,7 +484,12 @@ func (r *fieldExportReconciler) onError(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	r.patchRecoverableCondition(ctx, res, err)
+	var terminal *terminalError
+	if errors.As(err, &terminal) {
+		r.patchTerminalCondition(ctx, res, err)
+	} else {
+		r.patchRecoverableCondition(ctx, res, err)
+	}
 	return err
 }
 
@@ -481,7 +499,6 @@ func (r *fieldExportReconciler) onSuccess(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
-	r.clearConditions(ctx, res)
 	return nil
 }
 
@@ -526,9 +543,42 @@ func (r *fieldExportReconciler) patchRecoverableCondition(
 		errMessage = err.Error()
 		recoverableCondition.Status = corev1.ConditionTrue
 		recoverableCondition.Message = &errMessage
-	} else {
-		recoverableCondition.Message = nil
-		recoverableCondition.Status = corev1.ConditionFalse
+	}
+
+	return r.patchStatus(ctx, res, base)
+}
+
+// patchTerminalCondition updates the terminal condition status of the
+// field export CR. The resource passed in the parameter gets updated with the
+// conditions
+func (r *fieldExportReconciler) patchTerminalCondition(
+	ctx context.Context,
+	res *ackv1alpha1.FieldExport,
+	err error,
+) error {
+	base := res.DeepCopy()
+
+	// Terminal condition
+	var terminalCondition *ackv1alpha1.Condition = nil
+	for _, condition := range res.Status.Conditions {
+		if condition.Type == ackv1alpha1.ConditionTypeTerminal {
+			terminalCondition = condition
+			break
+		}
+	}
+
+	if terminalCondition == nil {
+		terminalCondition = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeTerminal,
+		}
+		res.Status.Conditions = append(res.Status.Conditions, terminalCondition)
+	}
+
+	var errMessage string
+	if err != nil {
+		errMessage = err.Error()
+		terminalCondition.Status = corev1.ConditionTrue
+		terminalCondition.Message = &errMessage
 	}
 
 	return r.patchStatus(ctx, res, base)
@@ -630,8 +680,44 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 		return ctrlrt.Result{Requeue: true}, nil
 	}
 
+	var noRequeue *requeue.NoRequeue
+	if errors.As(err, &noRequeue) {
+		r.log.V(1).Info(
+			"error did not need requeue",
+			"error", noRequeue.Unwrap(),
+		)
+		return ctrlrt.Result{}, nil
+	}
+
+	var term *terminalError
+	if errors.As(err, &term) {
+		return ctrlrt.Result{}, nil
+	}
+
 	return ctrlrt.Result{}, err
 }
+
+// terminalError defines an error that should be considered terminal, and placed
+// onto an ACK.Terminal condition
+type terminalError struct {
+	err error
+}
+
+func (e *terminalError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *terminalError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+var _ error = &terminalError{}
 
 // NewFieldExportReconcilerForFieldExport returns a new FieldExportReconciler object
 func NewFieldExportReconcilerForFieldExport(
