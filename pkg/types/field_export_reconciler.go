@@ -33,7 +33,7 @@ type FieldExportReconciler interface {
 		context.Context,
 		AWSResource,
 		ackv1alpha1.FieldExport,
-	) error
+	) (ackv1alpha1.FieldExport, error)
 	// BindServiceResourceToManager binds the field export type to the
 	// controller manager
 	BindControllerManagerForFieldExport(

@@ -155,7 +155,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	}
 
 	if err := r.markManaged(ctx, feObject); err != nil {
-		return r.onError(ctx, feObject, err)
+		return err
 	}
 
 	// Look up the rmf for the given target resource GVK
@@ -167,13 +167,14 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	sourceObject, err := r.getSourceResource(ctx, rmf.ResourceDescriptor(), sourceName)
 	if err != nil {
 		if client.IgnoreNotFound(err) != nil {
-			return r.onError(ctx, feObject, requeue.None(err))
+			return requeue.None(err)
 		}
 		return nil
 	}
 
 	// Attempt an initial export
-	return r.Sync(ctx, sourceObject, *feObject)
+	_, err = r.Sync(ctx, sourceObject, *feObject)
+	return err
 }
 
 // reconcileSourceResource handles updates to any other (not `FieldExport`) ACK
@@ -203,7 +204,7 @@ func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req
 
 	// Iterate through each export and sync it
 	for _, export := range exports {
-		if err = r.Sync(ctx, res, export); err != nil {
+		if _, err = r.Sync(ctx, res, export); err != nil {
 			return err
 		}
 	}
@@ -217,31 +218,41 @@ func (r *fieldExportReconciler) Sync(
 	ctx context.Context,
 	from acktypes.AWSResource,
 	desired ackv1alpha1.FieldExport,
-) error {
-	r.clearConditions(ctx, &desired)
+) (ackv1alpha1.FieldExport, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.Sync")
+	defer exit(err)
+
+	latest := desired.DeepCopy()
+
+	r.resetConditions(ctx, &desired)
+	defer func() {
+		r.ensureConditions(ctx, &desired, latest)
+	}()
 
 	// Get the field from the resource
 	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
-		return r.onError(ctx, &desired, err)
+		return desired, r.onError(ctx, &desired, err)
 	} else if value == nil {
-		return r.onError(ctx, &desired, requeue.None(pathDoesNotExistError))
+		return desired, r.onError(ctx, &desired, requeue.None(pathDoesNotExistError))
 	}
 
 	switch *desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
 		if err = r.writeToConfigMap(ctx, *value, &desired); err != nil {
-			return r.onError(ctx, &desired, err)
+			return desired, r.onError(ctx, &desired, err)
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
 		if err = r.writeToSecret(ctx, *value, &desired); err != nil {
-			return r.onError(ctx, &desired, err)
+			return desired, r.onError(ctx, &desired, err)
 		}
 	}
 
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
-	return r.onSuccess(ctx, &desired)
+	return desired, r.onSuccess(ctx, &desired)
 }
 
 // cleanup removes the finalizer from FieldExport so that k8s object can
@@ -502,14 +513,18 @@ func (r *fieldExportReconciler) onSuccess(
 	return nil
 }
 
-// clearConditions removes all conditions from the field export CR.
-func (r *fieldExportReconciler) clearConditions(
+// resetConditions removes all conditions from the field export CR.
+func (r *fieldExportReconciler) resetConditions(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 ) error {
-	base := res.DeepCopy()
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.resetConditions")
+	defer exit(err)
+
 	res.Status.Conditions = []*ackv1alpha1.Condition{}
-	return r.patchStatus(ctx, res, base)
+	return err
 }
 
 // patchRecoverableCondition updates the recoverable condition status of the
@@ -520,8 +535,6 @@ func (r *fieldExportReconciler) patchRecoverableCondition(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	base := res.DeepCopy()
-
 	// Recoverable condition
 	var recoverableCondition *ackv1alpha1.Condition = nil
 	for _, condition := range res.Status.Conditions {
@@ -545,7 +558,7 @@ func (r *fieldExportReconciler) patchRecoverableCondition(
 		recoverableCondition.Message = &errMessage
 	}
 
-	return r.patchStatus(ctx, res, base)
+	return nil
 }
 
 // patchTerminalCondition updates the terminal condition status of the
@@ -556,8 +569,6 @@ func (r *fieldExportReconciler) patchTerminalCondition(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	base := res.DeepCopy()
-
 	// Terminal condition
 	var terminalCondition *ackv1alpha1.Condition = nil
 	for _, condition := range res.Status.Conditions {
@@ -581,7 +592,22 @@ func (r *fieldExportReconciler) patchTerminalCondition(
 		terminalCondition.Message = &errMessage
 	}
 
-	return r.patchStatus(ctx, res, base)
+	return nil
+}
+
+// ensureConditions examines the supplied resource's collection of Condition
+// objects and ensures that an ACK.ResourceSynced condition is present.
+func (r *fieldExportReconciler) ensureConditions(
+	ctx context.Context,
+	res *ackv1alpha1.FieldExport,
+	base *ackv1alpha1.FieldExport,
+) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.ensureConditions")
+	defer exit(err)
+
+	err = r.patchStatus(ctx, res, base)
 }
 
 // patchStatus patches the Status for FieldExport into k8s. The field export
@@ -684,7 +710,7 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 	if errors.As(err, &noRequeue) {
 		r.log.V(1).Info(
 			"error did not need requeue",
-			"error", noRequeue.Unwrap(),
+			"error", noRequeue.Error(),
 		)
 		return ctrlrt.Result{}, nil
 	}

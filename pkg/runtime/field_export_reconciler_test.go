@@ -234,6 +234,36 @@ func mockSourceResource() (
 
 //Tests
 
+func TestSync_FailureInParsingQuery(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, "bad-query")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.NotNil(err)
+	require.Equal("unable to execute query: function not defined: query/0", err.Error())
+	assertTerminalCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(false, t, ctx, kc)
+}
+
 func TestSync_FailureInGetField(t *testing.T) {
 	// Setup
 	require := require.New(t)
@@ -254,11 +284,12 @@ func TestSync_FailureInGetField(t *testing.T) {
 	setupMockUnstructuredConverter()
 
 	// Call
-	err := r.Sync(ctx, sourceResource, *fieldExport)
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
 
 	//Assertions
 	require.NotNil(err)
 	require.Equal("path does not exist in this object", err.Error())
+	assertRecoverableCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
 }
@@ -285,11 +316,12 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	setupMockUnstructuredConverter()
 
 	// Call
-	err := r.Sync(ctx, sourceResource, *fieldExport)
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
 
 	//Assertions
 	require.NotNil(err)
 	require.Equal("patching denied", err.Error())
+	assertRecoverableCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(true, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
 }
@@ -314,10 +346,12 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 	setupMockUnstructuredConverter()
 
 	// Call
-	err := r.Sync(ctx, sourceResource, *fieldExport)
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
 
 	//Assertions
 	require.Nil(err)
+	require.NotNil(latest.Status)
+	require.Len(latest.Status.Conditions, 0)
 	assertPatchedConfigMap(true, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
 }
@@ -342,10 +376,12 @@ func TestSync_HappyCaseSecret(t *testing.T) {
 	setupMockUnstructuredConverter()
 
 	// Call
-	err := r.Sync(ctx, sourceResource, *fieldExport)
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
 
 	//Assertions
 	require.Nil(err)
+	require.NotNil(latest.Status)
+	require.Len(latest.Status.Conditions, 0)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(true, t, ctx, kc)
 }
@@ -455,4 +491,48 @@ func assertPatchedSecret(expected bool, t *testing.T, ctx context.Context, kc *c
 	} else {
 		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
 	}
+}
+
+// assertRecoverableCondition asserts that 'ConditionTypeRecoverable' condition
+// is present in the resource's status and that it's value is equal to
+// 'conditionStatus' parameter
+func assertRecoverableCondition(
+	conditionStatus string,
+	require *require.Assertions,
+	t *testing.T,
+	ctx context.Context,
+	kc *ctrlrtclientmock.Client,
+	statusWriter *ctrlrtclientmock.StatusWriter,
+	res *ackv1alpha1.FieldExport,
+	latest *ackv1alpha1.FieldExport,
+) {
+	kc.AssertCalled(t, "Status")
+	statusWriter.AssertCalled(t, "Patch", ctx, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
+	// Only one kind of condition present
+	require.Equal(1, len(latest.Status.Conditions))
+	require.Equal(ackv1alpha1.ConditionTypeRecoverable, latest.Status.Conditions[0].Type)
+	require.Equal(conditionStatus, string(latest.Status.Conditions[0].Status))
+	require.NotEqual(latest.Status.Conditions[0].Message, "")
+}
+
+// assertTerminalCondition asserts that 'ConditionTypeTerminal' condition
+// is present in the resource's status and that it's value is equal to
+// 'conditionStatus' parameter
+func assertTerminalCondition(
+	conditionStatus string,
+	require *require.Assertions,
+	t *testing.T,
+	ctx context.Context,
+	kc *ctrlrtclientmock.Client,
+	statusWriter *ctrlrtclientmock.StatusWriter,
+	res *ackv1alpha1.FieldExport,
+	latest *ackv1alpha1.FieldExport,
+) {
+	kc.AssertCalled(t, "Status")
+	statusWriter.AssertCalled(t, "Patch", ctx, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
+	// Only one kind of condition present
+	require.Equal(1, len(latest.Status.Conditions))
+	require.Equal(ackv1alpha1.ConditionTypeTerminal, latest.Status.Conditions[0].Type)
+	require.Equal(conditionStatus, string(latest.Status.Conditions[0].Status))
+	require.NotEqual(latest.Status.Conditions[0].Message, "")
 }

@@ -118,15 +118,22 @@ func (_m *FieldExportReconciler) SecretValueFromReference(_a0 context.Context, _
 }
 
 // Sync provides a mock function with given fields: _a0, _a1, _a2
-func (_m *FieldExportReconciler) Sync(_a0 context.Context, _a1 types.AWSResource, _a2 v1alpha1.FieldExport) error {
+func (_m *FieldExportReconciler) Sync(_a0 context.Context, _a1 types.AWSResource, _a2 v1alpha1.FieldExport) (v1alpha1.FieldExport, error) {
 	ret := _m.Called(_a0, _a1, _a2)
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource, v1alpha1.FieldExport) error); ok {
+	var r0 v1alpha1.FieldExport
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource, v1alpha1.FieldExport) v1alpha1.FieldExport); ok {
 		r0 = rf(_a0, _a1, _a2)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(v1alpha1.FieldExport)
 	}
 
-	return r0
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, types.AWSResource, v1alpha1.FieldExport) error); ok {
+		r1 = rf(_a0, _a1, _a2)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
