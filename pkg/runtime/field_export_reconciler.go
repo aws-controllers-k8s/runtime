@@ -228,7 +228,7 @@ func (r *fieldExportReconciler) Sync(
 
 	r.resetConditions(ctx, &desired)
 	defer func() {
-		r.ensureConditions(ctx, &desired, latest)
+		r.patchStatus(ctx, &desired, latest)
 	}()
 
 	// Get the field from the resource
@@ -593,21 +593,6 @@ func (r *fieldExportReconciler) patchTerminalCondition(
 	}
 
 	return nil
-}
-
-// ensureConditions examines the supplied resource's collection of Condition
-// objects and ensures that an ACK.ResourceSynced condition is present.
-func (r *fieldExportReconciler) ensureConditions(
-	ctx context.Context,
-	res *ackv1alpha1.FieldExport,
-	base *ackv1alpha1.FieldExport,
-) {
-	var err error
-	rlog := ackrtlog.FromContext(ctx)
-	exit := rlog.Trace("r.ensureConditions")
-	defer exit(err)
-
-	err = r.patchStatus(ctx, res, base)
 }
 
 // patchStatus patches the Status for FieldExport into k8s. The field export
