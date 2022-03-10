@@ -52,8 +52,8 @@ func (_m *FieldExportReconciler) BindControllerManagerForFieldExport(_a0 manager
 	return r0
 }
 
-// FilterAllExports provides a mock function with given fields: _a0, _a1, _a2
-func (_m *FieldExportReconciler) FilterAllExports(_a0 context.Context, _a1 v1.GroupKind, _a2 pkgtypes.NamespacedName) ([]v1alpha1.FieldExport, error) {
+// GetFieldExportsForResource provides a mock function with given fields: _a0, _a1, _a2
+func (_m *FieldExportReconciler) GetFieldExportsForResource(_a0 context.Context, _a1 v1.GroupKind, _a2 pkgtypes.NamespacedName) ([]v1alpha1.FieldExport, error) {
 	ret := _m.Called(_a0, _a1, _a2)
 
 	var r0 []v1alpha1.FieldExport

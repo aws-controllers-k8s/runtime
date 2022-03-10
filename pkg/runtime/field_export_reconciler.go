@@ -45,10 +45,6 @@ const (
 	fieldExportFinalizerString = "finalizers.services.k8s.aws/FieldExport"
 )
 
-var (
-	pathDoesNotExistError = errors.New("path does not exist in this object")
-)
-
 // Localise the global to make it easier to mock
 var (
 	UnstructuredConverter runtime.UnstructuredConverter = runtime.DefaultUnstructuredConverter
@@ -236,7 +232,7 @@ func (r *fieldExportReconciler) Sync(
 	if err != nil {
 		return desired, r.onError(ctx, &desired, err)
 	} else if value == nil {
-		return desired, r.onError(ctx, &desired, requeue.None(pathDoesNotExistError))
+		return desired, r.onError(ctx, &desired, requeue.None(ackerr.FieldExportPathDoesNotExist))
 	}
 
 	switch desired.Spec.To.Kind {
@@ -304,11 +300,7 @@ func (r *fieldExportReconciler) getSourceResource(
 
 	// Ensure our current object is synced
 	if synced := ackcondition.Synced(res); synced == nil || synced.Status != corev1.ConditionTrue {
-		return nil, fmt.Errorf(
-			"resource does not have the %s condition set to %s",
-			ackv1alpha1.ConditionTypeResourceSynced,
-			corev1.ConditionTrue,
-		)
+		return nil, ackerr.FieldExportResourceNotSynced
 	}
 
 	return res, nil
@@ -330,7 +322,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 
 	query, err := jq.Parse(path)
 	if err != nil {
-		return nil, &terminalError{err: errors.Wrap(err, "unable to parse path")}
+		return nil, &terminalError{err: errors.Wrap(err, ackerr.FieldExportInvalidPath.Error())}
 	}
 
 	iter := query.Run(obj)
@@ -344,7 +336,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 	// Handle query errors
 	if err, ok := result.(error); ok {
 		if err != nil {
-			return nil, &terminalError{err: errors.Wrap(err, "unable to execute query")}
+			return nil, &terminalError{err: errors.Wrap(err, ackerr.FieldExportQueryFailed.Error())}
 		}
 	}
 
@@ -392,7 +384,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm := &corev1.ConfigMap{}
 	err := r.apiReader.Get(ctx, nsn, cm)
 	if err != nil {
-		return errors.Wrap(err, "unable to get existing config map")
+		return errors.Wrap(err, ackerr.FieldExportMissingConfigMap.Error())
 	}
 
 	// Update the field
@@ -436,7 +428,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	secret := &corev1.Secret{}
 	err := r.apiReader.Get(ctx, nsn, secret)
 	if err != nil {
-		return errors.Wrap(err, "unable to get existing secret")
+		return errors.Wrap(err, ackerr.FieldExportMissingSecret.Error())
 	}
 
 	// Update the field

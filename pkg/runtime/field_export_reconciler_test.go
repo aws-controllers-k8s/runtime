@@ -33,6 +33,7 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
+	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
@@ -258,7 +259,7 @@ func TestSync_FailureInParsingQuery(t *testing.T) {
 
 	//Assertions
 	require.NotNil(err)
-	require.Equal("unable to execute query: function not defined: query/0", err.Error())
+	require.Equal(fmt.Sprintf("%s: function not defined: query/0", ackerr.FieldExportQueryFailed), err.Error())
 	assertTerminalCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
@@ -288,7 +289,7 @@ func TestSync_FailureInGetField(t *testing.T) {
 
 	//Assertions
 	require.NotNil(err)
-	require.Equal("path does not exist in this object", err.Error())
+	require.Equal(ackerr.FieldExportPathDoesNotExist.Error(), err.Error())
 	assertRecoverableCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
