@@ -147,7 +147,7 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 		Spec: ackv1alpha1.FieldExportSpec{
 			From: &ackv1alpha1.ResourceFieldSelector{
 				Path: &path,
-				Resource: ackv1alpha1.NamespacedTargetKubernetesResource{
+				Resource: ackv1alpha1.NamespacedResource{
 					GroupKind: v1.GroupKind{
 						Group: BookGVK.Group,
 						Kind:  BookGVK.Kind,
@@ -155,9 +155,9 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 					Name: strPtr(SourceResourceName),
 				},
 			},
-			To: &ackv1alpha1.FieldExportOutputSelector{
+			To: &ackv1alpha1.FieldExportTarget{
 				Name: strPtr("fake-export-output"),
-				Kind: &kind,
+				Kind: kind,
 			},
 		},
 		Status: ackv1alpha1.FieldExportStatus{},
@@ -412,7 +412,7 @@ func TestFilterAllExports_HappyCase(t *testing.T) {
 	}
 
 	// Call
-	exports, err := r.FilterAllExports(ctx, gk, sourceNsn)
+	exports, err := r.GetFieldExportsForResource(ctx, gk, sourceNsn)
 
 	//Assertions
 	require.Nil(err)
@@ -446,7 +446,7 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 	}
 
 	// Call
-	exports, err := r.FilterAllExports(ctx, gk, sourceNsn)
+	exports, err := r.GetFieldExportsForResource(ctx, gk, sourceNsn)
 
 	//Assertions
 	require.Nil(err)

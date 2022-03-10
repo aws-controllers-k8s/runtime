@@ -57,7 +57,7 @@ spec:
                     type: string
                 type: object
               kubernetes:
-                description: AdoptedResourceTarget provides the values necessary to
+                description: ResourceWithMetadata provides the values necessary to
                   create a Kubernetes resource and override any of its metadata values.
                 properties:
                   group:

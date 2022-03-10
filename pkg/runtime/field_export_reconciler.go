@@ -49,7 +49,7 @@ var (
 	pathDoesNotExistError = errors.New("path does not exist in this object")
 )
 
-// Remove the global to make it easier to mock
+// Localise the global to make it easier to mock
 var (
 	UnstructuredConverter runtime.UnstructuredConverter = runtime.DefaultUnstructuredConverter
 )
@@ -191,7 +191,7 @@ func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req
 	}
 
 	// Get each of the exports referencing this AWS resource
-	exports, err := r.FilterAllExports(ctx,
+	exports, err := r.GetFieldExportsForResource(ctx,
 		*r.rd.GroupKind(),
 		types.NamespacedName{
 			Namespace: res.MetaObject().GetNamespace(),
@@ -239,7 +239,7 @@ func (r *fieldExportReconciler) Sync(
 		return desired, r.onError(ctx, &desired, requeue.None(pathDoesNotExistError))
 	}
 
-	switch *desired.Spec.To.Kind {
+	switch desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
 		if err = r.writeToConfigMap(ctx, *value, &desired); err != nil {
 			return desired, r.onError(ctx, &desired, err)
@@ -456,7 +456,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	return nil
 }
 
-func (r *fieldExportReconciler) FilterAllExports(
+func (r *fieldExportReconciler) GetFieldExportsForResource(
 	ctx context.Context,
 	gk metav1.GroupKind,
 	nsn types.NamespacedName,

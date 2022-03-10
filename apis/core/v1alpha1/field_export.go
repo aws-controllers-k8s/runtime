@@ -17,10 +17,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// FieldExportTarget provides the values necessary to identify the
+// output path for a field export.
+type FieldExportTarget struct {
+	Name *string `json:"name"`
+	// Namespace is marked as optional, so we cannot compose `NamespacedName`
+	Namespace *string               `json:"namespace,omitempty"`
+	Kind      FieldExportOutputType `json:"kind"`
+}
+
 // FieldExportSpec defines the desired state of the FieldExport.
 type FieldExportSpec struct {
-	From *ResourceFieldSelector     `json:"from"`
-	To   *FieldExportOutputSelector `json:"to"`
+	From *ResourceFieldSelector `json:"from"`
+	To   *FieldExportTarget     `json:"to"`
 }
 
 // FieldExportStatus defines the observed status of the FieldExport.

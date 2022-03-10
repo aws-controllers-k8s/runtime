@@ -38,14 +38,14 @@ spec:
             properties:
               from:
                 description: ResourceFieldSelector provides the values necessary to
-                  identify an individual path on an individual K8s resource.
+                  identify an individual field on an individual K8s resource.
                 properties:
                   path:
                     type: string
                   resource:
-                    description: NamespacedTargetKubernetesResource provides all the
-                      values necessary to identify an ACK resource of a given type
-                      (within the same namespace).
+                    description: NamespacedResource provides all the values necessary
+                      to identify an ACK resource of a given type (within the same
+                      namespace as the custom resource containing this type).
                     properties:
                       group:
                         type: string
@@ -63,9 +63,8 @@ spec:
                 - resource
                 type: object
               to:
-                description: FieldExportOutputSelector provides the values necessary
-                  to identify the output path for a field export (within the same
-                  namespace).
+                description: FieldExportTarget provides the values necessary to identify
+                  the output path for a field export.
                 properties:
                   kind:
                     description: FieldExportOutputType represents all types that can
@@ -93,8 +92,7 @@ spec:
             properties:
               conditions:
                 description: A collection of `ackv1alpha1.Condition` objects that
-                  describe the various terminal states of the adopted resource CR
-                  and its target custom resource
+                  describe the various recoverable states of the field CR
                 items:
                   description: Condition is the common struct used by all CRDs managed
                     by ACK service controllers to indicate terminal states  of the

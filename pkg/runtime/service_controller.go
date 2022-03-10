@@ -100,8 +100,8 @@ func (c *serviceController) GetResourceManagerFactories() map[string]acktypes.AW
 	return c.rmFactories
 }
 
-// GetAdoptedResourceInstalled returns whether the given resource plural has
-// been installed into the cluster, and is accessible by the service controller.
+// getResourceInstalled returns whether the given resource plural has been
+// installed into the cluster, and is accessible by the service controller.
 func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlural string) (bool, error) {
 	clusterConfig := mgr.GetConfig()
 	clientSet, err := kubernetes.NewForConfig(clusterConfig)

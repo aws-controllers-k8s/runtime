@@ -30,34 +30,26 @@ type AWSIdentifiers struct {
 	AdditionalKeys map[string]string `json:"additionalKeys,omitempty"`
 }
 
-// NamespacedTargetKubernetesResource provides all the values necessary to identify an ACK
-// resource of a given type (within the same namespace).
-type NamespacedTargetKubernetesResource struct {
+// NamespacedResource provides all the values necessary to identify an ACK
+// resource of a given type (within the same namespace as the custom resource
+// containing this type).
+type NamespacedResource struct {
 	metav1.GroupKind `json:""`
 	Name             *string `json:"name"`
 }
 
-// AdoptedResourceTarget provides the values necessary to create a
+// ResourceWithMetadata provides the values necessary to create a
 // Kubernetes resource and override any of its metadata values.
-type AdoptedResourceTarget struct {
+type ResourceWithMetadata struct {
 	metav1.GroupKind `json:""`
 	Metadata         *PartialObjectMeta `json:"metadata,omitempty"`
 }
 
 // ResourceFieldSelector provides the values necessary to identify an individual
-// path on an individual K8s resource.
+// field on an individual K8s resource.
 type ResourceFieldSelector struct {
-	Resource NamespacedTargetKubernetesResource `json:"resource"`
-	Path     *string                            `json:"path"`
-}
-
-// FieldExportOutputSelector provides the values necessary to identify the
-// output path for a field export.
-type FieldExportOutputSelector struct {
-	Name *string `json:"name"`
-	// Namespace is marked as optional, so we cannot compose `NamespacedName`
-	Namespace *string                `json:"namespace,omitempty"`
-	Kind      *FieldExportOutputType `json:"kind"`
+	Resource NamespacedResource `json:"resource"`
+	Path     *string            `json:"path"`
 }
 
 // AWSResourceReferenceWrapper provides a wrapper around *AWSResourceReference

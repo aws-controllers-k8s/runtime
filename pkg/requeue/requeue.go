@@ -52,7 +52,7 @@ func NeededAfter(
 	}
 }
 
-// An error to instruct the ACK runtime to process an error, but not requeue the
+// NoRequeue instructs the ACK runtime to process an error, but not requeue the
 // object that raised it. This should be used when there was a non-terminal
 // error, but one that cannot be fixed by requeuing. e.g. a FieldExport failed
 // because the source resource wasn't found.
@@ -77,8 +77,8 @@ func (e *NoRequeue) Unwrap() error {
 // Ensure NoRequeue implements the error interface
 var _ error = &NoRequeue{}
 
-// An error to instruct the ACK runtime to requeue the processing item without
-// been logged as error.  This should be used when a "error condition"
+// RequeueNeeded instructs the ACK runtime to requeue the processing item
+// without been logged as error.  This should be used when a "error condition"
 // occurrence is sort of expected and can be resolved by retry.  e.g. a
 // dependency haven't been fulfilled yet.
 type RequeueNeeded struct {
@@ -102,11 +102,11 @@ func (e *RequeueNeeded) Unwrap() error {
 // Ensure RequeueNeeded implements the error interface
 var _ error = &RequeueNeeded{}
 
-// An error to instruct the ACK runtime to requeue the processing item after
-// specified duration without been logged as error.  This should be used when a
-// "error condition" occurrence is sort of expected and can be resolved by
-// retry.  e.g. a dependency haven't been fulfilled yet, and expected it to be
-// fulfilled after duration.  Note: use this with care,a simple wait might
+// RequeueNeededAfter instructs the ACK runtime to requeue the processing item
+// after specified duration without been logged as error.  This should be used
+// when a "error condition" occurrence is sort of expected and can be resolved
+// by retry.  e.g. a dependency haven't been fulfilled yet, and expected it to
+// be fulfilled after duration.  Note: use this with care, a simple wait might
 // suit your use case better.
 type RequeueNeededAfter struct {
 	RequeueNeeded

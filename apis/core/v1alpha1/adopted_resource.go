@@ -20,7 +20,7 @@ import (
 // AdoptedResourceSpec defines the desired state of the AdoptedResource.
 type AdoptedResourceSpec struct {
 	// +kubebuilder:validation:Required
-	Kubernetes *AdoptedResourceTarget `json:"kubernetes"`
+	Kubernetes *ResourceWithMetadata `json:"kubernetes"`
 	// +kubebuilder:validation:Required
 	AWS *AWSIdentifiers `json:"aws"`
 }

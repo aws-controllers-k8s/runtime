@@ -44,9 +44,9 @@ type FieldExportReconciler interface {
 	BindControllerManagerForAWSResource(
 		ctrlrt.Manager,
 	) error
-	// FilterAllExports will list all FieldExport CRs and filter them based on
-	// whether they contain a reference to the given AWS resource.
-	FilterAllExports(
+	// GetFieldExportsForResource will list all FieldExport CRs and filter them
+	// based on whether they contain a reference to the given AWS resource.
+	GetFieldExportsForResource(
 		context.Context,
 		metav1.GroupKind,
 		types.NamespacedName,
