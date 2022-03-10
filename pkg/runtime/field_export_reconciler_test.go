@@ -62,10 +62,10 @@ var (
 // Helper functions for tests
 
 func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
-	return mockFieldExportReconcilerWithResourceDescriptor(mockResourceDescriptor(), false)
+	return mockFieldExportReconcilerWithResourceDescriptor(mockResourceDescriptor())
 }
 
-func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor, resourceReconciler bool) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -90,7 +90,6 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 		kc,
 		apiReader,
 		rd,
-		resourceReconciler,
 	), kc, apiReader
 }
 
