@@ -34,16 +34,9 @@ type FieldExportReconciler interface {
 		AWSResource,
 		ackv1alpha1.FieldExport,
 	) (ackv1alpha1.FieldExport, error)
-	// BindServiceResourceToManager binds the field export type to the
-	// controller manager
-	BindControllerManagerForFieldExport(
-		ctrlrt.Manager,
-	) error
-	// BindControllerManagerForAWSResource binds a given AWS resource descriptor
-	// to the controller manager
-	BindControllerManagerForAWSResource(
-		ctrlrt.Manager,
-	) error
+	// BindControllerManager sets up the FieldExportReconciler with an instance
+	// of an upstream controller-runtime.Manager
+	BindControllerManager(ctrlrt.Manager) error
 	// GetFieldExportsForResource will list all FieldExport CRs and filter them
 	// based on whether they contain a reference to the given AWS resource.
 	GetFieldExportsForResource(

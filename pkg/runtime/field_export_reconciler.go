@@ -56,20 +56,14 @@ var (
 // It implements the upstream controller-runtime `Reconciler` interface.
 type fieldExportReconciler struct {
 	reconciler
-	// rd is only used if binding to an ACK resource (not `FieldExport`)
-	rd acktypes.AWSResourceDescriptor
 }
 
-// BindControllerManagerForFieldExport sets up the AWSResourceReconciler with an
-// instance of an upstream controller-runtime.Manager, watching for changes in
-// `FieldExport` CRs
-func (r *fieldExportReconciler) BindControllerManagerForFieldExport(mgr ctrlrt.Manager) error {
+// BindControllerManager sets up the FieldExportReconciler with an instance of
+// an upstream controller-runtime.Manager, watching for changes in `FieldExport`
+// CRs
+func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
-
-	if !ackcompare.IsNil(r.rd) {
-		return errors.New("cannot bind to field export. reconciler marked for reconciling AWS resources")
-	}
 
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
@@ -81,41 +75,10 @@ func (r *fieldExportReconciler) BindControllerManagerForFieldExport(mgr ctrlrt.M
 	).Complete(r)
 }
 
-// BindControllerManagerForAWSResource sets up the AWSResourceReconciler with an
-// instance of an upstream controller-runtime.Manager, watching for changes in
-// AWS Resource CRs
-func (r *fieldExportReconciler) BindControllerManagerForAWSResource(mgr ctrlrt.Manager) error {
-	r.kc = mgr.GetClient()
-	r.apiReader = mgr.GetAPIReader()
-
-	if ackcompare.IsNil(r.rd) {
-		return errors.New("cannot bind to AWS resource. reconciler marked for reconciling field exports")
-	}
-
-	return ctrlrt.NewControllerManagedBy(
-		mgr,
-	).For(
-		r.rd.EmptyRuntimeObject(),
-	).WithEventFilter(
-		// Update on both status and spec changes
-		predicate.ResourceVersionChangedPredicate{},
-	).Complete(r)
-}
-
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
-// a CR CRUD request
+// a `FieldExport` CRUD request
 func (r *fieldExportReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
-	return r.handleReconcileError(r.reconcile(ctx, req))
-}
-
-func (r *fieldExportReconciler) reconcile(ctx context.Context, req ctrlrt.Request) error {
-	// Determine if we are reconciling an ACK resource
-	if !ackcompare.IsNil(r.rd) {
-		return r.reconcileSourceResource(ctx, req)
-	}
-
-	// We are reconciling a field export CR
-	return r.reconcileFieldExport(ctx, req)
+	return r.handleReconcileError(r.reconcileFieldExport(ctx, req))
 }
 
 // reconcileFieldExport handles updates to `FieldExport` resources
@@ -169,41 +132,6 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 	// Attempt an initial export
 	_, err = r.Sync(ctx, sourceObject, *feObject)
 	return err
-}
-
-// reconcileSourceResource handles updates to any other (not `FieldExport`) ACK
-// resources
-func (r *fieldExportReconciler) reconcileSourceResource(ctx context.Context, req ctrlrt.Request) error {
-	res, err := r.getSourceResource(ctx, r.rd, req.NamespacedName)
-	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			// Can't attach this error to any particular FieldExport object, so
-			// it will only be displayed in the controller logs.
-			return requeue.None(err)
-		}
-		return nil
-	}
-
-	// Get each of the exports referencing this AWS resource
-	exports, err := r.GetFieldExportsForResource(ctx,
-		*r.rd.GroupKind(),
-		types.NamespacedName{
-			Namespace: res.MetaObject().GetNamespace(),
-			Name:      res.MetaObject().GetName(),
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	// Iterate through each export and sync it
-	for _, export := range exports {
-		if _, err = r.Sync(ctx, res, export); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // Sync will attempt to take the exported field value from the source ACK
@@ -320,7 +248,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 
 	query, err := jq.Parse(path)
 	if err != nil {
-		return nil, &terminalError{err: errors.Wrap(err, ackerr.FieldExportInvalidPath.Error())}
+		return nil, ackerr.FieldExportInvalidPath
 	}
 
 	iter := query.Run(obj)
@@ -334,7 +262,7 @@ func (r *fieldExportReconciler) getSourcePathFromResource(
 	// Handle query errors
 	if err, ok := result.(error); ok {
 		if err != nil {
-			return nil, &terminalError{err: errors.Wrap(err, ackerr.FieldExportQueryFailed.Error())}
+			return nil, ackerr.FieldExportQueryFailed
 		}
 	}
 
@@ -485,7 +413,7 @@ func (r *fieldExportReconciler) onError(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	var terminal *terminalError
+	var terminal *ackerr.TerminalError
 	if errors.As(err, &terminal) {
 		r.patchTerminalCondition(ctx, res, err)
 	} else {
@@ -690,7 +618,7 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 		return ctrlrt.Result{}, nil
 	}
 
-	var term *terminalError
+	var term *ackerr.TerminalError
 	if errors.As(err, &term) {
 		return ctrlrt.Result{}, nil
 	}
@@ -698,27 +626,75 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 	return ctrlrt.Result{}, err
 }
 
-// terminalError defines an error that should be considered terminal, and placed
-// onto an ACK.Terminal condition
-type terminalError struct {
-	err error
+// fieldExportResourceReconciler is responsible for reconciling the state of any
+// changes to an ACK resource, whose changes may need to be reflected in a field
+// export. It implements the upstream controller-runtime `Reconciler` interface.
+type fieldExportResourceReconciler struct {
+	fieldExportReconciler
+	rd acktypes.AWSResourceDescriptor
 }
 
-func (e *terminalError) Error() string {
-	if e == nil || e.err == nil {
-		return ""
+// BindControllerManager sets up the FieldExportReconciler with an instance of
+// an upstream controller-runtime.Manager, watching for changes in AWS Resource
+// CRs
+func (r *fieldExportResourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
+	r.kc = mgr.GetClient()
+	r.apiReader = mgr.GetAPIReader()
+
+	if ackcompare.IsNil(r.rd) {
+		return errors.New("cannot bind to AWS resource. reconciler marked for reconciling field exports")
 	}
-	return e.err.Error()
+
+	return ctrlrt.NewControllerManagedBy(
+		mgr,
+	).For(
+		r.rd.EmptyRuntimeObject(),
+	).WithEventFilter(
+		// Update on both status and spec changes
+		predicate.ResourceVersionChangedPredicate{},
+	).Complete(r)
 }
 
-func (e *terminalError) Unwrap() error {
-	if e == nil {
+// Reconcile implements `controller-runtime.Reconciler` and handles reconciling
+// an ACK Resource CRUD request
+func (r *fieldExportResourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
+	return r.handleReconcileError(r.reconcileSourceResource(ctx, req))
+}
+
+// reconcileSourceResource handles updates to any other (not `FieldExport`) ACK
+// resources
+func (r *fieldExportResourceReconciler) reconcileSourceResource(ctx context.Context, req ctrlrt.Request) error {
+	res, err := r.getSourceResource(ctx, r.rd, req.NamespacedName)
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			// Can't attach this error to any particular FieldExport object, so
+			// it will only be displayed in the controller logs.
+			return requeue.None(err)
+		}
 		return nil
 	}
-	return e.err
-}
 
-var _ error = &terminalError{}
+	// Get each of the exports referencing this AWS resource
+	exports, err := r.GetFieldExportsForResource(ctx,
+		*r.rd.GroupKind(),
+		types.NamespacedName{
+			Namespace: res.MetaObject().GetNamespace(),
+			Name:      res.MetaObject().GetName(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	// Iterate through each export and sync it
+	for _, export := range exports {
+		if _, err = r.Sync(ctx, res, export); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 // NewFieldExportReconcilerForFieldExport returns a new FieldExportReconciler object
 func NewFieldExportReconcilerForFieldExport(
@@ -728,7 +704,7 @@ func NewFieldExportReconcilerForFieldExport(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 ) acktypes.FieldExportReconciler {
-	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, nil)
+	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
 }
 
 // NewFieldExportReconcilerForAWSResource returns a new FieldExportReconciler object
@@ -740,7 +716,7 @@ func NewFieldExportReconcilerForAWSResource(
 	cache ackrtcache.Caches,
 	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
-	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
+	return NewFieldExportResourceReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
 }
 
 // NewFieldExportReconcilerWithClient returns a new FieldExportReconciler object with
@@ -755,9 +731,8 @@ func NewFieldExportReconcilerWithClient(
 	cache ackrtcache.Caches,
 	kc client.Client,
 	apiReader client.Reader,
-	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
-	rec := &fieldExportReconciler{
+	return &fieldExportReconciler{
 		reconciler: reconciler{
 			sc:        sc,
 			log:       log.WithName("field-export-reconciler"),
@@ -768,10 +743,35 @@ func NewFieldExportReconcilerWithClient(
 			apiReader: apiReader,
 		},
 	}
+}
 
-	if !ackcompare.IsNil(rd) {
-		rec.rd = rd
+// NewFieldExportResourceReconcilerWithClient returns a new
+// FieldExportReconciler object with specified k8s client and Reader. Currently
+// this function is used for testing purpose only because
+// "FieldExportReconciler" struct is not available outside 'runtime' package for
+// dependency injection.
+func NewFieldExportResourceReconcilerWithClient(
+	sc acktypes.ServiceController,
+	log logr.Logger,
+	cfg ackcfg.Config,
+	metrics *ackmetrics.Metrics,
+	cache ackrtcache.Caches,
+	kc client.Client,
+	apiReader client.Reader,
+	rd acktypes.AWSResourceDescriptor,
+) acktypes.FieldExportReconciler {
+	return &fieldExportResourceReconciler{
+		fieldExportReconciler: fieldExportReconciler{
+			reconciler: reconciler{
+				sc:        sc,
+				log:       log.WithName("field-export-reconciler"),
+				cfg:       cfg,
+				metrics:   metrics,
+				cache:     cache,
+				kc:        kc,
+				apiReader: apiReader,
+			},
+		},
+		rd: rd,
 	}
-
-	return rec
 }

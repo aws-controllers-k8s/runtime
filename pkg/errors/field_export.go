@@ -26,10 +26,10 @@ var (
 	FieldExportResourceNotSynced = fmt.Errorf("the source resource is not synced yet")
 	// FieldExportInvalidPath indicates there was an error parsing the path into
 	// a JQ query
-	FieldExportInvalidPath = fmt.Errorf("unable to parse path")
+	FieldExportInvalidPath = TerminalError{err: fmt.Errorf("unable to parse path")}
 	// FieldExportInvalidPath indicates there was an error when executing the
 	// JQ query
-	FieldExportQueryFailed = fmt.Errorf("unable to execute query")
+	FieldExportQueryFailed = TerminalError{err: fmt.Errorf("unable to execute query")}
 	// FieldExportMissingConfigMap indicates there was an error when trying
 	// to get the target configmap
 	FieldExportMissingConfigMap = fmt.Errorf("unable to get existing configmap")
