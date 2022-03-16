@@ -413,7 +413,7 @@ func (r *fieldExportReconciler) onError(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	var terminal *ackerr.TerminalError
+	var terminal ackerr.TerminalError
 	if errors.As(err, &terminal) {
 		r.patchTerminalCondition(ctx, res, err)
 	} else {
@@ -618,7 +618,7 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 		return ctrlrt.Result{}, nil
 	}
 
-	var term *ackerr.TerminalError
+	var term ackerr.TerminalError
 	if errors.As(err, &term) {
 		return ctrlrt.Result{}, nil
 	}

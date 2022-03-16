@@ -89,7 +89,6 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 		ackrtcache.Caches{},
 		kc,
 		apiReader,
-		rd,
 	), kc, apiReader
 }
 
@@ -258,7 +257,7 @@ func TestSync_FailureInParsingQuery(t *testing.T) {
 
 	//Assertions
 	require.NotNil(err)
-	require.Equal(fmt.Sprintf("%s: function not defined: query/0", ackerr.FieldExportQueryFailed), err.Error())
+	require.Equal(ackerr.FieldExportQueryFailed, err)
 	assertTerminalCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
