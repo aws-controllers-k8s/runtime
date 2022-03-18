@@ -27,7 +27,7 @@ mocks: install-mockery ## Build mocks
 	@bin/mockery --quiet --name=Object --case=underscore --output=mocks/apimachinery/pkg/apis/meta/v1 --dir="$(K8S_APIMACHINERY_DIR)/pkg/apis/meta/v1"
 	@echo "ok."
 	@echo -n "building mocks for k8s.io/apimachinery/runtime ... "
-	@bin/mockery --quiet --name=Object --case=underscore --output=mocks/apimachinery/pkg/runtime --dir="$(K8S_APIMACHINERY_DIR)/pkg/runtime"
+	@bin/mockery --quiet --name="(Object|UnstructuredConverter)" --case=underscore --output=mocks/apimachinery/pkg/runtime --dir="$(K8S_APIMACHINERY_DIR)/pkg/runtime"
 	@echo "ok."
 	@echo -n "building mocks for k8s.io/apimachinery/runtime/schema ... "
 	@bin/mockery --quiet --name=ObjectKind --case=underscore --output=mocks/apimachinery/pkg/runtime/schema --dir="$(K8S_APIMACHINERY_DIR)/pkg/runtime/schema"

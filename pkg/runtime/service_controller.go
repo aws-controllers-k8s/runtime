@@ -14,6 +14,7 @@
 package runtime
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -67,6 +68,13 @@ type serviceController struct {
 	// and is bound to the `controller-runtime.Manager` in
 	// `BindControllerManager`
 	adoptionReconciler acktypes.Reconciler
+	// fieldExportReconciler contains a reconciler that for the field export
+	// process and is bound to the `controller-runtime.Manager` in
+	// `BindControllerManager`
+	fieldExportReconciler acktypes.Reconciler
+	// resourceFieldExportReconcilers is a slice containing
+	// FieldExportReconciler objects that are bound to each resource
+	resourceFieldExportReconcilers []acktypes.FieldExportReconciler
 	// log refers to the logr.Logger object handling logging for the service
 	// controller
 	log logr.Logger
@@ -92,9 +100,9 @@ func (c *serviceController) GetResourceManagerFactories() map[string]acktypes.AW
 	return c.rmFactories
 }
 
-// GetAdoptedResourceInstalled returns whether the AdoptedResource CRD has been
+// getResourceInstalled returns whether the given resource plural has been
 // installed into the cluster, and is accessible by the service controller.
-func (c *serviceController) GetAdoptedResourceInstalled(mgr ctrlrt.Manager) (bool, error) {
+func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlural string) (bool, error) {
 	clusterConfig := mgr.GetConfig()
 	clientSet, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
@@ -116,18 +124,30 @@ func (c *serviceController) GetAdoptedResourceInstalled(mgr ctrlrt.Manager) (boo
 		return false, err
 	}
 
-	adoptionResourceGVR := schema.GroupVersionResource{
+	gvr := schema.GroupVersionResource{
 		Group:    ackv1alpha1.GroupVersion.Group,
 		Version:  ackv1alpha1.GroupVersion.Version,
-		Resource: "adoptedresources",
+		Resource: strings.ToLower(resourcePlural),
 	}
 
 	// Ensure individual kind is supported
-	if _, err := restMapperClient.KindFor(adoptionResourceGVR); meta.IsNoMatchError(err) {
+	if _, err := restMapperClient.KindFor(gvr); meta.IsNoMatchError(err) {
 		return false, nil
 	}
 
 	return true, nil
+}
+
+// GetAdoptedResourceInstalled returns whether the AdoptedResource CRD has been
+// installed into the cluster, and is accessible by the service controller.
+func (c *serviceController) GetAdoptedResourceInstalled(mgr ctrlrt.Manager) (bool, error) {
+	return c.getResourceInstalled(mgr, "adoptedresources")
+}
+
+// GetFieldExportInstalled returns whether the FieldExport CRD has been
+// installed into the cluster, and is accessible by the service controller.
+func (c *serviceController) GetFieldExportInstalled(mgr ctrlrt.Manager) (bool, error) {
+	return c.getResourceInstalled(mgr, "fieldexports")
 }
 
 // WithLogger sets up the service controller with the supplied logger
@@ -190,14 +210,6 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		cache.Run(clientSet)
 	}
 
-	for _, rmf := range c.rmFactories {
-		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
-		if err := rec.BindControllerManager(mgr); err != nil {
-			return err
-		}
-		c.reconcilers = append(c.reconcilers, rec)
-	}
-
 	adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
 	adoptionLogger := c.log.WithName("adoption")
 	if err != nil {
@@ -210,6 +222,34 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			return err
 		}
 		c.adoptionReconciler = rec
+	}
+
+	exporterInstalled, err := c.GetFieldExportInstalled(mgr)
+	exporterLogger := c.log.WithName("exporter")
+	if err != nil {
+		exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
+	} else if !exporterInstalled {
+		exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
+	} else {
+		rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, cache)
+		if err := rec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		c.fieldExportReconciler = rec
+	}
+
+	for _, rmf := range c.rmFactories {
+		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
+		if err := rec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		rd := rmf.ResourceDescriptor()
+		feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
+		if err := feRec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		c.reconcilers = append(c.reconcilers, rec)
+		c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
 	}
 
 	return nil

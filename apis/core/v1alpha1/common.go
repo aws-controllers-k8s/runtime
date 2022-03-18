@@ -21,3 +21,13 @@ type AWSAccountID string
 
 // AWSResourceName represents an AWS Resource Name (ARN)
 type AWSResourceName string
+
+// FieldExportOutputType represents all types that can be produced by a field
+// export operation
+// +kubebuilder:validation:Enum=configmap;secret
+type FieldExportOutputType string
+
+const (
+	FieldExportOutputTypeConfigMap FieldExportOutputType = "configmap"
+	FieldExportOutputTypeSecret                          = "secret"
+)

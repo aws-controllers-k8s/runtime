@@ -85,3 +85,22 @@ func HTTPStatusCode(err error) int {
 	}
 	return awsRF.StatusCode()
 }
+
+// TerminalError defines an error that should be considered terminal, and placed
+// onto an ACK.Terminal condition
+type TerminalError struct {
+	err error
+}
+
+func (e TerminalError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e TerminalError) Unwrap() error {
+	return e.err
+}
+
+var _ error = &TerminalError{}

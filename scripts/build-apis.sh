@@ -20,3 +20,13 @@ common_config_output_dir=$ROOT_DIR/config
 controller-gen paths=$ROOT_DIR/apis/... \
     crd object:headerFile=$TEMPLATES_DIR/boilerplate.txt \
     output:crd:artifacts:config=$common_config_output_dir/crd/bases
+
+bases=$(find "$common_config_output_dir/crd/bases" -maxdepth 1 -type f -printf "%f\n" | sed -e 's/^/  - bases\//')
+cat <<EOF > $common_config_output_dir/crd/kustomization.yaml
+# Code generated in runtime. DO NOT EDIT.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+$bases
+EOF

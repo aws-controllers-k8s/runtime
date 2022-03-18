@@ -17,40 +17,46 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AdoptedResourceSpec defines the desired state of the AdoptedResource.
-type AdoptedResourceSpec struct {
-	// +kubebuilder:validation:Required
-	Kubernetes *ResourceWithMetadata `json:"kubernetes"`
-	// +kubebuilder:validation:Required
-	AWS *AWSIdentifiers `json:"aws"`
+// FieldExportTarget provides the values necessary to identify the
+// output path for a field export.
+type FieldExportTarget struct {
+	Name *string `json:"name"`
+	// Namespace is marked as optional, so we cannot compose `NamespacedName`
+	Namespace *string               `json:"namespace,omitempty"`
+	Kind      FieldExportOutputType `json:"kind"`
 }
 
-// AdoptedResourceStatus defines the observed status of the AdoptedResource.
-type AdoptedResourceStatus struct {
+// FieldExportSpec defines the desired state of the FieldExport.
+type FieldExportSpec struct {
+	From *ResourceFieldSelector `json:"from"`
+	To   *FieldExportTarget     `json:"to"`
+}
+
+// FieldExportStatus defines the observed status of the FieldExport.
+type FieldExportStatus struct {
 	// A collection of `ackv1alpha1.Condition` objects that describe the various
-	// terminal states of the adopted resource CR and its target custom resource
+	// recoverable states of the field CR
 	Conditions []*Condition `json:"conditions"`
 }
 
-// AdoptedResource is the schema for the AdoptedResource API.
+// FieldExport is the schema for the FieldExport API.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-type AdoptedResource struct {
+type FieldExport struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              AdoptedResourceSpec   `json:"spec,omitempty"`
-	Status            AdoptedResourceStatus `json:"status,omitempty"`
+	Spec              FieldExportSpec   `json:"spec,omitempty"`
+	Status            FieldExportStatus `json:"status,omitempty"`
 }
 
-// AdoptedResourceList defines a list of AdoptedResources.
+// FieldExportList defines a list of FieldExports.
 // +kubebuilder:object:root=true
-// +kubebuilder:printcolumn:name="AdoptionStatus",type=string,JSONPath=`.status.adoptionStatus`
-type AdoptedResourceList struct {
+type FieldExportList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []AdoptedResource `json:"items"`
+	Items           []FieldExport `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&AdoptedResource{}, &AdoptedResourceList{})
+	SchemeBuilder.Register(&FieldExport{}, &FieldExportList{})
 }

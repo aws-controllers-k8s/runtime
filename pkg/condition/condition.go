@@ -47,6 +47,13 @@ func Terminal(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeTerminal)
 }
 
+// Recoverable returns the Condition in the resource's Conditions collection
+// that is of type ConditionTypeRecoverable. If no such condition is found,
+// returns nil.
+func Recoverable(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeRecoverable)
+}
+
 // LateInitialized returns the Condition in the resource's Conditions collection that
 // is of type ConditionTypeLateInitialized. If no such condition is found, returns
 // nil.
@@ -127,6 +134,30 @@ func SetTerminal(
 	if c = Terminal(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeTerminal,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// SetRecoverable sets the resource's Condition of type ConditionTypeRecoverable
+// to the supplied status, optional message and reason.
+func SetRecoverable(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = Recoverable(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeRecoverable,
 		}
 		allConds = append(allConds, c)
 	}

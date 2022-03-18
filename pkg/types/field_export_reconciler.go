@@ -17,28 +17,31 @@ import (
 	"context"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 )
 
-// AdoptedResourceReconciler is responsible for reconciling an adopted resource
-// that represent AWS service API resource.
+// FieldExportReconciler is responsible for reconciling a field export CR.
 // It implements the upstream controller-runtime `Reconciler`
 // interface.
-type AdoptedResourceReconciler interface {
+type FieldExportReconciler interface {
 	Reconciler
-	// BindControllerManager sets up the AdoptedResourceReconciler with an
-	// instance of an upstream controller-runtime.Manager
-	BindControllerManager(ctrlrt.Manager) error
-	// Sync ensures that the supplied AdoptedResource creates the matching
-	// AWSResource based on observed state from ReadOne method
-	//
-	//
-	// NOTE(vijtrip2): This is really only here for dependency injection
-	// purposes in unit testing in order to simplify test setups.
+	// Sync ensures that the supplied FieldExport has been registered and is
+	// actively monitoring the resources.
 	Sync(
 		context.Context,
-		AWSResourceDescriptor,
-		AWSResourceManager,
-		*ackv1alpha1.AdoptedResource,
-	) error
+		AWSResource,
+		ackv1alpha1.FieldExport,
+	) (ackv1alpha1.FieldExport, error)
+	// BindControllerManager sets up the FieldExportReconciler with an instance
+	// of an upstream controller-runtime.Manager
+	BindControllerManager(ctrlrt.Manager) error
+	// GetFieldExportsForResource will list all FieldExport CRs and filter them
+	// based on whether they contain a reference to the given AWS resource.
+	GetFieldExportsForResource(
+		context.Context,
+		metav1.GroupKind,
+		types.NamespacedName,
+	) ([]ackv1alpha1.FieldExport, error)
 }

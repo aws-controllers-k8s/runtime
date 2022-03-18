@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
-	ctrlrt "sigs.k8s.io/controller-runtime"
 	ctrlreconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -30,9 +29,6 @@ import (
 // those controllers.
 type Reconciler interface {
 	ctrlreconcile.Reconciler
-	// BindControllerManager sets up the AWSResourceReconciler with an instance
-	// of an upstream controller-runtime.Manager
-	BindControllerManager(ctrlrt.Manager) error
 	// SecretValueFromReference fetches the value of a Secret given a
 	// SecretKeyReference
 	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)

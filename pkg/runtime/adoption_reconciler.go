@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	finalizerString = "finalizers.services.k8s.aws/AdoptedResource"
+	adoptionFinalizerString = "finalizers.services.k8s.aws/AdoptedResource"
 )
 
 // adoptionReconciler is responsible for reconciling the state of any adopted resources
@@ -377,7 +377,7 @@ func (r *adoptionReconciler) markManaged(
 	res *ackv1alpha1.AdoptedResource,
 ) error {
 	base := res.DeepCopy()
-	k8sctrlutil.AddFinalizer(res, finalizerString)
+	k8sctrlutil.AddFinalizer(res, adoptionFinalizerString)
 	return r.patchMetadataAndSpec(ctx, res, base)
 }
 
@@ -389,7 +389,7 @@ func (r *adoptionReconciler) markUnmanaged(
 	res *ackv1alpha1.AdoptedResource,
 ) error {
 	base := res.DeepCopy()
-	k8sctrlutil.RemoveFinalizer(res, finalizerString)
+	k8sctrlutil.RemoveFinalizer(res, adoptionFinalizerString)
 	return r.patchMetadataAndSpec(ctx, res, base)
 }
 
@@ -541,7 +541,7 @@ func NewAdoptionReconciler(
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
-) acktypes.Reconciler {
+) acktypes.AdoptedResourceReconciler {
 	return NewAdoptionReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
 }
 
