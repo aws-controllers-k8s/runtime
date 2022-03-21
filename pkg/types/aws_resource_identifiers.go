@@ -27,4 +27,6 @@ type AWSResourceIdentifiers interface {
 	// this means the resource has not yet been created in the backend AWS
 	// service.
 	ARN() *ackv1alpha1.AWSResourceName
+	// Region is the AWS region in which the resource exists or will exist.
+	Region() *ackv1alpha1.AWSRegion
 }

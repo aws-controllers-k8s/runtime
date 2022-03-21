@@ -827,14 +827,23 @@ func (r *resourceReconciler) getRoleARN(
 	return ackv1alpha1.AWSResourceName(roleARN)
 }
 
-// getRegion returns the AWS region that the given resource is in or should be
-// created in. If the CR have a region associated with it, it is used. Otherwise
-// we look for the namespace associated region, if that is set we use it. Finally
-// if none of these annotations are set we use the use the region specified in the
-// configuration is used
+// getRegion returns the region the resource exists in, or if the resource
+// has yet to be created, the region the resource *should* be created in.
+//
+// If the resource has not yet been created, we look for the AWS region
+// in the following order of precedence:
+//  - The resource's `services.k8s.aws/region` annotation, if present
+//  - The resource's Namespace's `services.k8s.aws/region` annotation, if present
+//  - The controller's `--aws-region` CLI flag
 func (r *resourceReconciler) getRegion(
 	res acktypes.AWSResource,
 ) ackv1alpha1.AWSRegion {
+	// first try to get the region from the status.resourceMetadata
+	metadataRegion := res.Identifiers().Region()
+	if metadataRegion != nil {
+		return *metadataRegion
+	}
+
 	// look for region in CR metadata annotations
 	resAnnotations := res.MetaObject().GetAnnotations()
 	region, ok := resAnnotations[ackv1alpha1.AnnotationRegion]
