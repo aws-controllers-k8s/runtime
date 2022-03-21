@@ -30,4 +30,6 @@ type ResourceMetadata struct {
 	// OwnerAccountID is the AWS Account ID of the account that owns the
 	// backend AWS service API resource.
 	OwnerAccountID *AWSAccountID `json:"ownerAccountID"`
+	// Region is the AWS region in which the resource exists or will exist.
+	Region *AWSRegion `json:"region"`
 }

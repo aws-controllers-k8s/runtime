@@ -44,3 +44,19 @@ func (_m *AWSResourceIdentifiers) OwnerAccountID() *v1alpha1.AWSAccountID {
 
 	return r0
 }
+
+// Region provides a mock function with given fields:
+func (_m *AWSResourceIdentifiers) Region() *v1alpha1.AWSRegion {
+	ret := _m.Called()
+
+	var r0 *v1alpha1.AWSRegion
+	if rf, ok := ret.Get(0).(func() *v1alpha1.AWSRegion); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*v1alpha1.AWSRegion)
+		}
+	}
+
+	return r0
+}
