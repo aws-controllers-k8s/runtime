@@ -351,17 +351,23 @@ func (r *resourceReconciler) createResource(
 	// finalizer to the CR; a finalizer that is removed once ACK no longer
 	// manages the resource OR if the backend AWS service resource is
 	// properly deleted.
-	if err = r.setResourceManaged(ctx, desired); err != nil {
-		return nil, err
-	}
+	if !r.rd.IsManaged(desired) {
+		if err = r.setResourceManaged(ctx, desired); err != nil {
+			return nil, err
+		}
 
-	rlog.Enter("rm.ResolveReferences")
-	resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
-	rlog.Exit("rm.ResolveReferences", err)
-	if err != nil {
-		return resolvedRefDesired, err
+		// Resolve the references again after adding the finalizer and
+		// patching the resource. Patching resource omits the resolved references
+		// because they are not persisted in etcd. So we resolve the references
+		// again before performing the create operation.
+		rlog.Enter("rm.ResolveReferences")
+		resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
+		rlog.Exit("rm.ResolveReferences", err)
+		if err != nil {
+			return resolvedRefDesired, err
+		}
+		desired = resolvedRefDesired
 	}
-	desired = resolvedRefDesired
 
 	rlog.Enter("rm.Create")
 	latest, err = rm.Create(ctx, desired)
