@@ -139,6 +139,58 @@ func managerFactoryMocks(
 	return rmf, rd
 }
 
+func TestReconcilerCreate_BackoffRetries(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, nil,
+	).Times(2)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, ackerr.NotFound,
+	).Once()
+	rm.On("ReadOne", ctx, latest).Return(
+		latest, ackerr.NotFound,
+	).Times(4)
+	rm.On("ReadOne", ctx, latest).Return(
+		latest, nil,
+	)
+	rm.On("Create", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc := reconcilerMocks(rmf)
+	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	_, err := r.Sync(ctx, rm, desired)
+	require.Nil(err)
+	rm.AssertNumberOfCalls(t, "ReadOne", 6)
+}
+
 func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testing.T) {
 	require := require.New(t)
 

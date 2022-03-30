@@ -4,6 +4,7 @@ go 1.17
 
 require (
 	github.com/aws/aws-sdk-go v1.42.0
+	github.com/cenkalti/backoff/v4 v4.1.2
 	github.com/go-logr/logr v1.2.0
 	github.com/google/go-cmp v0.5.5
 	github.com/itchyny/gojq v0.12.6
