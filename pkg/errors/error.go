@@ -92,6 +92,10 @@ type TerminalError struct {
 	err error
 }
 
+func (e TerminalError) New(terminalError error) *TerminalError {
+	return &TerminalError{err: terminalError}
+}
+
 func (e TerminalError) Error() string {
 	if e.err == nil {
 		return ""
