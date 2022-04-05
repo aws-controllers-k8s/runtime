@@ -92,7 +92,7 @@ type TerminalError struct {
 	err error
 }
 
-func (e TerminalError) New(terminalError error) *TerminalError {
+func NewTerminalError(terminalError error) *TerminalError {
 	return &TerminalError{err: terminalError}
 }
 
