@@ -26,7 +26,7 @@ import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 )
 
-const appName = "aws-controller-k8s"
+const appName = "aws-controllers-k8s"
 
 // NewSession returns a new session object. By default the returned session is
 // created using pod IRSA environment variables. If assumeRoleARN is not empty,
