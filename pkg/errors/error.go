@@ -58,6 +58,9 @@ var (
 	// SecretNotFound is returned if specified kubernetes secret is not found.
 	SecretNotFound = fmt.Errorf(
 		"kubernetes secret not found")
+	// ReadOneFailedAfterCreate is returned if a ReadOne call fails right after
+	// a create operation.
+	ReadOneFailedAfterCreate = fmt.Errorf("ReadOne call failed after a Create operation")
 )
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go
@@ -72,6 +75,12 @@ func AWSError(err error) (awserr.Error, bool) {
 func AWSRequestFailure(err error) (awserr.RequestFailure, bool) {
 	awsRF, ok := err.(awserr.RequestFailure)
 	return awsRF, ok
+}
+
+// NewReadOneFailAfterCreate takes a number of attempts and returns a
+// ReadOneFailedAfterCreate error if multiple ReadOne calls fails.
+func NewReadOneFailAfterCreate(numAttempts int) error {
+	return fmt.Errorf("%w: number of attempts: %d", ReadOneFailedAfterCreate, numAttempts)
 }
 
 // HTTPStatusCode returns the HTTP status code from the supplied error by

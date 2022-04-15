@@ -15,8 +15,10 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +39,10 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+)
+
+const (
+	backoffReadOneTimeout = 10 * time.Second
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -380,7 +386,21 @@ func (r *resourceReconciler) createResource(
 	observed, err := rm.ReadOne(ctx, latest)
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
-		return latest, err
+		if err == ackerr.NotFound {
+			// Some eventually-consistent APIs return a 404 from a
+			// ReadOne operation immediately after a successful
+			// Create operation. In these exceptional cases
+			// we retry the ReadOne operation with a backoff
+			// until we get the expected 200 from the ReadOne.
+			rlog.Enter("rm.delayedReadOneAfterCreate")
+			observed, err = r.delayedReadOneAfterCreate(ctx, rm, latest)
+			rlog.Exit("rm.delayedReadOneAfterCreate", err)
+			if err != nil {
+				return latest, err
+			}
+		} else {
+			return latest, err
+		}
 	}
 
 	// Take the status from the latest ReadOne
@@ -395,6 +415,43 @@ func (r *resourceReconciler) createResource(
 	}
 	rlog.Info("created new resource")
 	return latest, nil
+}
+
+// delayedReadOneAfterCreate is a helper function called when a ReadOne call
+// fails with a 404 error right after a Create call. It uses a backoff/retry
+// mechanism to retrieve the observed state right after a readone call.
+func (r *resourceReconciler) delayedReadOneAfterCreate(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	res acktypes.AWSResource,
+) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.delayedReadOneAfterCreate")
+	defer exit(err)
+
+	bo := backoff.NewExponentialBackOff()
+	bo.MaxElapsedTime = backoffReadOneTimeout
+	ticker := backoff.NewTicker(bo)
+	attempts := 0
+
+	var observed acktypes.AWSResource
+
+	for range ticker.C {
+		attempts++
+
+		rlog.Enter(fmt.Sprintf("rm.ReadOne (attempt %d)", attempts))
+		observed, err = rm.ReadOne(ctx, res)
+		rlog.Exit(fmt.Sprintf("rm.ReadOne (attempt %d)", attempts), err)
+		if err == nil || err != ackerr.NotFound {
+			ticker.Stop()
+			break
+		}
+	}
+	if err != nil {
+		return res, ackerr.NewReadOneFailAfterCreate(attempts)
+	}
+	return observed, nil
 }
 
 // updateResource calls one or more AWS APIs to modify the backend AWS resource
