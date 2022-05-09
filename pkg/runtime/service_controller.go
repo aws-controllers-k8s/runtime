@@ -243,13 +243,16 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
 		}
-		rd := rmf.ResourceDescriptor()
-		feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
-		if err := feRec.BindControllerManager(mgr); err != nil {
-			return err
-		}
 		c.reconcilers = append(c.reconcilers, rec)
-		c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
+
+		if exporterInstalled {
+			rd := rmf.ResourceDescriptor()
+			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
+			if err := feRec.BindControllerManager(mgr); err != nil {
+				return err
+			}
+			c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
+		}
 	}
 
 	return nil
