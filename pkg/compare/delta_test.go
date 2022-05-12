@@ -59,8 +59,34 @@ func TestDifferentAt(t *testing.T) {
 	d.Add("Baz.Y", a.Baz.Y, b.Baz.Y)
 	require.True(d.DifferentAt("Baz"))
 	require.True(d.DifferentAt("Baz.Y"))
-	require.False(d.DifferentAt("Y")) // there is no diff for top-level field "Y"
-	require.False(d.DifferentAt("Bar")) // diff exists but it was not added to Delta
+	require.False(d.DifferentAt("Y"))       // there is no diff for top-level field "Y"
+	require.False(d.DifferentAt("Bar"))     // diff exists but it was not added to Delta
 	require.False(d.DifferentAt("Baz.Y.Z")) // subject length exceeds length of diff Path
-	require.False(d.DifferentAt("Baz.Z"))  // matches Path top-level field but not sub-field
+	require.False(d.DifferentAt("Baz.Z"))   // matches Path top-level field but not sub-field
+}
+
+func TestDifferentExcept(t *testing.T) {
+	require := require.New(t)
+
+	a := Foo{
+		Bar: "a_bar",
+		Baz: Baz{
+			Y: "a_baz_y",
+		},
+	}
+	b := Foo{
+		Bar: "b_bar",
+		Baz: Baz{
+			Y: "b_baz_y",
+		},
+	}
+
+	d := compare.NewDelta()
+	d.Add("", a, nil)
+	require.False(d.DifferentExcept(""))
+
+	d = compare.NewDelta()
+	d.Add("Baz.Y", a.Baz.Y, b.Baz.Y)
+	require.True(d.DifferentExcept("Bar"))    // there is a difference that is *not* Bar
+	require.False(d.DifferentExcept("Baz.Y")) // there is *not* a different that is *not* Bar
 }

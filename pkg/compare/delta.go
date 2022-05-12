@@ -34,6 +34,49 @@ func (d *Delta) DifferentAt(subject string) bool {
 	return false
 }
 
+// DifferentExcept returns true if the delta contains any differences *other*
+// than any of the supplied path strings.
+//
+// This method is useful if you have a scenario where you don't want to proceed
+// with a modification action if certain fields in a resource have not been
+// changed.
+//
+// For example, consider this code:
+//
+// if delta.DifferentAt("Spec.Tags") {
+//     if err = rm.SyncTags(ctx, desired, latest); err != nil {
+//         return nil, err
+//     }
+// }
+// if !delta.DifferentExcept("Spec.Tags") {
+//     // We don't want to proceed to call the ModifyDBInstance API since
+//     // no other resource fields have changed.
+//     return desired, nil
+// }
+//
+// might be placed in an sdk_update_pre_build_request custom code hook to
+// prevent the ModifyDBInstance call from being executed if the DBInstance's
+// Tags field is the only field with changes.
+func (d *Delta) DifferentExcept(
+	exceptPaths ...string,
+) bool {
+	numDiffs := len(d.Differences)
+	if numDiffs == 0 {
+		return false
+	} else if numDiffs > len(exceptPaths) {
+		return true
+	}
+	foundExcepts := 0
+	for _, diff := range d.Differences {
+		for _, exceptPath := range exceptPaths {
+			if diff.Path.Contains(exceptPath) {
+				foundExcepts++
+			}
+		}
+	}
+	return foundExcepts != numDiffs
+}
+
 // Add adds a new Difference to the Delta
 func (d *Delta) Add(
 	path string,
