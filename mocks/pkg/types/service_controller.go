@@ -40,6 +40,20 @@ func (_m *ServiceController) BindControllerManager(_a0 manager.Manager, _a1 conf
 	return r0
 }
 
+// GetMetadata provides a mock function with given fields:
+func (_m *ServiceController) GetMetadata() types.ServiceControllerMetadata {
+	ret := _m.Called()
+
+	var r0 types.ServiceControllerMetadata
+	if rf, ok := ret.Get(0).(func() types.ServiceControllerMetadata); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(types.ServiceControllerMetadata)
+	}
+
+	return r0
+}
+
 // GetReconcilers provides a mock function with given fields:
 func (_m *ServiceController) GetReconcilers() []types.AWSResourceReconciler {
 	ret := _m.Called()

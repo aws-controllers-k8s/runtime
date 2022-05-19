@@ -24,6 +24,28 @@ import (
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 )
 
+// VersionInfo contains information about the version of the runtime and
+// service controller in use
+type VersionInfo struct {
+	// GitCommit is the SHA1 commit for the service controller's code
+	GitCommit string
+	// GitVersion is the latest Git tag from the service controller's code
+	GitVersion string
+	// BuildDate is a timestamp of when the code was built
+	BuildDate string
+}
+
+type ServiceControllerMetadata struct {
+	VersionInfo
+	// ServiceAlias is a string with the alias of the service API, e.g. "s3"
+	ServiceAlias string
+	// ServiceAPIGroup is a string with the full DNS-correct API group that
+	// this service controller manages, e.g. "s3.services.k8s.aws"
+	ServiceAPIGroup string
+	// ServiceEndpointsID is a string with the service API's EndpointsID, e.g. "api.sagemaker"
+	ServiceEndpointsID string
+}
+
 // ServiceController wraps one or more reconcilers (for individual resources in
 // an AWS API) with the upstream common controller-runtime machinery.
 type ServiceController interface {
@@ -64,4 +86,7 @@ type ServiceController interface {
 		ackv1alpha1.AWSResourceName,
 		schema.GroupVersionKind,
 	) (*session.Session, error)
+
+	// GetMetadata returns the metadata associated with the service controller.
+	GetMetadata() ServiceControllerMetadata
 }

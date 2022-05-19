@@ -40,10 +40,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
-
-	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
 var (
@@ -147,7 +147,7 @@ func TestServiceController(t *testing.T) {
 	reg := ackrt.NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 
-	vi := ackrt.VersionInfo{
+	vi := acktypes.VersionInfo{
 		GitCommit:  "test-commit",
 		GitVersion: "test-version",
 		BuildDate:  "now",
