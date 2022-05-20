@@ -41,6 +41,13 @@ const (
 	envVarAWSRegion          = "AWS_REGION"
 )
 
+var (
+	defaultResourceTags = []string{
+		"services.k8s.aws/controller-version=%CONTROLLER_VERSION%",
+		"services.k8s.aws/namespace=%K8S_NAMESPACE%",
+	}
+)
+
 // Config contains configuration otpions for ACK service controllers
 type Config struct {
 	MetricsAddr              string
@@ -104,7 +111,7 @@ func (cfg *Config) BindFlags() {
 	)
 	flag.StringSliceVar(
 		&cfg.ResourceTags, flagResourceTags,
-		[]string{},
+		defaultResourceTags,
 		"Configures the ACK service controller to always set key/value pairs tags on resources that it manages.",
 	)
 	flag.StringVar(

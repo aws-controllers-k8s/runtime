@@ -14,17 +14,26 @@
 package runtime
 
 import (
+	"fmt"
 	"strings"
-	"time"
+
+	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackconfig "github.com/aws-controllers-k8s/runtime/pkg/config"
-	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+)
+
+const (
+	// MissingImageTagValue is the placeholder value when ACK controller
+	// image tag(release semver) cannot be determined.
+	MissingImageTagValue = "unknown"
 )
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource
 func GetDefaultTags(
 	config *ackconfig.Config,
 	object rtclient.Object,
+	md acktypes.ServiceControllerMetadata,
 ) map[string]string {
 	if object == nil || config == nil || len(config.ResourceTags) == 0 {
 		return nil
@@ -32,7 +41,7 @@ func GetDefaultTags(
 	var populatedTags = make(map[string]string)
 	for _, tagKeyVal := range config.ResourceTags {
 		keyVal := strings.Split(tagKeyVal, "=")
-		if keyVal == nil && len(keyVal) != 2 {
+		if keyVal == nil || len(keyVal) != 2 {
 			continue
 		}
 		key := strings.TrimSpace(keyVal[0])
@@ -40,7 +49,7 @@ func GetDefaultTags(
 		if key == "" || val == "" {
 			continue
 		}
-		populatedValue := expandTagValue(&val, object)
+		populatedValue := expandTagValue(&val, object, md)
 		populatedTags[key] = *populatedValue
 	}
 	if len(populatedTags) == 0 {
@@ -52,18 +61,34 @@ func GetDefaultTags(
 func expandTagValue(
 	value *string,
 	obj rtclient.Object,
+	md acktypes.ServiceControllerMetadata,
 ) *string {
 	if value == nil || obj == nil {
 		return nil
 	}
 	var expandedValue string = ""
 	switch *value {
-	case "%UTCNOW%":
-		expandedValue = time.Now().UTC().String()
-	case "%KUBERNETES_NAMESPACE%":
+	case "%CONTROLLER_VERSION%":
+		expandedValue = generateControllerVersion(md)
+	case "%K8S_NAMESPACE%":
 		expandedValue = obj.GetNamespace()
 	default:
 		expandedValue = *value
 	}
 	return &expandedValue
+}
+
+// generateControllerVersion creates the tag value for key
+// "services.k8s.aws/controller-version". The value for this tag is in the
+// format "<service-name>-<controller-image-tag>". Ex: s3-v0.0.10
+func generateControllerVersion(md acktypes.ServiceControllerMetadata) string {
+	controllerImageTag := md.GitVersion
+	// ACK controller released from the ACK CD pipeline will have the correct
+	// GitVersion. But this value can be empty when manually building ACK
+	// controller image locally and not passing the go ldflags.
+	// Add a placeholder value when git tag is found missing.
+	if controllerImageTag == "" {
+		controllerImageTag = MissingImageTagValue
+	}
+	return fmt.Sprintf("%s-%s", md.ServiceAlias, controllerImageTag)
 }

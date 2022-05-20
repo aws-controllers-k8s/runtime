@@ -33,30 +33,11 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
-// VersionInfo contains information about the version of the runtime and
-// service controller in use
-type VersionInfo struct {
-	// GitCommit is the SHA1 commit for the service controller's code
-	GitCommit string
-	// GitVersion is the latest Git tag from the service controller's code
-	GitVersion string
-	// BuildDate is a timestamp of when the code was built
-	BuildDate string
-}
-
 // serviceController wraps a number of `controller-runtime.Reconciler` that are
 // related to a specific AWS service API.
 type serviceController struct {
+	acktypes.ServiceControllerMetadata
 	metaLock sync.RWMutex
-	// ServiceAlias is a string with the alias of the service API, e.g. "s3"
-	ServiceAlias string
-	// ServiceAPIGroup is a string with the full DNS-correct API group that
-	// this service controller manages, e.g. "s3.services.k8s.aws"
-	ServiceAPIGroup string
-	// ServiceEndpointsID is a string with the service API's EndpointsID, e.g. "api.sagemaker"
-	ServiceEndpointsID string
-	// VersionInfo describes the service controller's built code
-	VersionInfo VersionInfo
 	// rmFactories is a map of resource manager factories, keyed by the
 	// GroupKind of the resource managed by the resource manager produced by
 	// that factory
@@ -258,18 +239,25 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	return nil
 }
 
+// GetMetadata returns the metadata associated with the service controller.
+func (c *serviceController) GetMetadata() acktypes.ServiceControllerMetadata {
+	return c.ServiceControllerMetadata
+}
+
 // NewServiceController returns a new serviceController instance
 func NewServiceController(
 	svcAlias string,
 	svcAPIGroup string,
 	svcEndpointsID string,
-	versionInfo VersionInfo,
+	versionInfo acktypes.VersionInfo,
 ) acktypes.ServiceController {
 	return &serviceController{
-		ServiceAlias:       svcAlias,
-		ServiceAPIGroup:    svcAPIGroup,
-		ServiceEndpointsID: svcEndpointsID,
-		VersionInfo:        versionInfo,
-		metrics:            ackmetrics.NewMetrics(svcAlias),
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			VersionInfo:        versionInfo,
+			ServiceAlias:       svcAlias,
+			ServiceAPIGroup:    svcAPIGroup,
+			ServiceEndpointsID: svcEndpointsID,
+		},
+		metrics: ackmetrics.NewMetrics(svcAlias),
 	}
 }
