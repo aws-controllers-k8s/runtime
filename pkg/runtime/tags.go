@@ -14,7 +14,6 @@
 package runtime
 
 import (
-	"fmt"
 	"strings"
 
 	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -23,19 +22,71 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
+// resolveTagFormat is a function which returns the resolved value for an
+// ACK resource tag format. Ex: %CONTROLLER_SERVICE% -> s3
+type resolveTagFormat func(rtclient.Object, acktypes.ServiceControllerMetadata) string
+
 const (
 	// MissingImageTagValue is the placeholder value when ACK controller
 	// image tag(release semver) cannot be determined.
-	MissingImageTagValue = "unknown"
+	MissingImageTagValue       = "unknown"
+	ServiceAliasTagFormat      = "%CONTROLLER_SERVICE%"
+	ControllerVersionTagFormat = "%CONTROLLER_VERSION%"
+	NamespaceTagFormat         = "%K8S_NAMESPACE%"
+	ResourceNameTagFormat      = "%K8S_RESOURCE_NAME%"
 )
+
+// ACKResourceTagFormats is map of ACK resource tag formats to it's
+// resolveTagFormat function.
+//
+// To add a new ACKResourceTag format, include it in this map, along with the
+// resolveTagFormat function and expandTagValue() method will start
+// expanding the new resource tag format.
+var ACKResourceTagFormats = map[string]resolveTagFormat{
+	ServiceAliasTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		return md.ServiceAlias
+	},
+
+	ControllerVersionTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		controllerImageTag := md.GitVersion
+		// ACK controller released from the ACK CD pipeline will have the correct
+		// GitVersion. But this value can be empty when manually building ACK
+		// controller image locally and not passing the go ldflags.
+		// Add a placeholder value when git tag is found missing.
+		if controllerImageTag == "" {
+			controllerImageTag = MissingImageTagValue
+		}
+		return controllerImageTag
+	},
+
+	NamespaceTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		return obj.GetNamespace()
+	},
+
+	ResourceNameTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		return obj.GetName()
+	},
+}
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource
 func GetDefaultTags(
 	config *ackconfig.Config,
-	object rtclient.Object,
+	obj rtclient.Object,
 	md acktypes.ServiceControllerMetadata,
 ) map[string]string {
-	if object == nil || config == nil || len(config.ResourceTags) == 0 {
+	if obj == nil || config == nil || len(config.ResourceTags) == 0 {
 		return nil
 	}
 	var populatedTags = make(map[string]string)
@@ -49,46 +100,20 @@ func GetDefaultTags(
 		if key == "" || val == "" {
 			continue
 		}
-		populatedValue := expandTagValue(&val, object, md)
-		populatedTags[key] = *populatedValue
-	}
-	if len(populatedTags) == 0 {
-		return nil
+		populatedTags[key] = expandTagValue(val, obj, md)
 	}
 	return populatedTags
 }
 
+// expandTagValue returns the tag value after expanding all the ACKResourceTag
+// formats.
 func expandTagValue(
-	value *string,
+	value string,
 	obj rtclient.Object,
 	md acktypes.ServiceControllerMetadata,
-) *string {
-	if value == nil || obj == nil {
-		return nil
+) string {
+	for tagFormat, resolveTagFormat := range ACKResourceTagFormats {
+		value = strings.ReplaceAll(value, tagFormat, resolveTagFormat(obj, md))
 	}
-	var expandedValue string = ""
-	switch *value {
-	case "%CONTROLLER_VERSION%":
-		expandedValue = generateControllerVersion(md)
-	case "%K8S_NAMESPACE%":
-		expandedValue = obj.GetNamespace()
-	default:
-		expandedValue = *value
-	}
-	return &expandedValue
-}
-
-// generateControllerVersion creates the tag value for key
-// "services.k8s.aws/controller-version". The value for this tag is in the
-// format "<service-name>-<controller-image-tag>". Ex: s3-v0.0.10
-func generateControllerVersion(md acktypes.ServiceControllerMetadata) string {
-	controllerImageTag := md.GitVersion
-	// ACK controller released from the ACK CD pipeline will have the correct
-	// GitVersion. But this value can be empty when manually building ACK
-	// controller image locally and not passing the go ldflags.
-	// Add a placeholder value when git tag is found missing.
-	if controllerImageTag == "" {
-		controllerImageTag = MissingImageTagValue
-	}
-	return fmt.Sprintf("%s-%s", md.ServiceAlias, controllerImageTag)
+	return value
 }
