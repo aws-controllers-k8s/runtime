@@ -19,6 +19,7 @@ import (
 	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackconfig "github.com/aws-controllers-k8s/runtime/pkg/config"
+	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -29,11 +30,7 @@ type resolveTagFormat func(rtclient.Object, acktypes.ServiceControllerMetadata) 
 const (
 	// MissingImageTagValue is the placeholder value when ACK controller
 	// image tag(release semver) cannot be determined.
-	MissingImageTagValue       = "unknown"
-	ServiceAliasTagFormat      = "%CONTROLLER_SERVICE%"
-	ControllerVersionTagFormat = "%CONTROLLER_VERSION%"
-	NamespaceTagFormat         = "%K8S_NAMESPACE%"
-	ResourceNameTagFormat      = "%K8S_RESOURCE_NAME%"
+	MissingImageTagValue = "unknown"
 )
 
 // ACKResourceTagFormats is map of ACK resource tag formats to it's
@@ -43,14 +40,14 @@ const (
 // resolveTagFormat function and expandTagValue() method will start
 // expanding the new resource tag format.
 var ACKResourceTagFormats = map[string]resolveTagFormat{
-	ServiceAliasTagFormat: func(
+	acktags.ServiceAliasTagFormat: func(
 		obj rtclient.Object,
 		md acktypes.ServiceControllerMetadata,
 	) string {
 		return md.ServiceAlias
 	},
 
-	ControllerVersionTagFormat: func(
+	acktags.ControllerVersionTagFormat: func(
 		obj rtclient.Object,
 		md acktypes.ServiceControllerMetadata,
 	) string {
@@ -65,14 +62,14 @@ var ACKResourceTagFormats = map[string]resolveTagFormat{
 		return controllerImageTag
 	},
 
-	NamespaceTagFormat: func(
+	acktags.NamespaceTagFormat: func(
 		obj rtclient.Object,
 		md acktypes.ServiceControllerMetadata,
 	) string {
 		return obj.GetNamespace()
 	},
 
-	ResourceNameTagFormat: func(
+	acktags.ResourceNameTagFormat: func(
 		obj rtclient.Object,
 		md acktypes.ServiceControllerMetadata,
 	) string {
