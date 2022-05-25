@@ -1,15 +1,29 @@
+// Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"). You may
+// not use this file except in compliance with the License. A copy of the
+// License is located at
+//
+//     http://aws.amazon.com/apache2.0/
+//
+// or in the "license" file accompanying this file. This file is distributed
+// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+// express or implied. See the License for the specific language governing
+// permissions and limitations under the License.
+
 package runtime_test
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/aws-controllers-k8s/runtime/pkg/config"
+	"github.com/stretchr/testify/assert"
 
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
+	"github.com/aws-controllers-k8s/runtime/pkg/config"
 	"github.com/aws-controllers-k8s/runtime/pkg/runtime"
-	"github.com/aws-controllers-k8s/runtime/pkg/types"
-	"github.com/stretchr/testify/assert"
+	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
 func TestGetDefaultTags(t *testing.T) {
@@ -20,9 +34,9 @@ func TestGetDefaultTags(t *testing.T) {
 
 	cfg := config.Config{}
 
-	md := types.ServiceControllerMetadata{
+	md := acktypes.ServiceControllerMetadata{
 		ServiceAlias: "s3",
-		VersionInfo: types.VersionInfo{
+		VersionInfo: acktypes.VersionInfo{
 			GitVersion: "v0.0.10",
 		},
 	}
@@ -56,14 +70,14 @@ func TestGetDefaultTags(t *testing.T) {
 	cfg.ResourceTags = []string{
 		"foo=bar",
 		fmt.Sprintf("services.k8s.aws/controller-version=%s-%s",
-			runtime.ServiceAliasTagFormat,
-			runtime.ControllerVersionTagFormat,
+			acktags.ServiceAliasTagFormat,
+			acktags.ControllerVersionTagFormat,
 		),
 		fmt.Sprintf("services.k8s.aws/namespace=%s",
-			runtime.NamespaceTagFormat,
+			acktags.NamespaceTagFormat,
 		),
 		fmt.Sprintf("services.k8s.aws/name=%s",
-			runtime.ResourceNameTagFormat,
+			acktags.ResourceNameTagFormat,
 		),
 	}
 	expandedTags = runtime.GetDefaultTags(&cfg, &obj, md)

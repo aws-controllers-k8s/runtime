@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap/zapcore"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 )
 
 const (
@@ -43,8 +45,13 @@ const (
 
 var (
 	defaultResourceTags = []string{
-		"services.k8s.aws/controller-version=%CONTROLLER_VERSION%",
-		"services.k8s.aws/namespace=%K8S_NAMESPACE%",
+		fmt.Sprintf("services.k8s.aws/controller-version=%s-%s",
+			acktags.ServiceAliasTagFormat,
+			acktags.ControllerVersionTagFormat,
+		),
+		fmt.Sprintf("services.k8s.aws/namespace=%s",
+			acktags.NamespaceTagFormat,
+		),
 	}
 )
 
