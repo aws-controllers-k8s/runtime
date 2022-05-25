@@ -175,6 +175,12 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
+	rlog.Enter("rm.EnsureControllerTags")
+	err = rm.EnsureControllerTags(ctx, desired)
+	rlog.Exit("rm.EnsureControllerTags", err)
+	if err != nil {
+		return ctrlrt.Result{}, err
+	}
 	latest, err := r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }

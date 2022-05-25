@@ -78,6 +78,20 @@ func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource)
 	return r0, r1
 }
 
+// EnsureControllerTags provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceManager) EnsureControllerTags(_a0 context.Context, _a1 types.AWSResource) error {
+	ret := _m.Called(_a0, _a1)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource) error); ok {
+		r0 = rf(_a0, _a1)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // IsSynced provides a mock function with given fields: _a0, _a1
 func (_m *AWSResourceManager) IsSynced(_a0 context.Context, _a1 types.AWSResource) (bool, error) {
 	ret := _m.Called(_a0, _a1)
