@@ -175,12 +175,6 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
-	rlog.Enter("rm.EnsureControllerTags")
-	err = rm.EnsureControllerTags(ctx, desired)
-	rlog.Exit("rm.EnsureControllerTags", err)
-	if err != nil {
-		return ctrlrt.Result{}, err
-	}
 	latest, err := r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
@@ -238,6 +232,13 @@ func (r *resourceReconciler) Sync(
 		return resolvedRefDesired, err
 	}
 	desired = resolvedRefDesired
+
+	rlog.Enter("rm.EnsureControllerTags")
+	err = rm.EnsureControllerTags(ctx, desired)
+	rlog.Exit("rm.EnsureControllerTags", err)
+	if err != nil {
+		return desired, err
+	}
 
 	rlog.Enter("rm.ReadOne")
 	latest, err = rm.ReadOne(ctx, desired)
@@ -379,6 +380,15 @@ func (r *resourceReconciler) createResource(
 			return resolvedRefDesired, err
 		}
 		desired = resolvedRefDesired
+
+		// Add controller tags again after adding the finalizer and patching
+		// the resource
+		rlog.Enter("rm.EnsureControllerTags")
+		err = rm.EnsureControllerTags(ctx, desired)
+		rlog.Exit("rm.EnsureControllerTags", err)
+		if err != nil {
+			return desired, err
+		}
 	}
 
 	rlog.Enter("rm.Create")
