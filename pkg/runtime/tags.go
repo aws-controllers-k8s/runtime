@@ -82,11 +82,11 @@ func GetDefaultTags(
 	config *ackconfig.Config,
 	obj rtclient.Object,
 	md acktypes.ServiceControllerMetadata,
-) map[string]string {
+) acktags.Tags {
+	defaultTags := acktags.NewTags()
 	if obj == nil || config == nil || len(config.ResourceTags) == 0 {
-		return nil
+		return defaultTags
 	}
-	var populatedTags = make(map[string]string)
 	for _, tagKeyVal := range config.ResourceTags {
 		keyVal := strings.Split(tagKeyVal, "=")
 		if keyVal == nil || len(keyVal) != 2 {
@@ -97,9 +97,9 @@ func GetDefaultTags(
 		if key == "" || val == "" {
 			continue
 		}
-		populatedTags[key] = expandTagValue(val, obj, md)
+		defaultTags[key] = expandTagValue(val, obj, md)
 	}
-	return populatedTags
+	return defaultTags
 }
 
 // expandTagValue returns the tag value after expanding all the ACKResourceTag

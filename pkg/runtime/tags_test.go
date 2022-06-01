@@ -42,13 +42,13 @@ func TestGetDefaultTags(t *testing.T) {
 	}
 
 	// nil config
-	assert.Nil(runtime.GetDefaultTags(nil, &obj, md))
+	assert.Empty(runtime.GetDefaultTags(nil, &obj, md))
 
 	// nil object
-	assert.Nil(runtime.GetDefaultTags(&cfg, nil, md))
+	assert.Empty(runtime.GetDefaultTags(&cfg, nil, md))
 
 	// no resource tags
-	assert.Nil(runtime.GetDefaultTags(&cfg, &obj, md))
+	assert.Empty(runtime.GetDefaultTags(&cfg, &obj, md))
 
 	// ill formed tags
 	cfg.ResourceTags = []string{"foobar"}
