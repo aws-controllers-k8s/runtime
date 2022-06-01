@@ -78,8 +78,8 @@ func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource)
 	return r0, r1
 }
 
-// EnsureControllerTags provides a mock function with given fields: _a0, _a1
-func (_m *AWSResourceManager) EnsureControllerTags(_a0 context.Context, _a1 types.AWSResource) error {
+// EnsureTags provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceManager) EnsureTags(_a0 context.Context, _a1 types.AWSResource) error {
 	ret := _m.Called(_a0, _a1)
 
 	var r0 error

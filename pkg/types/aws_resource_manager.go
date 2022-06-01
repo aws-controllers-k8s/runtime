@@ -85,11 +85,14 @@ type AWSResourceManager interface {
 	ResolveReferences(context.Context, client.Reader, AWSResource) (AWSResource, error)
 	// IsSynced returns true if a resource is synced.
 	IsSynced(context.Context, AWSResource) (bool, error)
-	// EnsureControllerTags ensures that ACK controller tags are present
-	// inside AWSResource.
-	// If AWSResource does not support tags, only then controller tags will
-	// be missing from AWSResource after this method call.
-	EnsureControllerTags(context.Context, AWSResource) error
+	// EnsureTags ensures that tags are present inside the AWSResource.
+	// If the AWSResource does not have any existing resource tags, the 'tags'
+	// field is initialized and the controller tags are added.
+	// If the AWSResource has existing resource tags, then controller tags are
+	// added to the existing resource tags without overriding them.
+	// If the AWSResource does not support tags, only then the controller tags
+	// will not be added to the AWSResource.
+	EnsureTags(context.Context, AWSResource) error
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
