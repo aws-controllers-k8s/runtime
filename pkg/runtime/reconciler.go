@@ -233,6 +233,13 @@ func (r *resourceReconciler) Sync(
 	}
 	desired = resolvedRefDesired
 
+	rlog.Enter("rm.EnsureTags")
+	err = rm.EnsureTags(ctx, desired)
+	rlog.Exit("rm.EnsureTags", err)
+	if err != nil {
+		return desired, err
+	}
+
 	rlog.Enter("rm.ReadOne")
 	latest, err = rm.ReadOne(ctx, desired)
 	rlog.Exit("rm.ReadOne", err)
@@ -373,6 +380,17 @@ func (r *resourceReconciler) createResource(
 			return resolvedRefDesired, err
 		}
 		desired = resolvedRefDesired
+
+		// Ensure tags again after adding the finalizer and patching the
+		// resource. Patching desired resource omits the controller tags
+		// because they are not persisted in etcd. So we again ensure
+		// that tags are present before performing the create operation.
+		rlog.Enter("rm.EnsureTags")
+		err = rm.EnsureTags(ctx, desired)
+		rlog.Exit("rm.EnsureTags", err)
+		if err != nil {
+			return desired, err
+		}
 	}
 
 	rlog.Enter("rm.Create")

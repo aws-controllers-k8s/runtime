@@ -183,6 +183,7 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -240,6 +241,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testi
 	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -266,6 +268,8 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testi
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertNumberOfCalls(t, "EnsureTags", 2)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.T) {
@@ -315,6 +319,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -341,6 +346,8 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertNumberOfCalls(t, "EnsureTags", 1)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate(t *testing.T) {
@@ -392,6 +399,7 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -419,6 +427,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
@@ -474,6 +483,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -499,6 +509,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
@@ -547,6 +558,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("Delta", latest, latest).Return(delta)
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -573,6 +585,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
@@ -621,6 +634,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("Delta", latest, latest).Return(delta)
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -647,6 +661,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
@@ -706,6 +721,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -731,6 +747,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
@@ -778,6 +795,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -795,6 +813,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	latest.AssertCalled(t, "DeepCopy")
 	latest.AssertCalled(t, "SetStatus", latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
@@ -853,6 +872,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -868,6 +888,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
@@ -998,6 +1019,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	rm.On("LateInitialize", ctx, latest).Return(latest, requeueError)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -1014,6 +1036,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	// No difference in desired, latest metadata and spec
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
@@ -1101,6 +1124,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	rmf, rd := managerFactoryMocks(desired, latest, false)
 
@@ -1114,6 +1138,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
 
 func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
@@ -1176,6 +1201,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(nil)
 
 	r, kc := reconcilerMocks(rmf)
 
@@ -1197,4 +1223,90 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertNotCalled(t, "EnsureTags", ctx, desired)
+}
+
+func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	ensureControllerTagsError := errors.New("failed to ensure controller tags")
+
+	// resourceReconciler.ensureConditions will ensure that if the resource
+	// manager has not set any Conditions on the resource, that at least an
+	// ACK.ResourceSynced condition with status Unknown will be set on the
+	// resource.
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
+		// The non-terminal reconciler error causes the ResourceSynced
+		// condition to be False
+		assert.Equal(t, corev1.ConditionFalse, cond.Status)
+		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
+		assert.Equal(t, ensureControllerTagsError.Error(), *cond.Reason)
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, nil)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("EnsureTags", ctx, desired).Return(
+		ensureControllerTagsError,
+	)
+
+	r, kc := reconcilerMocks(rmf)
+
+	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	// With the above mocks and below assertions, we check that if we got a
+	// non-error return from `AWSResourceManager.ReadOne()` and the
+	// `AWSResourceDescriptor.Delta()` returned a non-empty Delta, that we end
+	// up calling the AWSResourceManager.Update() call in the Reconciler.Sync()
+	// method,
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertNotCalled(t, "ReadOne", ctx, desired)
+	rd.AssertNotCalled(t, "Delta", desired, latest)
+	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	// No changes to metadata or spec so Patch on the object shouldn't be done
+	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
+	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
+	rm.AssertCalled(t, "EnsureTags", ctx, desired)
 }
