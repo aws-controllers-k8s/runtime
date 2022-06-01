@@ -78,13 +78,13 @@ func (_m *AWSResourceManager) Delete(_a0 context.Context, _a1 types.AWSResource)
 	return r0, r1
 }
 
-// EnsureTags provides a mock function with given fields: _a0, _a1
-func (_m *AWSResourceManager) EnsureTags(_a0 context.Context, _a1 types.AWSResource) error {
-	ret := _m.Called(_a0, _a1)
+// EnsureTags provides a mock function with given fields: _a0, _a1, _a2
+func (_m *AWSResourceManager) EnsureTags(_a0 context.Context, _a1 types.AWSResource, _a2 types.ServiceControllerMetadata) error {
+	ret := _m.Called(_a0, _a1, _a2)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource) error); ok {
-		r0 = rf(_a0, _a1)
+	if rf, ok := ret.Get(0).(func(context.Context, types.AWSResource, types.ServiceControllerMetadata) error); ok {
+		r0 = rf(_a0, _a1, _a2)
 	} else {
 		r0 = ret.Error(0)
 	}
