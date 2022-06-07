@@ -814,6 +814,8 @@ func (r *resourceReconciler) HandleReconcileError(
 	err error,
 ) (ctrlrt.Result, error) {
 	if ackcompare.IsNotNil(latest) {
+		// Create a copy so we don't override the spec
+		latestCopy := latest.DeepCopy()
 		// The reconciliation loop may have returned an error, but if latest is
 		// not nil, there may be some changes available in the CR's Status
 		// struct (example: Conditions), and we want to make sure we save those
@@ -827,12 +829,17 @@ func (r *resourceReconciler) HandleReconcileError(
 		//
 		// TODO(jaypipes): We ignore error handling here but I don't know if
 		// there is a more robust way to handle failures in the patch operation
-		_ = r.patchResourceStatus(ctx, desired, latest)
+		_ = r.patchResourceStatus(ctx, desired, latestCopy)
 	}
 	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
 	}
 	rlog := ackrtlog.FromContext(ctx)
+
+	// Ensure that we are patching any changes to the annotations/metadata and
+	// the Spec that may have been set by the resource manager's successful
+	// Create call above.
+	_ = r.patchResourceMetadataAndSpec(ctx, desired, latest)
 
 	var requeueNeededAfter *requeue.RequeueNeededAfter
 	if errors.As(err, &requeueNeededAfter) {
