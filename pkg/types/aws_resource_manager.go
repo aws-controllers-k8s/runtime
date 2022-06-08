@@ -92,7 +92,7 @@ type AWSResourceManager interface {
 	// added to the existing resource tags without overriding them.
 	// If the AWSResource does not support tags, only then the controller tags
 	// will not be added to the AWSResource.
-	EnsureTags(context.Context, AWSResource) error
+	EnsureTags(context.Context, AWSResource, ServiceControllerMetadata) error
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to

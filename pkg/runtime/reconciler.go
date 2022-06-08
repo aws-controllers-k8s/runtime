@@ -234,7 +234,7 @@ func (r *resourceReconciler) Sync(
 	desired = resolvedRefDesired
 
 	rlog.Enter("rm.EnsureTags")
-	err = rm.EnsureTags(ctx, desired)
+	err = rm.EnsureTags(ctx, desired, r.sc.GetMetadata())
 	rlog.Exit("rm.EnsureTags", err)
 	if err != nil {
 		return desired, err
@@ -386,7 +386,7 @@ func (r *resourceReconciler) createResource(
 		// because they are not persisted in etcd. So we again ensure
 		// that tags are present before performing the create operation.
 		rlog.Enter("rm.EnsureTags")
-		err = rm.EnsureTags(ctx, desired)
+		err = rm.EnsureTags(ctx, desired, r.sc.GetMetadata())
 		rlog.Exit("rm.EnsureTags", err)
 		if err != nil {
 			return desired, err
