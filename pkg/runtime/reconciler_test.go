@@ -994,9 +994,10 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 			hasSynced = true
 			// Even though mocked IsSynced method returns (true, nil),
 			// the reconciler error from late initialization correctly causes
-			// the ResourceSynced condition to be False
-			assert.Equal(corev1.ConditionFalse, condition.Status)
-			assert.Equal(ackcondition.NotSyncedMessage, *condition.Message)
+			// the ResourceSynced condition to be Unknown since the reconciler
+			// error is not a Terminal error.
+			assert.Equal(corev1.ConditionUnknown, condition.Status)
+			assert.Equal(ackcondition.UnknownSyncedMessage, *condition.Message)
 			assert.Equal(requeueError.Error(), *condition.Reason)
 		}
 		assert.True(hasSynced)
@@ -1112,9 +1113,9 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 			}
 			hasSynced = true
 			// The terminal error from reconciler correctly causes
-			// the ResourceSynced condition to be True
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Equal(ackcondition.SyncedMessage, *condition.Message)
+			// the ResourceSynced condition to be False
+			assert.Equal(corev1.ConditionFalse, condition.Status)
+			assert.Equal(ackcondition.NotSyncedMessage, *condition.Message)
 		}
 		assert.True(hasSynced)
 	})

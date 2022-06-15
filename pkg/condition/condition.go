@@ -29,8 +29,9 @@ var (
 	NotManagedReason  = "This resource already exists but is not managed by ACK. " +
 		"To bring the resource under ACK management, you should explicitly adopt " +
 		"the resource by creating a services.k8s.aws/AdoptedResource"
-	NotSyncedMessage = "Resource not synced"
-	SyncedMessage    = "Resource synced successfully"
+	UnknownSyncedMessage = "Unable to determine if desired resource state matches latest observed state"
+	NotSyncedMessage     = "Resource not synced"
+	SyncedMessage        = "Resource synced successfully"
 )
 
 // Synced returns the Condition in the resource's Conditions collection that is

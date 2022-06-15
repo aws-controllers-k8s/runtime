@@ -326,15 +326,19 @@ func (r *resourceReconciler) ensureConditions(
 		if reconcileErr != nil {
 			condReason = reconcileErr.Error()
 			if reconcileErr == ackerr.Terminal {
-				// A terminal condition by its very nature indicates a stable state
-				// for a resource being synced. The resource is considered synced
-				// because its state will not change.
-				condStatus = corev1.ConditionTrue
-				condMessage = ackcondition.SyncedMessage
-			} else {
-				// For any other reconciler error, set synced condition to false
+				// A terminal condition is a stable state for a resource.
+				// Terminal conditions indicate that without changes to the
+				// desired state of a resource, the resource's desired state
+				// will never match the latest observed state. Thus,
+				// ACK.ResourceSynced must be False.
 				condStatus = corev1.ConditionFalse
 				condMessage = ackcondition.NotSyncedMessage
+			} else {
+				// For any other reconciler error, set synced condition to
+				// unknown, since we don't know whether the resource's desired
+				// state matches the resource's latest observed state.
+				condStatus = corev1.ConditionUnknown
+				condMessage = ackcondition.UnknownSyncedMessage
 			}
 		}
 		ackcondition.SetSynced(res, condStatus, &condMessage, &condReason)
