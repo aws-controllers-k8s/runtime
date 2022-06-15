@@ -213,7 +213,9 @@ func (r *resourceReconciler) Sync(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.Sync")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
@@ -279,7 +281,9 @@ func (r *resourceReconciler) resetConditions(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.resetConditions")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	ackcondition.Clear(res)
 }
@@ -299,7 +303,9 @@ func (r *resourceReconciler) ensureConditions(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.ensureConditions")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	// If the ACK.ResourceSynced condition is not set using the custom hooks,
 	// determine the Synced condition using "rm.IsSynced" method
@@ -355,7 +361,9 @@ func (r *resourceReconciler) createResource(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.createResource")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	var latest acktypes.AWSResource // the newly created resource
 
@@ -446,7 +454,9 @@ func (r *resourceReconciler) delayedReadOneAfterCreate(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.delayedReadOneAfterCreate")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = backoffReadOneTimeout
@@ -492,7 +502,9 @@ func (r *resourceReconciler) updateResource(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.updateResource")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	// Ensure the resource is managed
 	if err = r.failOnResourceUnmanaged(ctx, latest); err != nil {
@@ -543,7 +555,9 @@ func (r *resourceReconciler) lateInitializeResource(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.lateInitializeResource")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	rlog.Enter("rm.LateInitialize")
 	lateInitializedLatest, err := rm.LateInitialize(ctx, latest)
@@ -572,7 +586,9 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.patchResourceMetadataAndSpec")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desired.MetaObject(), latest.MetaObject())
 	if err != nil {
@@ -613,7 +629,9 @@ func (r *resourceReconciler) patchResourceStatus(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.patchResourceStatus")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	rlog.Enter("kc.Patch (status)")
 	err = r.kc.Status().Patch(
@@ -648,7 +666,9 @@ func (r *resourceReconciler) deleteResource(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.deleteResource")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	rlog.Enter("rm.ReadOne")
 	observed, err := rm.ReadOne(ctx, current)
@@ -708,7 +728,9 @@ func (r *resourceReconciler) setResourceManaged(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.setResourceManaged")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkManaged(res)
@@ -734,7 +756,9 @@ func (r *resourceReconciler) setResourceUnmanaged(
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.setResourceUnmanaged")
-	defer exit(err)
+	defer func() {
+		exit(err)
+	}()
 
 	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkUnmanaged(res)
