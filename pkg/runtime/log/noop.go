@@ -26,6 +26,7 @@ var (
 // testing and mocking...
 type voidLogger struct{}
 
+func (l *voidLogger) IsDebugEnabled() bool         { return false }
 func (l *voidLogger) WithValues(...interface{})    {}
 func (l *voidLogger) Info(string, ...interface{})  {}
 func (l *voidLogger) Debug(string, ...interface{}) {}

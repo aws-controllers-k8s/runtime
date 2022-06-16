@@ -16,6 +16,9 @@ package types
 // Logger is responsible for writing log messages
 type Logger interface {
 	Tracer
+	// IsDebugEnabled returns true when the underlying logger is configured to
+	// write debug messages, false otherwise.
+	IsDebugEnabled() bool
 	// WithValues adapts the internal logger with a set of additional key/value
 	// data
 	WithValues(...interface{})

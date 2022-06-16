@@ -31,6 +31,12 @@ type ResourceLogger struct {
 	blockDepth int
 }
 
+// IsDebugEnabled returns true when the underlying logger is configured to
+// write debug messages, false otherwise.
+func (rl *ResourceLogger) IsDebugEnabled() bool {
+	return rl.log.V(1).Enabled()
+}
+
 // WithValues adapts the internal logger with a set of additional values
 func (rl *ResourceLogger) WithValues(
 	values ...interface{},
