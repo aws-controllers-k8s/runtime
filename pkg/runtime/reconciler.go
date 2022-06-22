@@ -43,6 +43,10 @@ import (
 
 const (
 	backoffReadOneTimeout = 10 * time.Second
+	// The default duration to trigger the sync for an ACK resource after
+	// the successful reconciliation. This behavior for a resource can be
+	// overriden by RequeueOnSuccessSeconds configuration for that resource.
+	resyncPeriod = 10 * time.Hour
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -836,6 +840,25 @@ func (r *resourceReconciler) handleRequeues(
 					)
 					return latest, requeue.NeededAfter(nil, time.Duration(duration)*time.Second)
 				}
+				// Since RequeueOnSuccessSeconds <= 0, requeue the resource
+				// with "resyncPeriod" to perform periodic drift detection and
+				// sync the desired state.
+				//
+				// Upstream controller-runtime provides SyncPeriod functionality
+				// which flushes the go-client cache and triggers Sync for all
+				// the objects in cache every 10 hours by default.
+				//
+				// ACK controller use non-cached client to read objects
+				// from API Server, hence controller-runtime's SyncPeriod
+				// functionality does not work.
+				// https://github.com/aws-controllers-k8s/community/issues/1355
+				//
+				// ACK controllers use api-reader(non-cached client) to avoid
+				// reading stale copies of ACK resource that can cause
+				// duplicate resource creation when resource identifier is
+				// not present in stale copy of resource.
+				// https://github.com/aws-controllers-k8s/community/issues/894#issuecomment-911876354
+				return latest, requeue.NeededAfter(nil, resyncPeriod)
 			} else {
 				rlog.Debug(
 					"requeueing resource after finding resource synced condition false",
