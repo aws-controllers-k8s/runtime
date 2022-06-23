@@ -53,6 +53,7 @@ var (
 			acktags.NamespaceTagFormat,
 		),
 	}
+	defaultLogLevel = zapcore.InfoLevel
 )
 
 // Config contains configuration otpions for ACK service controllers
@@ -131,18 +132,13 @@ func (cfg *Config) BindFlags() {
 
 // SetupLogger initializes the logger used in the service controller
 func (cfg *Config) SetupLogger() {
-	var lvl zapcore.LevelEnabler
-
-	switch cfg.LogLevel {
-	case "debug":
-		lvl = zapcore.DebugLevel
-	default:
-		lvl = zapcore.InfoLevel
-	}
+	lvl := defaultLogLevel
+	lvl.UnmarshalText([]byte(cfg.LogLevel))
 
 	zapOptions := zap.Options{
 		Development: cfg.EnableDevelopmentLogging,
 		Level:       lvl,
+		TimeEncoder: zapcore.ISO8601TimeEncoder,
 	}
 	ctrlrt.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 }
