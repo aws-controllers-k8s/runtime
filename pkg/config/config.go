@@ -115,7 +115,7 @@ func (cfg *Config) BindFlags() {
 	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
 		"info",
-		"The log level. Default is info. We use logr interface which only supports info and debug level",
+		"The log level. The default is info. The options are: debug, info, warn, error, dpanic, panic, fatal",
 	)
 	flag.StringSliceVar(
 		&cfg.ResourceTags, flagResourceTags,
