@@ -44,6 +44,20 @@ func (_m *Logger) Info(msg string, additionalValues ...interface{}) {
 	_m.Called(_ca...)
 }
 
+// IsDebugEnabled provides a mock function with given fields:
+func (_m *Logger) IsDebugEnabled() bool {
+	ret := _m.Called()
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // Trace provides a mock function with given fields: name, additionalValues
 func (_m *Logger) Trace(name string, additionalValues ...interface{}) types.TraceExiter {
 	var _ca []interface{}

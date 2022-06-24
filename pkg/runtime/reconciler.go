@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -584,8 +585,46 @@ func (r *resourceReconciler) lateInitializeResource(
 	return lateInitializedLatest, err
 }
 
-// patchResourceMetadataAndSpec patches the custom resource in the Kubernetes API to match the
-// supplied latest resource's metadata and spec.
+// getPatchDocument returns a JSON string containing the object that will be
+// patched in the Kubernetes API server.
+//
+// NOTE(jaypipes): Because the Kubernetes API server's server-side apply
+// functionality introduces an enormous amount of verbose annotations in the
+// resource metadata, and because those annotations are pretty unhelpful to
+// ACK, we strip all that stuff out of the returned patch document.
+func getPatchDocument(
+	patch client.Patch,
+	obj client.Object, // the diff of this will be represented in the patch
+) string {
+	js, _ := patch.Data(obj)
+	var m map[string]interface{}
+	_ = json.Unmarshal(js, &m)
+	if md, ok := m["metadata"]; ok {
+		// Strip out managedFields stuff, since it's super verbose and
+		// doesn't offer any value to us (since we don't use server-side
+		// apply
+		if mv, ok := md.(map[string]interface{}); ok {
+			if _, ok := mv["managedFields"]; ok {
+				delete(mv, "managedFields")
+			}
+		}
+	}
+	js, _ = json.Marshal(m)
+	return string(js)
+}
+
+// patchResourceMetadataAndSpec patches the custom resource in the Kubernetes
+// API to match the supplied latest resource's metadata and spec.
+//
+// NOTE(jaypipes): The latest parameter is *mutated* by this method: the
+// resource's metadata.resourceVersion is incremented in the process of calling
+// Patch. This is intentional, because without updating the resource's
+// metadata.resourceVersion, the resource cannot be passed to Patch again later
+// in the reconciliation loop if Patch is called with the Optimistic Locking
+// option.
+//
+// See https://github.com/kubernetes-sigs/controller-runtime/blob/165a8c869c4388b861c7c91cb1e5330f6e07ee16/pkg/client/patch.go#L81-L84
+// for more information.
 func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	ctx context.Context,
 	desired acktypes.AWSResource,
@@ -608,27 +647,29 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	}
 
 	rlog.Enter("kc.Patch (metadata + spec)")
-	// Save a copy of the latest object, to reset 'Status' after performing
-	// the kc.Patch() operation
-	latestCopy := latest.DeepCopy()
-	err = r.kc.Patch(
-		ctx,
-		latest.RuntimeObject(),
-		client.MergeFrom(desired.DeepCopy().RuntimeObject()),
-	)
-	// Reset the status of latest object after patching.
-	latest.SetStatus(latestCopy)
-	rlog.Exit("kc.Patch (metadata + spec)", err)
-
-	if err != nil {
-		return err
+	dobj := desired.DeepCopy().RuntimeObject()
+	lorig := latest.DeepCopy()
+	patch := client.MergeFrom(dobj)
+	err = r.kc.Patch(ctx, latest.RuntimeObject(), patch)
+	if err == nil {
+		if rlog.IsDebugEnabled() {
+			js := getPatchDocument(patch, lorig.RuntimeObject())
+			rlog.Debug("patched resource metadata + spec", "json", js)
+		}
 	}
-	rlog.Debug("patched resource metadata and spec", "latest", latest)
-	return nil
+	// The call to Patch() above ends up setting the latest variable's Status
+	// to the value of the desired variable's Status. We do not want this
+	// behaviour; instead, we want to keep latest's original Status value.
+	latest.SetStatus(lorig)
+	rlog.Exit("kc.Patch (metadata + spec)", err)
+	return err
 }
 
-// patchResourceStatus patches the custom resource in the Kubernetes API to match the
-// supplied latest resource.
+// patchResourceStatus patches the custom resource in the Kubernetes API to
+// match the supplied latest resource.
+//
+// NOTE(jaypipes): We make a copy of both desired and latest parameters to
+// avoid mutating either
 func (r *resourceReconciler) patchResourceStatus(
 	ctx context.Context,
 	desired acktypes.AWSResource,
@@ -642,13 +683,15 @@ func (r *resourceReconciler) patchResourceStatus(
 	}()
 
 	rlog.Enter("kc.Patch (status)")
-	err = r.kc.Status().Patch(
-		ctx,
-		latest.RuntimeObject(),
-		client.MergeFrom(desired.DeepCopy().RuntimeObject()),
-	)
+	dobj := desired.DeepCopy().RuntimeObject()
+	lobj := latest.DeepCopy().RuntimeObject()
+	patch := client.MergeFrom(dobj)
+	err = r.kc.Status().Patch(ctx, lobj, patch)
 	if err == nil {
-		rlog.Debug("patched resource status")
+		if rlog.IsDebugEnabled() {
+			js := getPatchDocument(patch, lobj)
+			rlog.Debug("patched resource status", "json", js)
+		}
 	} else if apierrors.IsNotFound(err) {
 		// reset the NotFound error so it is not printed in controller logs
 		// providing false positive error
