@@ -949,20 +949,28 @@ func (r *resourceReconciler) HandleReconcileError(
 	var requeueNeededAfter *requeue.RequeueNeededAfter
 	if errors.As(err, &requeueNeededAfter) {
 		after := requeueNeededAfter.Duration()
-		rlog.Debug(
-			"requeue needed after error",
-			"error", requeueNeededAfter.Unwrap(),
-			"after", after,
-		)
+		if wrappedError := requeueNeededAfter.Unwrap(); wrappedError != nil {
+			rlog.Debug(
+				"requeue needed after error",
+				"error", wrappedError,
+				"after", after,
+			)
+		} else {
+			rlog.Debug("requeueing", "after", after)
+		}
 		return ctrlrt.Result{RequeueAfter: after}, nil
 	}
 
 	var requeueNeeded *requeue.RequeueNeeded
 	if errors.As(err, &requeueNeeded) {
-		rlog.Debug(
-			"requeue needed error",
-			"error", requeueNeeded.Unwrap(),
-		)
+		if wrappedError := requeueNeeded.Unwrap(); wrappedError != nil {
+			rlog.Debug(
+				"requeue needed after error",
+				"error", wrappedError,
+			)
+		} else {
+			rlog.Debug("requeueing immediately")
+		}
 		return ctrlrt.Result{Requeue: true}, nil
 	}
 
