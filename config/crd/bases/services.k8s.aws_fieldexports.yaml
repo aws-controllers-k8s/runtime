@@ -66,6 +66,8 @@ spec:
                 description: FieldExportTarget provides the values necessary to identify
                   the output path for a field export.
                 properties:
+                  key:
+                    type: string
                   kind:
                     description: FieldExportOutputType represents all types that can
                       be produced by a field export operation
