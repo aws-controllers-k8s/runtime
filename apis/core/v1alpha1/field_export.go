@@ -24,7 +24,8 @@ type FieldExportTarget struct {
 	// Namespace is marked as optional, so we cannot compose `NamespacedName`
 	Namespace *string               `json:"namespace,omitempty"`
 	Kind      FieldExportOutputType `json:"kind"`
-	Key       *string               `json:"key,omitempty"`
+	// Key overrides the default value (`<namespace>.<FieldExport-resource-name>`) for the FieldExport target
+	Key *string `json:"key,omitempty"`
 }
 
 // FieldExportSpec defines the desired state of the FieldExport.

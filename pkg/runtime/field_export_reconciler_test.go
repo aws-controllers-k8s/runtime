@@ -512,6 +512,36 @@ func TestSync_SetKeyNameExplicitly(t *testing.T) {
 	assertPatchedSecretWithKey(true, t, ctx, kc, "new-key")
 }
 
+func TestSync_SetKeyNameExplicitlyWithEmptyString(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.Nil(err)
+	require.NotNil(latest.Status)
+	require.Len(latest.Status.Conditions, 0)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(true, t, ctx, kc)
+}
+
 // Assertions
 
 func assertPatchedConfigMap(expected bool, t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client) {
