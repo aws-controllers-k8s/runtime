@@ -296,7 +296,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
-	if desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
+	if desired.Spec.To != nil && desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
 		key = *desired.Spec.To.Key
 	}
 
@@ -343,7 +343,7 @@ func (r *fieldExportReconciler) writeToSecret(
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
-	if desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
+	if desired.Spec.To != nil && desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
 		key = *desired.Spec.To.Key
 	}
 
