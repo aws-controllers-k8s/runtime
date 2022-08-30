@@ -163,6 +163,36 @@ func fieldExportWithPath(namespace, name string, kind ackv1alpha1.FieldExportOut
 	}
 }
 
+func fieldExportWithKey(namespace, name string, kind ackv1alpha1.FieldExportOutputType, key string) *ackv1alpha1.FieldExport {
+	path := ".spec.name"
+	return &ackv1alpha1.FieldExport{
+		TypeMeta: v1.TypeMeta{},
+		ObjectMeta: v1.ObjectMeta{
+			Namespace:  namespace,
+			Name:       name,
+			Finalizers: []string{"finalizers.services.k8s.aws/FieldExport"},
+		},
+		Spec: ackv1alpha1.FieldExportSpec{
+			From: &ackv1alpha1.ResourceFieldSelector{
+				Path: &path,
+				Resource: ackv1alpha1.NamespacedResource{
+					GroupKind: v1.GroupKind{
+						Group: BookGVK.Group,
+						Kind:  BookGVK.Kind,
+					},
+					Name: strPtr(SourceResourceName),
+				},
+			},
+			To: &ackv1alpha1.FieldExportTarget{
+				Name: strPtr("fake-export-output"),
+				Kind: kind,
+				Key:  &key,
+			},
+		},
+		Status: ackv1alpha1.FieldExportStatus{},
+	}
+}
+
 func mockFieldExportList() []ackv1alpha1.FieldExport {
 	// Matching cases
 	defaultConfigMap := fieldExportConfigMap(FieldExportNamespace, "export-1")
@@ -452,6 +482,66 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 	require.Len(exports, 0)
 }
 
+func TestSync_SetKeyNameExplicitly(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "new-key")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.Nil(err)
+	require.NotNil(latest.Status)
+	require.Len(latest.Status.Conditions, 0)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecretWithKey(true, t, ctx, kc, "new-key")
+}
+
+func TestSync_SetKeyNameExplicitlyWithEmptyString(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.StatusWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.Nil(err)
+	require.NotNil(latest.Status)
+	require.Len(latest.Status.Conditions, 0)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(true, t, ctx, kc)
+}
+
 // Assertions
 
 func assertPatchedConfigMap(expected bool, t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client) {
@@ -479,6 +569,24 @@ func assertPatchedSecret(expected bool, t *testing.T, ctx context.Context, kc *c
 			return false
 		}
 		key := fmt.Sprintf("%s.%s", FieldExportNamespace, FieldExportName)
+		val, ok := cm.Data[key]
+		if !ok {
+			return false
+		}
+		return bytes.Equal(val, []byte("test-book-name"))
+	})
+	if expected {
+		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	} else {
+		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+	}
+}
+
+func assertPatchedSecretWithKey(expected bool, t *testing.T, ctx context.Context, kc *ctrlrtclientmock.Client, key string) {
+	dataMatcher := mock.MatchedBy(func(cm *corev1.Secret) bool {
+		if cm.Data == nil {
+			return false
+		}
 		val, ok := cm.Data[key]
 		if !ok {
 			return false

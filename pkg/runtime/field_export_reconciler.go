@@ -296,6 +296,9 @@ func (r *fieldExportReconciler) writeToConfigMap(
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
+	if desired.Spec.To != nil && desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
+		key = *desired.Spec.To.Key
+	}
 
 	// Get the initial configmap
 	nsn := types.NamespacedName{
@@ -340,6 +343,9 @@ func (r *fieldExportReconciler) writeToSecret(
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
+	if desired.Spec.To != nil && desired.Spec.To.Key != nil && strings.TrimSpace(*desired.Spec.To.Key) != "" {
+		key = *desired.Spec.To.Key
+	}
 
 	// Get the initial secret
 	nsn := types.NamespacedName{
