@@ -35,6 +35,7 @@ const appName = "aws-controllers-k8s"
 func (c *serviceController) NewSession(
 	region ackv1alpha1.AWSRegion,
 	endpointURL *string,
+	forceS3PathStyle bool,
 	assumeRoleARN ackv1alpha1.AWSResourceName,
 	groupVersionKind schema.GroupVersionKind,
 ) (*session.Session, error) {
@@ -42,6 +43,8 @@ func (c *serviceController) NewSession(
 		Region:              aws.String(string(region)),
 		STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
 	}
+
+	awsCfg.S3ForcePathStyle = aws.Bool(forceS3PathStyle)
 
 	if *endpointURL != "" {
 		endpointServiceResolver := func(service, region string, optFns ...func(*endpoints.Options)) (endpoints.ResolvedEndpoint, error) {

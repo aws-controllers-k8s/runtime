@@ -114,7 +114,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	endpointURL := r.getEndpointURL(res)
 
 	sess, err := r.sc.NewSession(
-		region, &endpointURL, roleARN,
+		region, &endpointURL, r.cfg.ForceS3PathStyle, roleARN,
 		targetDescriptor.EmptyRuntimeObject().GetObjectKind().GroupVersionKind(),
 	)
 	if err != nil {

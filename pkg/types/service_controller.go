@@ -83,6 +83,7 @@ type ServiceController interface {
 	NewSession(
 		ackv1alpha1.AWSRegion,
 		*string,
+		bool,
 		ackv1alpha1.AWSResourceName,
 		schema.GroupVersionKind,
 	) (*session.Session, error)

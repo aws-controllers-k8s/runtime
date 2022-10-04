@@ -156,7 +156,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	roleARN := r.getRoleARN(acctID)
 	endpointURL := r.getEndpointURL(desired)
 	gvk := desired.RuntimeObject().GetObjectKind().GroupVersionKind()
-	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
+	sess, err := r.sc.NewSession(region, &endpointURL, r.cfg.ForceS3PathStyle, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
@@ -1015,9 +1015,9 @@ func (r *resourceReconciler) getRoleARN(
 //
 // If the resource has not yet been created, we look for the AWS region
 // in the following order of precedence:
-//  - The resource's `services.k8s.aws/region` annotation, if present
-//  - The resource's Namespace's `services.k8s.aws/region` annotation, if present
-//  - The controller's `--aws-region` CLI flag
+//   - The resource's `services.k8s.aws/region` annotation, if present
+//   - The resource's Namespace's `services.k8s.aws/region` annotation, if present
+//   - The controller's `--aws-region` CLI flag
 func (r *resourceReconciler) getRegion(
 	res acktypes.AWSResource,
 ) ackv1alpha1.AWSRegion {

@@ -35,6 +35,7 @@ const (
 	flagEnableDevLogging     = "enable-development-logging"
 	flagAWSRegion            = "aws-region"
 	flagAWSEndpointURL       = "aws-endpoint-url"
+	flagForceS3PathStyle     = "force-s3-path-style"
 	flagLogLevel             = "log-level"
 	flagResourceTags         = "resource-tags"
 	flagWatchNamespace       = "watch-namespace"
@@ -64,6 +65,7 @@ type Config struct {
 	AccountID                string
 	Region                   string
 	EndpointURL              string
+	ForceS3PathStyle         bool
 	LogLevel                 string
 	ResourceTags             []string
 	WatchNamespace           string
@@ -111,6 +113,11 @@ func (cfg *Config) BindFlags() {
 		"The AWS endpoint URL the service controller will use to create its resources. This is an optional"+
 			" flag that can be used to override the default behaviour of aws-sdk-go that constructs endpoint URLs"+
 			" automatically based on service and region",
+	)
+	flag.BoolVar(
+		&cfg.ForceS3PathStyle, flagForceS3PathStyle,
+		false,
+		"Force communication with the S3 API as path-style",
 	)
 	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,

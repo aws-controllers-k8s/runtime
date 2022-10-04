@@ -86,13 +86,13 @@ func (_m *ServiceController) GetResourceManagerFactories() map[string]types.AWSR
 	return r0
 }
 
-// NewSession provides a mock function with given fields: _a0, _a1, _a2, _a3
-func (_m *ServiceController) NewSession(_a0 v1alpha1.AWSRegion, _a1 *string, _a2 v1alpha1.AWSResourceName, _a3 schema.GroupVersionKind) (*session.Session, error) {
-	ret := _m.Called(_a0, _a1, _a2, _a3)
+// NewSession provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
+func (_m *ServiceController) NewSession(_a0 v1alpha1.AWSRegion, _a1 *string, _a2 bool, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind) (*session.Session, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4)
 
 	var r0 *session.Session
-	if rf, ok := ret.Get(0).(func(v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) *session.Session); ok {
-		r0 = rf(_a0, _a1, _a2, _a3)
+	if rf, ok := ret.Get(0).(func(v1alpha1.AWSRegion, *string, bool, v1alpha1.AWSResourceName, schema.GroupVersionKind) *session.Session); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*session.Session)
@@ -100,8 +100,8 @@ func (_m *ServiceController) NewSession(_a0 v1alpha1.AWSRegion, _a1 *string, _a2
 	}
 
 	var r1 error
-	if rf, ok := ret.Get(1).(func(v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) error); ok {
-		r1 = rf(_a0, _a1, _a2, _a3)
+	if rf, ok := ret.Get(1).(func(v1alpha1.AWSRegion, *string, bool, v1alpha1.AWSResourceName, schema.GroupVersionKind) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4)
 	} else {
 		r1 = ret.Error(1)
 	}
