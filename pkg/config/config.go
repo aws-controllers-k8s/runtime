@@ -168,9 +168,6 @@ func (cfg *Config) SetAWSAccountID() error {
 	if cfg.IdentityEndpointURL != "" {
 		awsCfg.Endpoint = aws.String(cfg.IdentityEndpointURL)
 	}
-	if cfg.Region != "" {
-		awsCfg.Region = aws.String(cfg.Region)
-	}
 
 	// use sts to find AWS AccountId
 	session, err := session.NewSession(&awsCfg)
