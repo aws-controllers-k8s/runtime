@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/jaypipes/envutil"
@@ -30,17 +31,19 @@ import (
 )
 
 const (
-	flagEnableLeaderElection = "enable-leader-election"
-	flagMetricAddr           = "metrics-addr"
-	flagEnableDevLogging     = "enable-development-logging"
-	flagAWSRegion            = "aws-region"
-	flagAWSEndpointURL       = "aws-endpoint-url"
-	flagLogLevel             = "log-level"
-	flagResourceTags         = "resource-tags"
-	flagWatchNamespace       = "watch-namespace"
-	flagEnableWebhookServer  = "enable-webhook-server"
-	flagWebhookServerAddr    = "webhook-server-addr"
-	envVarAWSRegion          = "AWS_REGION"
+	flagEnableLeaderElection   = "enable-leader-election"
+	flagMetricAddr             = "metrics-addr"
+	flagEnableDevLogging       = "enable-development-logging"
+	flagAWSRegion              = "aws-region"
+	flagAWSEndpointURL         = "aws-endpoint-url"
+	flagAWSIdentityEndpointURL = "aws-identity-endpoint-url"
+	flagUnsafeAWSEndpointURLs  = "allow-unsafe-aws-endpoint-urls"
+	flagLogLevel               = "log-level"
+	flagResourceTags           = "resource-tags"
+	flagWatchNamespace         = "watch-namespace"
+	flagEnableWebhookServer    = "enable-webhook-server"
+	flagWebhookServerAddr      = "webhook-server-addr"
+	envVarAWSRegion            = "AWS_REGION"
 )
 
 var (
@@ -56,14 +59,16 @@ var (
 	defaultLogLevel = zapcore.InfoLevel
 )
 
-// Config contains configuration otpions for ACK service controllers
+// Config contains configuration options for ACK service controllers
 type Config struct {
 	MetricsAddr              string
 	EnableLeaderElection     bool
 	EnableDevelopmentLogging bool
 	AccountID                string
 	Region                   string
+	IdentityEndpointURL      string
 	EndpointURL              string
+	AllowUnsafeEndpointURL   bool
 	LogLevel                 string
 	ResourceTags             []string
 	WatchNamespace           string
@@ -113,6 +118,18 @@ func (cfg *Config) BindFlags() {
 			" automatically based on service and region",
 	)
 	flag.StringVar(
+		&cfg.IdentityEndpointURL, flagAWSIdentityEndpointURL,
+		"",
+		"The AWS endpoint URL the service controller will use to gather information from STS. This is an optional"+
+			" flag that can be used to override the default behaviour of aws-sdk-go that constructs endpoint URLs"+
+			" automatically based on service and region",
+	)
+	flag.BoolVar(
+		&cfg.AllowUnsafeEndpointURL, flagUnsafeAWSEndpointURLs,
+		false,
+		"Allow an unsafe AWS endpoint URL over http",
+	)
+	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
 		"info",
 		"The log level. The default is info. The options are: debug, info, warn, error, dpanic, panic, fatal",
@@ -146,8 +163,14 @@ func (cfg *Config) SetupLogger() {
 // SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
 // in Config
 func (cfg *Config) SetAWSAccountID() error {
+
+	awsCfg := aws.Config{}
+	if cfg.IdentityEndpointURL != "" {
+		awsCfg.Endpoint = aws.String(cfg.IdentityEndpointURL)
+	}
+
 	// use sts to find AWS AccountId
-	session, err := session.NewSession()
+	session, err := session.NewSession(&awsCfg)
 	if err != nil {
 		return fmt.Errorf("unable to create session: %v", err)
 	}
@@ -162,24 +185,51 @@ func (cfg *Config) SetAWSAccountID() error {
 
 // Validate ensures the options are valid
 func (cfg *Config) Validate() error {
-	if err := cfg.SetAWSAccountID(); err != nil {
-		return fmt.Errorf("unable to determine account ID: %v", err)
-	}
-
 	if cfg.Region == "" {
 		return errors.New("unable to start service controller as AWS region is missing. Please pass --aws-region flag or set AWS_REGION environment variable")
 	}
 
 	if cfg.EndpointURL != "" {
-		endpoint, err := url.Parse(cfg.EndpointURL)
-		if err != nil || endpoint.Scheme != "https" && endpoint.Host != "" {
+		serviceEndpoint, err := url.Parse(cfg.EndpointURL)
+		if err != nil {
 			return errors.New("invalid service endpoint. Please refer to " +
 				"https://docs.aws.amazon.com/general/latest/gr/aws-service-information.html for more details")
 		}
+
+		// Throw an error if URL is unsafe and config.AllowUnsafeEndpointURL is not set accordingly
+		if err := cfg.checkUnsafeEndpoint(serviceEndpoint); err != nil {
+			return err
+		}
+	}
+
+	if cfg.IdentityEndpointURL != "" {
+		identityEndpoint, err := url.Parse(cfg.IdentityEndpointURL)
+		if err != nil {
+			return errors.New("invalid identity endpoint. Please refer to " +
+				"https://docs.aws.amazon.com/general/latest/gr/aws-service-information.html for more details")
+		}
+
+		// Throw an error if URL is unsafe and config.AllowUnsafeEndpointURL is not set accordingly
+		if err := cfg.checkUnsafeEndpoint(identityEndpoint); err != nil {
+			return err
+		}
+	}
+
+	if err := cfg.SetAWSAccountID(); err != nil {
+		return fmt.Errorf("unable to determine account ID: %v", err)
 	}
 
 	if cfg.EnableWebhookServer && cfg.WebhookServerAddr == "" {
 		return errors.New("empty webhook server address")
+	}
+	return nil
+}
+
+func (cfg *Config) checkUnsafeEndpoint(endpoint *url.URL) error {
+	if !cfg.AllowUnsafeEndpointURL {
+		if endpoint.Scheme != "https" && endpoint.Host != "" {
+			return errors.New("using an unsafe endpoint is not allowed. Please review the controller configuration")
+		}
 	}
 	return nil
 }
