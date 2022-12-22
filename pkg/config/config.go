@@ -17,6 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -32,20 +35,22 @@ import (
 )
 
 const (
-	flagEnableLeaderElection   = "enable-leader-election"
-	flagMetricAddr             = "metrics-addr"
-	flagEnableDevLogging       = "enable-development-logging"
-	flagAWSRegion              = "aws-region"
-	flagAWSEndpointURL         = "aws-endpoint-url"
-	flagAWSIdentityEndpointURL = "aws-identity-endpoint-url"
-	flagUnsafeAWSEndpointURLs  = "allow-unsafe-aws-endpoint-urls"
-	flagLogLevel               = "log-level"
-	flagResourceTags           = "resource-tags"
-	flagWatchNamespace         = "watch-namespace"
-	flagEnableWebhookServer    = "enable-webhook-server"
-	flagWebhookServerAddr      = "webhook-server-addr"
-	flagDeletionPolicy         = "deletion-policy"
-	envVarAWSRegion            = "AWS_REGION"
+	flagEnableLeaderElection           = "enable-leader-election"
+	flagMetricAddr                     = "metrics-addr"
+	flagEnableDevLogging               = "enable-development-logging"
+	flagAWSRegion                      = "aws-region"
+	flagAWSEndpointURL                 = "aws-endpoint-url"
+	flagAWSIdentityEndpointURL         = "aws-identity-endpoint-url"
+	flagUnsafeAWSEndpointURLs          = "allow-unsafe-aws-endpoint-urls"
+	flagLogLevel                       = "log-level"
+	flagResourceTags                   = "resource-tags"
+	flagWatchNamespace                 = "watch-namespace"
+	flagEnableWebhookServer            = "enable-webhook-server"
+	flagWebhookServerAddr              = "webhook-server-addr"
+	flagDeletionPolicy                 = "deletion-policy"
+	flagReconcileDefaultResyncSeconds  = "reconcile-default-resync-seconds"
+	flagReconcileResourceResyncSeconds = "reconcile-resource-resync-seconds"
+	envVarAWSRegion                    = "AWS_REGION"
 )
 
 var (
@@ -63,20 +68,22 @@ var (
 
 // Config contains configuration options for ACK service controllers
 type Config struct {
-	MetricsAddr              string
-	EnableLeaderElection     bool
-	EnableDevelopmentLogging bool
-	AccountID                string
-	Region                   string
-	IdentityEndpointURL      string
-	EndpointURL              string
-	AllowUnsafeEndpointURL   bool
-	LogLevel                 string
-	ResourceTags             []string
-	WatchNamespace           string
-	EnableWebhookServer      bool
-	WebhookServerAddr        string
-	DeletionPolicy           ackv1alpha1.DeletionPolicy
+	MetricsAddr                    string
+	EnableLeaderElection           bool
+	EnableDevelopmentLogging       bool
+	AccountID                      string
+	Region                         string
+	IdentityEndpointURL            string
+	EndpointURL                    string
+	AllowUnsafeEndpointURL         bool
+	LogLevel                       string
+	ResourceTags                   []string
+	WatchNamespace                 string
+	EnableWebhookServer            bool
+	WebhookServerAddr              string
+	DeletionPolicy                 ackv1alpha1.DeletionPolicy
+	ReconcileDefaultResyncSeconds  int
+	ReconcileResourceResyncSeconds []string
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -151,6 +158,19 @@ func (cfg *Config) BindFlags() {
 	flag.Var(
 		&cfg.DeletionPolicy, flagDeletionPolicy,
 		"The default deletion policy for all resources managed by the controller",
+	)
+	flag.IntVar(
+		&cfg.ReconcileDefaultResyncSeconds, flagReconcileDefaultResyncSeconds,
+		60,
+		"The default duration, in seconds, to wait before resyncing desired state of custom resources. "+
+			"This value is used if no resource-specific override has been specified. Default is 60 seconds.",
+	)
+	flag.StringArrayVar(
+		&cfg.ReconcileResourceResyncSeconds, flagReconcileResourceResyncSeconds,
+		[]string{},
+		"A Key/Value list of strings representing the reconcile resync configuration for each resource. This"+
+			" configuration maps resource kinds to drift remediation periods in seconds. If provided, "+
+			" resource-specific resync periods take precedence over the default period.",
 	)
 }
 
@@ -233,6 +253,16 @@ func (cfg *Config) Validate() error {
 	if cfg.DeletionPolicy == "" {
 		cfg.DeletionPolicy = ackv1alpha1.DeletionPolicyDelete
 	}
+
+	if cfg.ReconcileDefaultResyncSeconds < 0 {
+		return fmt.Errorf("invalid value for flag '%s': resync seconds default must be greater than 0", flagReconcileDefaultResyncSeconds)
+	}
+
+	_, err := cfg.ParseReconcileResourceResyncSeconds()
+	if err != nil {
+		return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceResyncSeconds, err)
+	}
+
 	return nil
 }
 
@@ -243,4 +273,51 @@ func (cfg *Config) checkUnsafeEndpoint(endpoint *url.URL) error {
 		}
 	}
 	return nil
+}
+
+// ParseReconcileResourceResyncSeconds parses the values of the --reconcile-resource-resync-seconds
+// flag and returns a map that maps resource names to resync periods.
+// The flag arguments are expected to have the format "resource=seconds", where "resource" is the
+// name of the resource and "seconds" is the number of seconds that the reconciler should wait before
+// reconciling the resource again.
+func (cfg *Config) ParseReconcileResourceResyncSeconds() (map[string]time.Duration, error) {
+	resourceResyncPeriods := make(map[string]time.Duration, len(cfg.ReconcileResourceResyncSeconds))
+	for _, resourceResyncSecondsFlag := range cfg.ReconcileResourceResyncSeconds {
+		// Parse the resource name and resync period from the flag argument
+		resourceName, resyncSeconds, err := parseReconcileFlagArgument(resourceResyncSecondsFlag)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing flag argument '%v': %v. Expected format: resource=seconds", resourceResyncSecondsFlag, err)
+		}
+		resourceResyncPeriods[strings.ToLower(resourceName)] = time.Duration(resyncSeconds)
+	}
+	return resourceResyncPeriods, nil
+}
+
+// parseReconcileFlagArgument parses a flag argument of the form "key=value" into
+// its individual elements. The key must be a non-empty string and the value must be
+// a non-empty positive integer. If the flag argument is not in the expected format
+// or has invalid elements, an error is returned.
+//
+// The function returns the parsed key and value as separate elements.
+func parseReconcileFlagArgument(flagArgument string) (string, int, error) {
+	delimiter := "="
+	elements := strings.Split(flagArgument, delimiter)
+	if len(elements) != 2 {
+		return "", 0, fmt.Errorf("invalid flag argument format: expected key=value")
+	}
+	if elements[0] == "" {
+		return "", 0, fmt.Errorf("missing key in flag argument")
+	}
+	if elements[1] == "" {
+		return "", 0, fmt.Errorf("missing value in flag argument")
+	}
+
+	resyncSeconds, err := strconv.Atoi(elements[1])
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid value in flag argument: %v", err)
+	}
+	if resyncSeconds < 0 {
+		return "", 0, fmt.Errorf("invalid value in flag argument: expected non-negative integer, got %d", resyncSeconds)
+	}
+	return elements[0], resyncSeconds, nil
 }

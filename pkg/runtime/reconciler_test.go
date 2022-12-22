@@ -136,6 +136,7 @@ func managerFactoryMocks(
 
 	rmf := &ackmocks.AWSResourceManagerFactory{}
 	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
 
 	reg := ackrt.NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)

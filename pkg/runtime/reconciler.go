@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
@@ -47,7 +48,7 @@ const (
 	// The default duration to trigger the sync for an ACK resource after
 	// the successful reconciliation. This behavior for a resource can be
 	// overriden by RequeueOnSuccessSeconds configuration for that resource.
-	resyncPeriod = 10 * time.Hour
+	defaultResyncPeriod = 10 * time.Hour
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -70,8 +71,9 @@ type reconciler struct {
 // object)s and sharing watch and informer queues across those controllers.
 type resourceReconciler struct {
 	reconciler
-	rmf acktypes.AWSResourceManagerFactory
-	rd  acktypes.AWSResourceDescriptor
+	rmf          acktypes.AWSResourceManagerFactory
+	rd           acktypes.AWSResourceDescriptor
+	resyncPeriod time.Duration
 }
 
 // GroupKind returns the string containing the API group and kind reconciled by
@@ -887,31 +889,8 @@ func (r *resourceReconciler) handleRequeues(
 			}
 			// The code below only executes for "ConditionTypeResourceSynced"
 			if condition.Status == corev1.ConditionTrue {
-				if duration := r.rmf.RequeueOnSuccessSeconds(); duration > 0 {
-					rlog.Debug(
-						"requeueing resource after resource synced condition true",
-					)
-					return latest, requeue.NeededAfter(nil, time.Duration(duration)*time.Second)
-				}
-				// Since RequeueOnSuccessSeconds <= 0, requeue the resource
-				// with "resyncPeriod" to perform periodic drift detection and
-				// sync the desired state.
-				//
-				// Upstream controller-runtime provides SyncPeriod functionality
-				// which flushes the go-client cache and triggers Sync for all
-				// the objects in cache every 10 hours by default.
-				//
-				// ACK controller use non-cached client to read objects
-				// from API Server, hence controller-runtime's SyncPeriod
-				// functionality does not work.
-				// https://github.com/aws-controllers-k8s/community/issues/1355
-				//
-				// ACK controllers use api-reader(non-cached client) to avoid
-				// reading stale copies of ACK resource that can cause
-				// duplicate resource creation when resource identifier is
-				// not present in stale copy of resource.
-				// https://github.com/aws-controllers-k8s/community/issues/894#issuecomment-911876354
-				return latest, requeue.NeededAfter(nil, resyncPeriod)
+				rlog.Debug("requeuing", "after", r.resyncPeriod)
+				return latest, requeue.NeededAfter(nil, r.resyncPeriod)
 			} else {
 				rlog.Debug(
 					"requeueing resource after finding resource synced condition false",
@@ -1103,6 +1082,55 @@ func (r *resourceReconciler) getEndpointURL(
 	return r.cfg.EndpointURL
 }
 
+// getResyncPeriod returns the period of the recurring reconciler process which ensures the desired
+// state of custom resources is maintained.
+// It attempts to retrieve the duration from the following sources, in this order:
+// 1. A resource-specific reconciliation resync period specified in the reconciliation resync
+//    configuration map.
+// 2. A resource-specific requeue on success period specified by the resource manager factory.
+//    The resource manager factory is controller-specific, and thus this period is to specified
+//    by controller authors.
+// 3. The default reconciliation resync period period specified in the controller binary flags.
+// 4. The default resync period defined in the ACK runtime package. Defined in defaultResyncPeriod
+//    within the same file
+//
+// Each reconciler has a unique value to use. This function should only be called during the
+// instantiation of an AWSResourceReconciler and should not be called during the reconciliation
+// function r.Sync
+func getResyncPeriod(rmf acktypes.AWSResourceManagerFactory, cfg ackcfg.Config) time.Duration {
+	// The reconciliation resync period configuration has already been validated as
+	// a clean map. Therefore, we can safely ignore any errors that may occur while
+	// parsing it and avoid changing the signature of NewReconcilerWithClient.
+	drc, _ := cfg.ParseReconcileResourceResyncSeconds()
+
+	// First, try to use a resource-specific resync period if provided in the resource
+	// resync period configuration.
+	resourceKind := rmf.ResourceDescriptor().GroupKind().Kind
+	if duration, ok := drc[strings.ToLower(resourceKind)]; ok && duration > 0 {
+		return time.Duration(duration) * time.Second
+	}
+
+	// Second, try to use a resource-specific requeue on success period specified by the
+	// resource manager factory. This value is set during the code generation of the
+	// controller and takes precedence over the default resync period period because
+	// it allows existing controllers that rely on this value to maintain their intended
+	// behavior.
+	if duration := rmf.RequeueOnSuccessSeconds(); duration > 0 {
+		return time.Duration(duration) * time.Second
+	}
+
+	// Third, try to use the default resync period resync period specified during controller
+	// start-up.
+	if cfg.ReconcileDefaultResyncSeconds > 0 {
+		return time.Duration(cfg.ReconcileDefaultResyncSeconds) * time.Second
+	}
+
+	// If none of the above values are present or valid, use the default resync period
+	// defined in the ACK runtime package. Defined in `defaultResyncPeriod` within the
+	// same file
+	return defaultResyncPeriod
+}
+
 // NewReconciler returns a new reconciler object
 func NewReconciler(
 	sc acktypes.ServiceController,
@@ -1126,16 +1154,23 @@ func NewReconcilerWithClient(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 ) acktypes.AWSResourceReconciler {
+	rtLog := log.WithName("ackrt")
+	resyncPeriod := getResyncPeriod(rmf, cfg)
+	rtLog.V(1).Info("Initiating reconciler",
+		"reconciler kind", rmf.ResourceDescriptor().GroupKind().Kind,
+		"resync period seconds", resyncPeriod.Seconds(),
+	)
 	return &resourceReconciler{
 		reconciler: reconciler{
 			sc:      sc,
 			kc:      kc,
-			log:     log.WithName("ackrt"),
+			log:     rtLog,
 			cfg:     cfg,
 			metrics: metrics,
 			cache:   cache,
 		},
-		rmf: rmf,
-		rd:  rmf.ResourceDescriptor(),
+		rmf:          rmf,
+		rd:           rmf.ResourceDescriptor(),
+		resyncPeriod: resyncPeriod,
 	}
 }
