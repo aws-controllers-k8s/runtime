@@ -194,10 +194,18 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
-		// Resolve references before deleting the resource.
-		// Ignore any errors while resolving the references
-		res, _ = rm.ResolveReferences(ctx, r.apiReader, res)
-		return r.deleteResource(ctx, rm, res)
+		// Determine whether we should retain or delete the resource
+		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete {
+			// Resolve references before deleting the resource.
+			// Ignore any errors while resolving the references
+			res, _ = rm.ResolveReferences(ctx, r.apiReader, res)
+			return r.deleteResource(ctx, rm, res)
+		}
+
+		if err := r.setResourceUnmanaged(ctx, res); err != nil {
+			return res, err
+		}
+		return r.handleRequeues(ctx, res)
 	}
 	latest, err := r.Sync(ctx, rm, res)
 	if err != nil {
@@ -1015,9 +1023,9 @@ func (r *resourceReconciler) getRoleARN(
 //
 // If the resource has not yet been created, we look for the AWS region
 // in the following order of precedence:
-//  - The resource's `services.k8s.aws/region` annotation, if present
-//  - The resource's Namespace's `services.k8s.aws/region` annotation, if present
-//  - The controller's `--aws-region` CLI flag
+//   - The resource's `services.k8s.aws/region` annotation, if present
+//   - The resource's Namespace's `services.k8s.aws/region` annotation, if present
+//   - The controller's `--aws-region` CLI flag
 func (r *resourceReconciler) getRegion(
 	res acktypes.AWSResource,
 ) ackv1alpha1.AWSRegion {
@@ -1043,6 +1051,35 @@ func (r *resourceReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// getRegion returns the resource's deletion policy based on the default
+// behaviour or any other overriding annotations.
+//
+// We look for the deletion policy in the annotations based on the following
+// precedence:
+//   - The resource's `services.k8s.aws/deletion-policy` annotation, if present
+//   - The resource's Namespace's `{service}.services.k8s.aws/deletion-policy` annotation, if present
+//   - The controller's `--deletion-policy` CLI flag
+func (r *resourceReconciler) getDeletionPolicy(
+	res acktypes.AWSResource,
+) ackv1alpha1.DeletionPolicy {
+	// look for deletion policy in CR metadata annotations
+	resAnnotations := res.MetaObject().GetAnnotations()
+	deletionPolicy, ok := resAnnotations[ackv1alpha1.AnnotationDeletionPolicy]
+	if ok {
+		return ackv1alpha1.DeletionPolicy(deletionPolicy)
+	}
+
+	// look for default deletion policy in namespace metadata annotations
+	ns := res.MetaObject().GetNamespace()
+	deletionPolicy, ok = r.cache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
+	if ok {
+		return ackv1alpha1.DeletionPolicy(deletionPolicy)
+	}
+
+	// use controller configuration policy
+	return r.cfg.DeletionPolicy
 }
 
 // getEndpointURL returns the AWS account that owns the supplied resource.

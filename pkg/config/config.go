@@ -27,6 +27,7 @@ import (
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 )
 
@@ -43,6 +44,7 @@ const (
 	flagWatchNamespace         = "watch-namespace"
 	flagEnableWebhookServer    = "enable-webhook-server"
 	flagWebhookServerAddr      = "webhook-server-addr"
+	flagDeletionPolicy         = "deletion-policy"
 	envVarAWSRegion            = "AWS_REGION"
 )
 
@@ -74,6 +76,7 @@ type Config struct {
 	WatchNamespace           string
 	EnableWebhookServer      bool
 	WebhookServerAddr        string
+	DeletionPolicy           ackv1alpha1.DeletionPolicy
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -144,6 +147,10 @@ func (cfg *Config) BindFlags() {
 		"",
 		"Specific namespace the service controller will watch for object creation from CRD. "+
 			" By default it will listen to all namespaces",
+	)
+	flag.Var(
+		&cfg.DeletionPolicy, flagDeletionPolicy,
+		"The default deletion policy for all resources managed by the controller",
 	)
 }
 
@@ -221,6 +228,10 @@ func (cfg *Config) Validate() error {
 
 	if cfg.EnableWebhookServer && cfg.WebhookServerAddr == "" {
 		return errors.New("empty webhook server address")
+	}
+
+	if cfg.DeletionPolicy == "" {
+		cfg.DeletionPolicy = ackv1alpha1.DeletionPolicyDelete
 	}
 	return nil
 }
