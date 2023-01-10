@@ -202,6 +202,8 @@ func (r *resourceReconciler) reconcile(
 			return r.deleteResource(ctx, rm, res)
 		}
 
+		rlog := ackrtlog.FromContext(ctx)
+		rlog.Info("AWS resource will not be deleted - deletion policy set to retain")
 		if err := r.setResourceUnmanaged(ctx, res); err != nil {
 			return res, err
 		}
