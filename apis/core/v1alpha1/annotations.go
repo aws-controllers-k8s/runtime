@@ -59,4 +59,11 @@ const (
 	// will either use the default behavior	of aws-sdk-go to create endpoints or
 	// aws-endpoint-url if it is set in controller binary flags and environment variables.
 	AnnotationEndpointURL = AnnotationPrefix + "endpoint-url"
+	// AnnotationDeletionPolicy is an annotation whose value is the identifier for the
+	// the deletion policy for the current resource. If this annotation is set
+	// to "delete" the resource manager will delete the AWS resource when the
+	// K8s resource is deleted. If this annotation is set to "retain" the
+	// resource manager will leave the AWS resource intact when the K8s resource
+	// is deleted.
+	AnnotationDeletionPolicy = AnnotationPrefix + "deletion-policy"
 )

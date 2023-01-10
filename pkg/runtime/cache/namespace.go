@@ -14,6 +14,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -33,6 +34,8 @@ type namespaceInfo struct {
 	ownerAccountID string
 	// services.k8s.aws/endpoint-url Annotation
 	endpointURL string
+	// {service}.services.k8s.aws/deletion-policy Annotations (keyed by service)
+	deletionPolicies map[string]string
 }
 
 // getDefaultRegion returns the default region value
@@ -57,6 +60,17 @@ func (n *namespaceInfo) getEndpointURL() string {
 		return ""
 	}
 	return n.endpointURL
+}
+
+// getDeletionPolicy returns the namespace deletion policy for a given service
+func (n *namespaceInfo) getDeletionPolicy(service string) string {
+	if n == nil {
+		return ""
+	}
+	if val, exists := n.deletionPolicies[strings.ToLower(service)]; exists {
+		return val
+	}
+	return ""
 }
 
 // NamespaceCache is responsible of keeping track of namespaces
@@ -150,6 +164,16 @@ func (c *NamespaceCache) GetEndpointURL(namespace string) (string, bool) {
 	return "", false
 }
 
+// GetDeletionPolicy returns the deletion policy if it exists
+func (c *NamespaceCache) GetDeletionPolicy(namespace string, service string) (string, bool) {
+	info, ok := c.getNamespaceInfo(namespace)
+	if ok {
+		e := info.getDeletionPolicy(service)
+		return e, e != ""
+	}
+	return "", false
+}
+
 // getNamespaceInfo reads a namespace cached annotations and
 // return a given namespace default aws region, owner account id and endpoint url.
 // This function is thread safe.
@@ -177,6 +201,17 @@ func (c *NamespaceCache) setNamespaceInfoFromK8sObject(ns *corev1.Namespace) {
 	if ok {
 		nsInfo.endpointURL = EndpointURL
 	}
+
+	nsInfo.deletionPolicies = map[string]string{}
+	nsDeletionPolicySuffix := "." + ackv1alpha1.AnnotationDeletionPolicy
+	for key, elem := range nsa {
+		if !strings.HasSuffix(key, nsDeletionPolicySuffix) {
+			continue
+		}
+		service := strings.TrimSuffix(key, nsDeletionPolicySuffix)
+		nsInfo.deletionPolicies[service] = elem
+	}
+
 	c.Lock()
 	defer c.Unlock()
 	c.namespaceInfos[ns.ObjectMeta.Name] = nsInfo
