@@ -13,7 +13,9 @@
 
 package v1alpha1
 
-import "errors"
+import (
+	"fmt"
+)
 
 // DeletionPolicy represents how the ACK reconciler will handle the deletion of
 // a resource. A DeletionPolicy of "delete" will delete the underlying AWS
@@ -36,7 +38,7 @@ func (e *DeletionPolicy) Set(v string) error {
 		*e = DeletionPolicy(v)
 		return nil
 	default:
-		return errors.New(`invalid DeletionPolicy value`)
+		return fmt.Errorf("invalid DeletionPolicy value: %s", v)
 	}
 }
 
