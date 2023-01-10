@@ -1055,7 +1055,7 @@ func (r *resourceReconciler) getRegion(
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
 }
 
-// getRegion returns the resource's deletion policy based on the default
+// getDeletionPolicy returns the resource's deletion policy based on the default
 // behaviour or any other overriding annotations.
 //
 // We look for the deletion policy in the annotations based on the following
