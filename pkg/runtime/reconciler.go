@@ -1086,11 +1086,12 @@ func (r *resourceReconciler) getEndpointURL(
 // state of custom resources is maintained.
 // It attempts to retrieve the duration from the following sources, in this order:
 // 1. A resource-specific reconciliation resync period specified in the reconciliation resync
-//    configuration map.
+//    configuration map (--reconcile-default-resync-seconds).
 // 2. A resource-specific requeue on success period specified by the resource manager factory.
 //    The resource manager factory is controller-specific, and thus this period is to specified
-//    by controller authors.
+//    by controller authors (using ack-generate).
 // 3. The default reconciliation resync period period specified in the controller binary flags.
+//    (--reconcile-resource-resync-seconds)
 // 4. The default resync period defined in the ACK runtime package. Defined in defaultResyncPeriod
 //    within the same file
 //
