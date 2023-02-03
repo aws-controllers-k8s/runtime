@@ -161,7 +161,7 @@ func (cfg *Config) BindFlags() {
 	)
 	flag.IntVar(
 		&cfg.ReconcileDefaultResyncSeconds, flagReconcileDefaultResyncSeconds,
-		60,
+		0,
 		"The default duration, in seconds, to wait before resyncing desired state of custom resources. "+
 			"This value is used if no resource-specific override has been specified. Default is 60 seconds.",
 	)
