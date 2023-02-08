@@ -51,14 +51,15 @@ func (p Path) Pop() {
 	}
 }
 
-//	Contains returns true if the supplied string, delimited on ".", matches
-//	p.parts up to the length of the supplied string.
-//		e.g. if the Path p represents "A.B":
-//			subject "A" -> true
-//			subject "A.B" -> true
-//			subject "A.B.C" -> false
-//			subject "B" -> false
-//			subject "A.C" -> false
+// Contains returns true if the supplied string, delimited on ".", matches
+// p.parts up to the length of the supplied string.
+//
+//	e.g. if the Path p represents "A.B":
+//		subject "A" -> true
+//		subject "A.B" -> true
+//		subject "A.B.C" -> false
+//		subject "B" -> false
+//		subject "A.C" -> false
 func (p Path) Contains(subject string) bool {
 	subjectSplit := strings.Split(subject, ".")
 

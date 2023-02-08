@@ -56,8 +56,9 @@ type ResourceFieldSelector struct {
 // type to provide more user friendly syntax for references using 'from' field
 // Ex:
 // APIIDRef:
-//   from:
-//     name: my-api
+//
+//	from:
+//	  name: my-api
 type AWSResourceReferenceWrapper struct {
 	From *AWSResourceReference `json:"from,omitempty"`
 }
