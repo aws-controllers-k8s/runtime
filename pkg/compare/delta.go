@@ -43,16 +43,17 @@ func (d *Delta) DifferentAt(subject string) bool {
 //
 // For example, consider this code:
 //
-// if delta.DifferentAt("Spec.Tags") {
-//     if err = rm.SyncTags(ctx, desired, latest); err != nil {
-//         return nil, err
-//     }
-// }
-// if !delta.DifferentExcept("Spec.Tags") {
-//     // We don't want to proceed to call the ModifyDBInstance API since
-//     // no other resource fields have changed.
-//     return desired, nil
-// }
+//	if delta.DifferentAt("Spec.Tags") {
+//	    if err = rm.SyncTags(ctx, desired, latest); err != nil {
+//	        return nil, err
+//	    }
+//	}
+//
+//	if !delta.DifferentExcept("Spec.Tags") {
+//	    // We don't want to proceed to call the ModifyDBInstance API since
+//	    // no other resource fields have changed.
+//	    return desired, nil
+//	}
 //
 // might be placed in an sdk_update_pre_build_request custom code hook to
 // prevent the ModifyDBInstance call from being executed if the DBInstance's

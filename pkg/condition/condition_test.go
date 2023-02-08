@@ -98,7 +98,7 @@ func TestConditionGetters(t *testing.T) {
 	assert.Equal(len(gotAll), 2)
 
 	conds = append(conds, &ackv1alpha1.Condition{
-		Type: ackv1alpha1.ConditionTypeReferencesResolved,
+		Type:   ackv1alpha1.ConditionTypeReferencesResolved,
 		Status: corev1.ConditionTrue,
 	})
 	r = &ackmocks.AWSResource{}

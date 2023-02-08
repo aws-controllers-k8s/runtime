@@ -43,4 +43,3 @@ func TestNilDifference(t *testing.T) {
 	require.True(compare.HasNilDifference(nullChan, nonNullChan))
 
 }
-
