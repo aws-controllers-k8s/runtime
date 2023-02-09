@@ -20,8 +20,9 @@ import (
 // SecretKeyReference combines a k8s corev1.SecretReference with a
 // specific key within the referred-to Secret
 type SecretKeyReference struct {
-	// Empty JSON tag is required to solve encountered struct field "" without JSON tag  error.
-	k8scorev1.SecretReference `json:""`
+	// Empty JSON tag with "inline" attribute is required to properly inline the
+	// field in JSON output due to k8s apimachinery constraints
+	k8scorev1.SecretReference `json:",inline"`
 	// Key is the key within the secret
 	Key string `json:"key"`
 }
