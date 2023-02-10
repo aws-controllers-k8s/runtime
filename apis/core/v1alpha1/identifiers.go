@@ -34,14 +34,20 @@ type AWSIdentifiers struct {
 // resource of a given type (within the same namespace as the custom resource
 // containing this type).
 type NamespacedResource struct {
-	metav1.GroupKind `json:""`
+	// Empty JSON tag with "inline" attribute is required to properly inline the
+	// field in JSON output due to k8s apimachinery constraints
+	// see https://github.com/aws-controllers-k8s/runtime/pull/111
+	metav1.GroupKind `json:",inline"`
 	Name             *string `json:"name"`
 }
 
 // ResourceWithMetadata provides the values necessary to create a
 // Kubernetes resource and override any of its metadata values.
 type ResourceWithMetadata struct {
-	metav1.GroupKind `json:""`
+	// Empty JSON tag with "inline" attribute is required to properly inline the
+	// field in JSON output due to k8s apimachinery constraints
+	// see https://github.com/aws-controllers-k8s/runtime/pull/111
+	metav1.GroupKind `json:",inline"`
 	Metadata         *PartialObjectMeta `json:"metadata,omitempty"`
 }
 
