@@ -10,7 +10,8 @@ require (
 	github.com/itchyny/gojq v0.12.6
 	github.com/jaypipes/envutil v1.0.0
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.11.0
+	github.com/prometheus/client_golang v1.11.1
+	github.com/samber/lo v1.37.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	go.uber.org/zap v1.19.1
@@ -44,7 +45,6 @@ require (
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.28.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
-	github.com/samber/lo v1.37.0 // indirect
 	github.com/stretchr/objx v0.1.1 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
