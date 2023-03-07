@@ -43,18 +43,19 @@ func TestMetaV1ObjectEqual_Annotations(t *testing.T) {
 	require.True(compare.MetaV1ObjectEqual(ob1, ob2))
 }
 
-func TestMetaV1ObjectEqual_ClusterName(t *testing.T) {
+func TestMetaV1ObjectEqual_RemainingItemCount(t *testing.T) {
 	require := require.New(t)
 	ob1 := &k8sobj.Unstructured{}
-	ob1.SetClusterName("cluster1")
+	var itemCount1 int64 = 10
+	ob1.SetRemainingItemCount(&itemCount1)
 	ob2 := &k8sobj.Unstructured{}
-	ob2.SetClusterName("cluster1")
-	// same cluster name
-	require.True(compare.MetaV1ObjectEqual(ob1, ob2))
 
-	ob2.SetClusterName("cluster2")
-	// different cluster name
+	// Unequal RemainingItemCount
 	require.False(compare.MetaV1ObjectEqual(ob1, ob2))
+
+	// Equal RemainingItemCount
+	ob2.SetRemainingItemCount(&itemCount1)
+	require.True(compare.MetaV1ObjectEqual(ob1, ob2))
 }
 
 func TestMetaV1ObjectEqual_CreationTimestamp(t *testing.T) {

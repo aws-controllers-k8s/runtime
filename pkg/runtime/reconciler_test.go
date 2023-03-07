@@ -923,7 +923,7 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
 	r, kc, _ := reconcilerMocks(rmf)
 
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -948,7 +948,7 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 	rmf, _ := managedResourceManagerFactoryMocks(desired, nil)
 	r, kc, _ := reconcilerMocks(rmf)
 
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 
 	_, err := r.HandleReconcileError(ctx, desired, nil, nil)
