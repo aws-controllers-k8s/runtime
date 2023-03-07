@@ -84,13 +84,20 @@ func (_m *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cl
 	return r0
 }
 
-// Get provides a mock function with given fields: ctx, key, obj
-func (_m *Client) Get(ctx context.Context, key types.NamespacedName, obj client.Object) error {
-	ret := _m.Called(ctx, key, obj)
+// Get provides a mock function with given fields: ctx, key, obj, opts
+func (_m *Client) Get(ctx context.Context, key types.NamespacedName, obj client.Object, opts ...client.GetOption) error {
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, ctx, key, obj)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.NamespacedName, client.Object) error); ok {
-		r0 = rf(ctx, key, obj)
+	if rf, ok := ret.Get(0).(func(context.Context, types.NamespacedName, client.Object, ...client.GetOption) error); ok {
+		r0 = rf(ctx, key, obj, opts...)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -173,15 +180,31 @@ func (_m *Client) Scheme() *runtime.Scheme {
 }
 
 // Status provides a mock function with given fields:
-func (_m *Client) Status() client.StatusWriter {
+func (_m *Client) Status() client.SubResourceWriter {
 	ret := _m.Called()
 
-	var r0 client.StatusWriter
-	if rf, ok := ret.Get(0).(func() client.StatusWriter); ok {
+	var r0 client.SubResourceWriter
+	if rf, ok := ret.Get(0).(func() client.SubResourceWriter); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(client.StatusWriter)
+			r0 = ret.Get(0).(client.SubResourceWriter)
+		}
+	}
+
+	return r0
+}
+
+// SubResource provides a mock function with given fields: subResource
+func (_m *Client) SubResource(subResource string) client.SubResourceClient {
+	ret := _m.Called(subResource)
+
+	var r0 client.SubResourceClient
+	if rf, ok := ret.Get(0).(func(string) client.SubResourceClient); ok {
+		r0 = rf(subResource)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(client.SubResourceClient)
 		}
 	}
 

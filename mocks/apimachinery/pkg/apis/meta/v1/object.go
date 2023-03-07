@@ -30,20 +30,6 @@ func (_m *Object) GetAnnotations() map[string]string {
 	return r0
 }
 
-// GetClusterName provides a mock function with given fields:
-func (_m *Object) GetClusterName() string {
-	ret := _m.Called()
-
-	var r0 string
-	if rf, ok := ret.Get(0).(func() string); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Get(0).(string)
-	}
-
-	return r0
-}
-
 // GetCreationTimestamp provides a mock function with given fields:
 func (_m *Object) GetCreationTimestamp() v1.Time {
 	ret := _m.Called()
@@ -255,11 +241,6 @@ func (_m *Object) GetUID() types.UID {
 // SetAnnotations provides a mock function with given fields: annotations
 func (_m *Object) SetAnnotations(annotations map[string]string) {
 	_m.Called(annotations)
-}
-
-// SetClusterName provides a mock function with given fields: clusterName
-func (_m *Object) SetClusterName(clusterName string) {
-	_m.Called(clusterName)
 }
 
 // SetCreationTimestamp provides a mock function with given fields: timestamp

@@ -106,7 +106,7 @@ func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
 	return rd
 }
 
-func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, fieldExport *ackv1alpha1.FieldExport) {
+func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.SubResourceWriter, ctx context.Context, fieldExport *ackv1alpha1.FieldExport) {
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -273,7 +273,7 @@ func TestSync_FailureInParsingQuery(t *testing.T) {
 	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, "bad-query")
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -303,7 +303,7 @@ func TestSync_FailureInGetField(t *testing.T) {
 	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, ".doesnt.exist")
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -333,7 +333,7 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
@@ -365,7 +365,7 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -395,7 +395,7 @@ func TestSync_HappyCaseSecret(t *testing.T) {
 	fieldExport := fieldExportSecret(FieldExportNamespace, FieldExportName)
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -492,7 +492,7 @@ func TestSync_SetKeyNameExplicitly(t *testing.T) {
 	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "new-key")
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -522,7 +522,7 @@ func TestSync_SetKeyNameExplicitlyWithEmptyString(t *testing.T) {
 	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "")
 	sourceResource, _, _ := mockSourceResource()
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
@@ -609,7 +609,7 @@ func assertRecoverableCondition(
 	t *testing.T,
 	ctx context.Context,
 	kc *ctrlrtclientmock.Client,
-	statusWriter *ctrlrtclientmock.StatusWriter,
+	statusWriter *ctrlrtclientmock.SubResourceWriter,
 	res *ackv1alpha1.FieldExport,
 	latest *ackv1alpha1.FieldExport,
 ) {
@@ -631,7 +631,7 @@ func assertTerminalCondition(
 	t *testing.T,
 	ctx context.Context,
 	kc *ctrlrtclientmock.Client,
-	statusWriter *ctrlrtclientmock.StatusWriter,
+	statusWriter *ctrlrtclientmock.SubResourceWriter,
 	res *ackv1alpha1.FieldExport,
 	latest *ackv1alpha1.FieldExport,
 ) {

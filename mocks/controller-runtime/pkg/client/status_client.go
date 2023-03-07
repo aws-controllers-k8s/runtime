@@ -13,15 +13,15 @@ type StatusClient struct {
 }
 
 // Status provides a mock function with given fields:
-func (_m *StatusClient) Status() client.StatusWriter {
+func (_m *StatusClient) Status() client.SubResourceWriter {
 	ret := _m.Called()
 
-	var r0 client.StatusWriter
-	if rf, ok := ret.Get(0).(func() client.StatusWriter); ok {
+	var r0 client.SubResourceWriter
+	if rf, ok := ret.Get(0).(func() client.SubResourceWriter); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(client.StatusWriter)
+			r0 = ret.Get(0).(client.SubResourceWriter)
 		}
 	}
 

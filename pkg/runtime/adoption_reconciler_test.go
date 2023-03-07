@@ -86,7 +86,7 @@ func mockManager() *ackmocks.AWSResourceManager {
 	return &ackmocks.AWSResourceManager{}
 }
 
-func setupMockClientForAdoptedResource(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.StatusWriter, ctx context.Context, adoptedRes *ackv1alpha1.AdoptedResource) {
+func setupMockClientForAdoptedResource(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.SubResourceWriter, ctx context.Context, adoptedRes *ackv1alpha1.AdoptedResource) {
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -160,7 +160,7 @@ func TestSync_FailureInSettingIdentifiers(t *testing.T) {
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	res.On("SetIdentifiers", adoptedRes.Spec.AWS).Return(errors.New("unable to set Identifier"))
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -197,7 +197,7 @@ func TestSync_FailureInReadOne(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -234,7 +234,7 @@ func TestSync_AWSResourceAlreadyExists(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -267,7 +267,7 @@ func TestSync_APIReaderUnknownError(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -301,7 +301,7 @@ func TestSync_ErrorInResourceCreation(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -334,7 +334,7 @@ func TestSync_ErrorInStatusUpdate(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -366,7 +366,7 @@ func TestSync_HappyCase(t *testing.T) {
 	manager := mockManager()
 	adoptedRes := adoptedResource(AdoptedResourceNamespace, AdoptedResourceName)
 	ctx := context.TODO()
-	statusWriter := &ctrlrtclientmock.StatusWriter{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
 	setupMockAwsResource(res, resDeepCopy, adoptedRes)
@@ -399,7 +399,7 @@ func assertAdoptedCondition(
 	t *testing.T,
 	ctx context.Context,
 	kc *ctrlrtclientmock.Client,
-	statusWriter *ctrlrtclientmock.StatusWriter,
+	statusWriter *ctrlrtclientmock.SubResourceWriter,
 	adoptedRes *ackv1alpha1.AdoptedResource,
 ) {
 	kc.AssertCalled(t, "Status")
@@ -436,7 +436,7 @@ func assertAWSResourceCreation(
 	t *testing.T,
 	ctx context.Context,
 	kc *ctrlrtclientmock.Client,
-	statusWriter *ctrlrtclientmock.StatusWriter,
+	statusWriter *ctrlrtclientmock.SubResourceWriter,
 	res *ackmocks.AWSResource,
 	resDeepCopy *ackmocks.AWSResource,
 ) {
