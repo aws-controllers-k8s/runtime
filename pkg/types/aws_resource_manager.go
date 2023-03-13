@@ -18,7 +18,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/go-logr/logr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
@@ -33,6 +32,7 @@ import (
 // Use an AWSResourceManagerFactory to create an AWSResourceManager for a
 // particular APIResource and AWS account.
 type AWSResourceManager interface {
+	ResolvedReferenceManager
 	// ReadOne returns the currently-observed state of the supplied AWSResource
 	// in the backend AWS service API.
 	//
@@ -75,14 +75,6 @@ type AWSResourceManager interface {
 	// object passed in the parameter.
 	// This method also adds/updates the ConditionTypeLateInitialized for the AWSResource.
 	LateInitialize(context.Context, AWSResource) (AWSResource, error)
-	// ResolveReferences finds if there are any Reference field(s) present
-	// inside AWSResource passed in the parameter and attempts to resolve
-	// those reference field(s) into target field(s).
-	// It returns an AWSResource with resolved reference(s), and an error if the
-	// passed AWSResource's reference field(s) cannot be resolved.
-	// This method also adds/updates the ConditionTypeReferencesResolved for the
-	// AWSResource.
-	ResolveReferences(context.Context, client.Reader, AWSResource) (AWSResource, error)
 	// IsSynced returns true if a resource is synced.
 	IsSynced(context.Context, AWSResource) (bool, error)
 	// EnsureTags ensures that tags are present inside the AWSResource.

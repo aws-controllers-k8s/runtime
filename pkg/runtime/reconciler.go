@@ -201,13 +201,13 @@ func (r *resourceReconciler) reconcile(
 		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete {
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
-			res, _ = rm.ResolveReferences(ctx, r.apiReader, res)
+			_ = rm.ResolveReferences(ctx, r.apiReader, res)
 			return r.deleteResource(ctx, rm, res)
 		}
 
 		rlog := ackrtlog.FromContext(ctx)
 		rlog.Info("AWS resource will not be deleted - deletion policy set to retain")
-		if err := r.setResourceUnmanaged(ctx, res); err != nil {
+		if err := r.setResourceUnmanaged(ctx, rm, res); err != nil {
 			return res, err
 		}
 		return r.handleRequeues(ctx, res)
@@ -246,22 +246,23 @@ func (r *resourceReconciler) Sync(
 	rlog.WithValues("is_adopted", isAdopted)
 
 	rlog.Enter("rm.ResolveReferences")
-	resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
+	err = rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
-	if err != nil {
-		return resolvedRefDesired, err
-	}
-	desired = resolvedRefDesired
-
-	rlog.Enter("rm.EnsureTags")
-	err = rm.EnsureTags(ctx, desired, r.sc.GetMetadata())
-	rlog.Exit("rm.EnsureTags", err)
 	if err != nil {
 		return desired, err
 	}
 
+	resolved := rm.CopyWithResolvedReferences(desired)
+
+	rlog.Enter("rm.EnsureTags")
+	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
+	rlog.Exit("rm.EnsureTags", err)
+	if err != nil {
+		return resolved, err
+	}
+
 	rlog.Enter("rm.ReadOne")
-	latest, err = rm.ReadOne(ctx, desired)
+	latest, err = rm.ReadOne(ctx, resolved)
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
@@ -270,11 +271,11 @@ func (r *resourceReconciler) Sync(
 		if isAdopted {
 			return nil, ackerr.AdoptedResourceNotFound
 		}
-		if latest, err = r.createResource(ctx, rm, desired); err != nil {
+		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
 		}
 	} else {
-		if latest, err = r.updateResource(ctx, rm, desired, latest); err != nil {
+		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
 		}
 	}
@@ -395,21 +396,9 @@ func (r *resourceReconciler) createResource(
 	// manages the resource OR if the backend AWS service resource is
 	// properly deleted.
 	if !r.rd.IsManaged(desired) {
-		if err = r.setResourceManaged(ctx, desired); err != nil {
+		if err = r.setResourceManaged(ctx, rm, desired); err != nil {
 			return nil, err
 		}
-
-		// Resolve the references again after adding the finalizer and
-		// patching the resource. Patching resource omits the resolved references
-		// because they are not persisted in etcd. So we resolve the references
-		// again before performing the create operation.
-		rlog.Enter("rm.ResolveReferences")
-		resolvedRefDesired, err := rm.ResolveReferences(ctx, r.apiReader, desired)
-		rlog.Exit("rm.ResolveReferences", err)
-		if err != nil {
-			return resolvedRefDesired, err
-		}
-		desired = resolvedRefDesired
 
 		// Ensure tags again after adding the finalizer and patching the
 		// resource. Patching desired resource omits the controller tags
@@ -457,11 +446,12 @@ func (r *resourceReconciler) createResource(
 	// Ensure that we are patching any changes to the annotations/metadata and
 	// the Spec that may have been set by the resource manager's successful
 	// Create call above.
-	err = r.patchResourceMetadataAndSpec(ctx, desired, latest)
+	latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 	if err != nil {
 		return latest, err
 	}
 	rlog.Info("created new resource")
+
 	return latest, nil
 }
 
@@ -550,7 +540,7 @@ func (r *resourceReconciler) updateResource(
 		// Ensure that we are patching any changes to the annotations/metadata and
 		// the Spec that may have been set by the resource manager's successful
 		// Update call above.
-		err = r.patchResourceMetadataAndSpec(ctx, desired, latest)
+		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 		if err != nil {
 			return latest, err
 		}
@@ -589,7 +579,8 @@ func (r *resourceReconciler) lateInitializeResource(
 	// This patching does not hurt because if there is no diff then 'patchResourceMetadataAndSpec'
 	// acts as a no-op.
 	if ackcompare.IsNotNil(lateInitializedLatest) {
-		patchErr := r.patchResourceMetadataAndSpec(ctx, latest, lateInitializedLatest)
+		var patchErr error
+		lateInitializedLatest, patchErr = r.patchResourceMetadataAndSpec(ctx, rm, latest, lateInitializedLatest)
 		// Throw the patching error if reconciler is unable to patch the resource with late initializations
 		if patchErr != nil {
 			err = patchErr
@@ -629,20 +620,21 @@ func getPatchDocument(
 // patchResourceMetadataAndSpec patches the custom resource in the Kubernetes
 // API to match the supplied latest resource's metadata and spec.
 //
-// NOTE(jaypipes): The latest parameter is *mutated* by this method: the
-// resource's metadata.resourceVersion is incremented in the process of calling
-// Patch. This is intentional, because without updating the resource's
-// metadata.resourceVersion, the resource cannot be passed to Patch again later
-// in the reconciliation loop if Patch is called with the Optimistic Locking
-// option.
+// NOTE(redbackthomson): This method returns an updated version of the latest
+// parameter. This version has an updated metadata.resourceVersion, which is
+// incremented in the process of calling Patch. This is intentional, because
+// without updating the resource's metadata.resourceVersion, the resource cannot
+// be passed to Patch again later in the reconciliation if Patch is called with
+// the Optimistic Locking option.
 //
 // See https://github.com/kubernetes-sigs/controller-runtime/blob/165a8c869c4388b861c7c91cb1e5330f6e07ee16/pkg/client/patch.go#L81-L84
 // for more information.
 func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
-) error {
+) (acktypes.AWSResource, error) {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.patchResourceMetadataAndSpec")
@@ -650,20 +642,23 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 		exit(err)
 	}()
 
-	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desired.MetaObject(), latest.MetaObject())
+	// Remove resolved references from the objects before patching
+	desiredCleaned := rm.ExtractResolvedReferences(desired)
+	latestCleaned := rm.ExtractResolvedReferences(latest)
+
+	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desiredCleaned.MetaObject(), latestCleaned.MetaObject())
 	if err != nil {
-		return err
+		return latest, err
 	}
-	if equalMetadata && !r.rd.Delta(desired, latest).DifferentAt("Spec") {
+	if equalMetadata && !r.rd.Delta(desiredCleaned, latestCleaned).DifferentAt("Spec") {
 		rlog.Debug("no difference found between metadata and spec for desired and latest object.")
-		return nil
+		return latest, nil
 	}
 
 	rlog.Enter("kc.Patch (metadata + spec)")
-	dobj := desired.DeepCopy().RuntimeObject()
-	lorig := latest.DeepCopy()
-	patch := client.MergeFrom(dobj)
-	err = r.kc.Patch(ctx, latest.RuntimeObject(), patch)
+	lorig := latestCleaned.DeepCopy()
+	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
+	err = r.kc.Patch(ctx, latestCleaned.RuntimeObject(), patch)
 	if err == nil {
 		if rlog.IsDebugEnabled() {
 			js := getPatchDocument(patch, lorig.RuntimeObject())
@@ -673,9 +668,9 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	// The call to Patch() above ends up setting the latest variable's Status
 	// to the value of the desired variable's Status. We do not want this
 	// behaviour; instead, we want to keep latest's original Status value.
-	latest.SetStatus(lorig)
+	latestCleaned.SetStatus(lorig)
 	rlog.Exit("kc.Patch (metadata + spec)", err)
-	return err
+	return latestCleaned, err
 }
 
 // patchResourceStatus patches the custom resource in the Kubernetes API to
@@ -740,7 +735,7 @@ func (r *resourceReconciler) deleteResource(
 	if err != nil {
 		if err == ackerr.NotFound {
 			// If the aws resource is not found, remove finalizer
-			return current, r.setResourceUnmanaged(ctx, current)
+			return current, r.setResourceUnmanaged(ctx, rm, current)
 		}
 		return current, err
 	}
@@ -756,7 +751,7 @@ func (r *resourceReconciler) deleteResource(
 		// any changes to Status fields that may have been made by the resource
 		// manager if the returned `latest` resource is non-nil, so we don't
 		// have to worry about saving status stuff here.
-		_ = r.patchResourceMetadataAndSpec(ctx, current, latest)
+		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, current, latest)
 	}
 	if err != nil {
 		// NOTE: Delete() implementations that have asynchronously-completing
@@ -768,9 +763,9 @@ func (r *resourceReconciler) deleteResource(
 	// up, we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
 	if ackcompare.IsNotNil(latest) {
-		err = r.setResourceUnmanaged(ctx, latest)
+		err = r.setResourceUnmanaged(ctx, rm, latest)
 	} else {
-		err = r.setResourceUnmanaged(ctx, current)
+		err = r.setResourceUnmanaged(ctx, rm, current)
 	}
 	if err == nil {
 		rlog.Info("deleted resource")
@@ -784,6 +779,7 @@ func (r *resourceReconciler) deleteResource(
 // be deleted until that finalizer is removed (in setResourceUnmanaged())
 func (r *resourceReconciler) setResourceManaged(
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	res acktypes.AWSResource,
 ) error {
 	if r.rd.IsManaged(res) {
@@ -798,7 +794,7 @@ func (r *resourceReconciler) setResourceManaged(
 
 	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkManaged(res)
-	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
+	res, err = r.patchResourceMetadataAndSpec(ctx, rm, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {
 		return err
 	}
@@ -811,6 +807,7 @@ func (r *resourceReconciler) setResourceManaged(
 // allows the CR to be deleted by the Kubernetes API server.
 func (r *resourceReconciler) setResourceUnmanaged(
 	ctx context.Context,
+	rm acktypes.AWSResourceManager,
 	res acktypes.AWSResource,
 ) error {
 	if !r.rd.IsManaged(res) {
@@ -826,7 +823,7 @@ func (r *resourceReconciler) setResourceUnmanaged(
 
 	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkUnmanaged(res)
-	err = r.patchResourceMetadataAndSpec(ctx, r.rd.ResourceFromRuntimeObject(orig), res)
+	res, err = r.patchResourceMetadataAndSpec(ctx, rm, r.rd.ResourceFromRuntimeObject(orig), res)
 	if err != nil {
 		return err
 	}
