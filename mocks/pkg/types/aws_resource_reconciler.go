@@ -10,9 +10,9 @@ import (
 
 	reconcile "sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	types "github.com/aws-controllers-k8s/runtime/pkg/types"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 
 	v1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 )
@@ -36,16 +36,16 @@ func (_m *AWSResourceReconciler) BindControllerManager(_a0 manager.Manager) erro
 	return r0
 }
 
-// GroupKind provides a mock function with given fields:
-func (_m *AWSResourceReconciler) GroupKind() *v1.GroupKind {
+// GroupVersionKind provides a mock function with given fields:
+func (_m *AWSResourceReconciler) GroupVersionKind() *schema.GroupVersionKind {
 	ret := _m.Called()
 
-	var r0 *v1.GroupKind
-	if rf, ok := ret.Get(0).(func() *v1.GroupKind); ok {
+	var r0 *schema.GroupVersionKind
+	if rf, ok := ret.Get(0).(func() *schema.GroupVersionKind); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*v1.GroupKind)
+			r0 = ret.Get(0).(*schema.GroupVersionKind)
 		}
 	}
 

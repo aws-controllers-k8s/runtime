@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 
@@ -28,8 +28,8 @@ func TestRegistry(t *testing.T) {
 	require := require.New(t)
 
 	rd := &mocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "Book",
 		},
@@ -49,5 +49,5 @@ func TestRegistry(t *testing.T) {
 	require.Contains(rmfs, rmf)
 
 	rmf.AssertCalled(t, "ResourceDescriptor")
-	rd.AssertCalled(t, "GroupKind")
+	rd.AssertCalled(t, "GroupVersionKind")
 }

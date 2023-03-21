@@ -89,7 +89,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 		controllerRMF = v
 		break
 	}
-	if gk.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
+	if gk.Group != controllerRMF.ResourceDescriptor().GroupVersionKind().Group {
 		ackrtlog.DebugAdoptedResource(r.log, res, "target resource API group is not of this service. no-op")
 		return nil
 	}

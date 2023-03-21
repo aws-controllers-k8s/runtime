@@ -22,8 +22,8 @@ import (
 	jq "github.com/itchyny/gojq"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,7 +106,7 @@ func (r *fieldExportReconciler) reconcileFieldExport(ctx context.Context, req ct
 		controllerRMF = v
 		break
 	}
-	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
+	if sourceGK.Group != controllerRMF.ResourceDescriptor().GroupVersionKind().Group {
 		ackrtlog.DebugFieldExport(r.log, feObject, "target resource API group is not of this service. no-op")
 		return nil
 	}
@@ -382,7 +382,7 @@ func (r *fieldExportReconciler) writeToSecret(
 
 func (r *fieldExportReconciler) GetFieldExportsForResource(
 	ctx context.Context,
-	gk metav1.GroupKind,
+	gk schema.GroupKind,
 	nsn types.NamespacedName,
 ) ([]ackv1alpha1.FieldExport, error) {
 	listed := &ackv1alpha1.FieldExportList{}
@@ -682,7 +682,7 @@ func (r *fieldExportResourceReconciler) reconcileSourceResource(ctx context.Cont
 
 	// Get each of the exports referencing this AWS resource
 	exports, err := r.GetFieldExportsForResource(ctx,
-		*r.rd.GroupKind(),
+		r.rd.GroupVersionKind().GroupKind(),
 		types.NamespacedName{
 			Namespace: res.MetaObject().GetNamespace(),
 			Name:      res.MetaObject().GetName(),

@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -123,8 +123,8 @@ func managerFactoryMocks(
 	*ackmocks.AWSResourceDescriptor,
 ) {
 	rd := &ackmocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "fakeBook",
 		},

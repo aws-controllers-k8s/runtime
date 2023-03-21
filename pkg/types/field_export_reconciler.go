@@ -17,7 +17,7 @@ import (
 	"context"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 )
@@ -41,7 +41,7 @@ type FieldExportReconciler interface {
 	// based on whether they contain a reference to the given AWS resource.
 	GetFieldExportsForResource(
 		context.Context,
-		metav1.GroupKind,
+		schema.GroupKind,
 		types.NamespacedName,
 	) ([]ackv1alpha1.FieldExport, error)
 }

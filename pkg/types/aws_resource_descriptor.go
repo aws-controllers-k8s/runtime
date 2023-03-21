@@ -14,7 +14,6 @@
 package types
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	rtclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -30,9 +29,6 @@ type AWSResourceDescriptor interface {
 	// describes the API Group, Version and Kind of CRs described by the
 	// descriptor
 	GroupVersionKind() schema.GroupVersionKind
-	// GroupKind returns a Kubernetes metav1.GroupKind struct that describes
-	// the API Group and Kind of CRs described by the descriptor
-	GroupKind() *metav1.GroupKind
 	// EmptyRuntimeObject returns an empty object prototype that may be used in
 	// apimachinery and k8s client operations
 	EmptyRuntimeObject() rtclient.Object

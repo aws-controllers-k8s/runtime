@@ -131,8 +131,8 @@ func TestServiceController(t *testing.T) {
 	require := require.New(t)
 
 	rd := &mocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "fakeBook",
 		},
@@ -180,7 +180,7 @@ func TestServiceController(t *testing.T) {
 
 	foundfakeBookRecon := false
 	for _, recon := range recons {
-		if recon.GroupKind().String() == "fakeBook.bookstore.services.k8s.aws" {
+		if recon.GroupVersionKind().GroupKind().String() == "fakeBook.bookstore.services.k8s.aws" {
 			foundfakeBookRecon = true
 		}
 	}

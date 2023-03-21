@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -76,13 +76,14 @@ type resourceReconciler struct {
 	resyncPeriod time.Duration
 }
 
-// GroupKind returns the string containing the API group and kind reconciled by
-// this reconciler
-func (r *resourceReconciler) GroupKind() *metav1.GroupKind {
+// GroupVersionKind returns the string containing the API group, version and
+// kind reconciled by this reconciler
+func (r *resourceReconciler) GroupVersionKind() *schema.GroupVersionKind {
 	if r.rd == nil {
 		return nil
 	}
-	return r.rd.GroupKind()
+	gvk := r.rd.GroupVersionKind()
+	return &gvk
 }
 
 // BindControllerManager sets up the AWSResourceReconciler with an instance
@@ -170,7 +171,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		"region", region,
 		// All the fields for a resource that do not change during reconciliation
 		// can be initialized during resourceLogger creation
-		"kind", r.rd.GroupKind().Kind,
+		"kind", r.rd.GroupVersionKind().Kind,
 		"namespace", req.Namespace,
 		"name", req.Name,
 	)
@@ -1106,7 +1107,7 @@ func getResyncPeriod(rmf acktypes.AWSResourceManagerFactory, cfg ackcfg.Config) 
 
 	// First, try to use a resource-specific resync period if provided in the resource
 	// resync period configuration.
-	resourceKind := rmf.ResourceDescriptor().GroupKind().Kind
+	resourceKind := rmf.ResourceDescriptor().GroupVersionKind().Kind
 	if duration, ok := drc[strings.ToLower(resourceKind)]; ok && duration > 0 {
 		return time.Duration(duration) * time.Second
 	}
@@ -1158,7 +1159,7 @@ func NewReconcilerWithClient(
 	rtLog := log.WithName("ackrt")
 	resyncPeriod := getResyncPeriod(rmf, cfg)
 	rtLog.V(1).Info("Initiating reconciler",
-		"reconciler kind", rmf.ResourceDescriptor().GroupKind().Kind,
+		"reconciler kind", rmf.ResourceDescriptor().GroupVersionKind().Kind,
 		"resync period seconds", resyncPeriod.Seconds(),
 	)
 	return &resourceReconciler{
