@@ -157,7 +157,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	region := r.getRegion(desired)
 	roleARN := r.getRoleARN(acctID)
 	endpointURL := r.getEndpointURL(desired)
-	gvk := desired.RuntimeObject().GetObjectKind().GroupVersionKind()
+	gvk := r.rd.GroupVersionKind()
 	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err

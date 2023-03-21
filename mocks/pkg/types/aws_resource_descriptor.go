@@ -8,6 +8,8 @@ import (
 
 	mock "github.com/stretchr/testify/mock"
 
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
+
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,6 +63,20 @@ func (_m *AWSResourceDescriptor) GroupKind() *v1.GroupKind {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*v1.GroupKind)
 		}
+	}
+
+	return r0
+}
+
+// GroupVersionKind provides a mock function with given fields:
+func (_m *AWSResourceDescriptor) GroupVersionKind() schema.GroupVersionKind {
+	ret := _m.Called()
+
+	var r0 schema.GroupVersionKind
+	if rf, ok := ret.Get(0).(func() schema.GroupVersionKind); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(schema.GroupVersionKind)
 	}
 
 	return r0

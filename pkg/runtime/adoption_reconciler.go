@@ -112,11 +112,9 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
 	endpointURL := r.getEndpointURL(res)
+	gvk := targetDescriptor.GroupVersionKind()
 
-	sess, err := r.sc.NewSession(
-		region, &endpointURL, roleARN,
-		targetDescriptor.EmptyRuntimeObject().GetObjectKind().GroupVersionKind(),
-	)
+	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return err
 	}
