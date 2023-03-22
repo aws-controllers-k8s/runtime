@@ -24,9 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -94,8 +94,8 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 
 func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
 	rd := &mocks.AWSResourceDescriptor{}
-	rd.On("GroupKind").Return(
-		&metav1.GroupKind{
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "fakeBook",
 		},
@@ -431,7 +431,7 @@ func TestFilterAllExports_HappyCase(t *testing.T) {
 			}
 			*list = mockList
 		})
-	gk := metav1.GroupKind{
+	gk := schema.GroupKind{
 		Group: BookGVK.Group,
 		Kind:  BookGVK.Kind,
 	}
@@ -465,7 +465,7 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 			}
 			*list = mockList
 		})
-	gk := metav1.GroupKind{
+	gk := schema.GroupKind{
 		Group: BookGVK.Group,
 		Kind:  BookGVK.Kind,
 	}

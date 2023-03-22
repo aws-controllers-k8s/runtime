@@ -44,7 +44,7 @@ func (r *Registry) GetResourceManagerFactories() []types.AWSResourceManagerFacto
 func (r *Registry) RegisterResourceManagerFactory(f types.AWSResourceManagerFactory) {
 	r.Lock()
 	defer r.Unlock()
-	r.resourceManagerFactories[f.ResourceDescriptor().GroupKind().String()] = f
+	r.resourceManagerFactories[f.ResourceDescriptor().GroupVersionKind().GroupKind().String()] = f
 }
 
 // NewRegistry returns a thread-safe Registry object

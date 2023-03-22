@@ -89,7 +89,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 		controllerRMF = v
 		break
 	}
-	if gk.Group != controllerRMF.ResourceDescriptor().GroupKind().Group {
+	if gk.Group != controllerRMF.ResourceDescriptor().GroupVersionKind().Group {
 		ackrtlog.DebugAdoptedResource(r.log, res, "target resource API group is not of this service. no-op")
 		return nil
 	}
@@ -112,11 +112,9 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	region := r.getRegion(res)
 	roleARN := r.getRoleARN(acctID)
 	endpointURL := r.getEndpointURL(res)
+	gvk := targetDescriptor.GroupVersionKind()
 
-	sess, err := r.sc.NewSession(
-		region, &endpointURL, roleARN,
-		targetDescriptor.EmptyRuntimeObject().GetObjectKind().GroupVersionKind(),
-	)
+	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return err
 	}
