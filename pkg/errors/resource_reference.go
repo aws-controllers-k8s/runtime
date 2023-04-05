@@ -47,6 +47,10 @@ var (
 	ResourceReferenceMissingTargetField = fmt.Errorf(
 		"the referenced resource is missing the target field",
 	)
+	// ResourceReferenceValueCastFailed indicates that the resolved reference
+	// could not be cast back to the type that was used to set it in the map
+	ResourceReferenceValueCastFailed = fmt.Errorf("the resolved reference could not be cast" +
+		" back to its original type")
 )
 
 // ResourceReferenceOrIDRequiredFor returns a ResourceReferenceOrIDRequired error
@@ -89,4 +93,10 @@ func ResourceReferenceMissingTargetFieldFor(resource string, namespace string,
 	return fmt.Errorf("%w. resource:%s, namespace:%s, name:%s"+
 		", targetField:%s", ResourceReferenceMissingTargetField,
 		resource, namespace, name, targetField)
+}
+
+// ResourceReferenceValueCastFailedFor returns a
+// ResourceReferenceValueCastFailed for the supplied field
+func ResourceReferenceValueCastFailedFor(field string) error {
+	return fmt.Errorf("%w: %s", ResourceReferenceValueCastFailed, field)
 }

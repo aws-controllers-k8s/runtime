@@ -240,7 +240,7 @@ func RemoveReferencesResolved(
 func WithReferencesResolvedCondition(
 	resource acktypes.AWSResource,
 	err error,
-) (acktypes.AWSResource, error) {
+) acktypes.AWSResource {
 	if err != nil {
 		errString := err.Error()
 		conditionStatus := corev1.ConditionUnknown
@@ -251,7 +251,7 @@ func WithReferencesResolvedCondition(
 	} else {
 		SetReferencesResolved(resource, corev1.ConditionTrue, nil, nil)
 	}
-	return resource, err
+	return resource
 }
 
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
