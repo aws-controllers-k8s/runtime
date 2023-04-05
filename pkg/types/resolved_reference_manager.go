@@ -29,7 +29,7 @@ type ResolvedReferenceManager interface {
 	// references, and an error if the passed AWSResource's reference field(s)
 	// cannot be resolved.
 	ResolveReferences(context.Context, client.Reader, AWSResource) (bool, error)
-	CopyWithResolvedReferences(AWSResource) AWSResource
+	CopyWithResolvedReferences(AWSResource) (AWSResource, error)
 	// ClearResolvedReferences removes any reference values that were made
 	// concrete in the spec. It returns a copy of the spec which contains the
 	// original *Ref values, but none of their respective values, and optionally

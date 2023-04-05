@@ -255,7 +255,10 @@ func (r *resourceReconciler) Sync(
 		return desired, err
 	}
 
-	resolved := rm.CopyWithResolvedReferences(desired)
+	resolved, err := rm.CopyWithResolvedReferences(desired)
+	if err != nil {
+		return desired, err
+	}
 
 	rlog.Enter("rm.EnsureTags")
 	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
