@@ -19,9 +19,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResolvedReferenceManager describes a thing that can set and retrieve the
-// value of resolved references within a resource.
-type ResolvedReferenceManager interface {
+// ReferenceManager describes a thing that can resolve and clear references
+// within an AWSResource.
+type ReferenceManager interface {
 	// ResolveReferences finds if there are any Reference field(s) present
 	// inside AWSResource passed in the parameter and attempts to resolve those
 	// reference field(s) into their respective target field(s). It returns a

@@ -32,7 +32,7 @@ import (
 // Use an AWSResourceManagerFactory to create an AWSResourceManager for a
 // particular APIResource and AWS account.
 type AWSResourceManager interface {
-	ResolvedReferenceManager
+	ReferenceManager
 	// ReadOne returns the currently-observed state of the supplied AWSResource
 	// in the backend AWS service API.
 	//
