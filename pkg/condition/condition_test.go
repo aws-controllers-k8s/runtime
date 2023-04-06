@@ -34,6 +34,7 @@ func TestConditionGetters(t *testing.T) {
 	conds := []*ackv1alpha1.Condition{}
 
 	r := &ackmocks.AWSResource{}
+	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return(conds)
 
 	got := ackcond.Synced(r)
@@ -245,6 +246,7 @@ func TestConditionSetters(t *testing.T) {
 	//WithReferencesResolvedCondition
 	// Without Error
 	r = &ackmocks.AWSResource{}
+	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
 		"ReplaceConditions",
@@ -261,6 +263,7 @@ func TestConditionSetters(t *testing.T) {
 	errorMsg := "error message"
 	err := errors.New(errorMsg)
 	r = &ackmocks.AWSResource{}
+	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
 		"ReplaceConditions",
@@ -270,13 +273,14 @@ func TestConditionSetters(t *testing.T) {
 			}
 			return (subject[0].Type == ackv1alpha1.ConditionTypeReferencesResolved &&
 				subject[0].Status == corev1.ConditionUnknown &&
-				*subject[0].Message == errorMsg)
+				*subject[0].Message == ackcond.FailedReferenceResolutionMessage)
 		}),
 	)
 	ackcond.WithReferencesResolvedCondition(r, err)
 	// With Terminal Error
 	terminalError := ackerr.ResourceReferenceTerminal
 	r = &ackmocks.AWSResource{}
+	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
 		"ReplaceConditions",
@@ -286,7 +290,8 @@ func TestConditionSetters(t *testing.T) {
 			}
 			return (subject[0].Type == ackv1alpha1.ConditionTypeReferencesResolved &&
 				subject[0].Status == corev1.ConditionFalse &&
-				*subject[0].Message == terminalError.Error())
+				*subject[0].Message == ackcond.FailedReferenceResolutionMessage &&
+				*subject[0].Reason == terminalError.Error())
 		}),
 	)
 	ackcond.WithReferencesResolvedCondition(r, terminalError)

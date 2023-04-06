@@ -24,15 +24,13 @@ import (
 type ResolvedReferenceManager interface {
 	// ResolveReferences finds if there are any Reference field(s) present
 	// inside AWSResource passed in the parameter and attempts to resolve
-	// those reference field(s) into the resolved references map.
-	// It returns a boolean that is set to true if there the resource is using
-	// references, and an error if the passed AWSResource's reference field(s)
-	// cannot be resolved.
-	ResolveReferences(context.Context, client.Reader, AWSResource) (bool, error)
-	CopyWithResolvedReferences(AWSResource) (AWSResource, error)
+	// those reference field(s) into target field(s).
+	// It returns an AWSResource with resolved reference(s), a boolean which is
+	// set to true if the resource contains references and an error if the
+	// passed AWSResource's reference field(s) cannot be resolved.
+	ResolveReferences(context.Context, client.Reader, AWSResource) (AWSResource, bool, error)
 	// ClearResolvedReferences removes any reference values that were made
 	// concrete in the spec. It returns a copy of the spec which contains the
-	// original *Ref values, but none of their respective values, and optionally
-	// an error.
-	ClearResolvedReferences(AWSResource) (AWSResource, error)
+	// original *Ref values, but none of their respective values.
+	ClearResolvedReferences(AWSResource) AWSResource
 }

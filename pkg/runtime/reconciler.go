@@ -201,8 +201,8 @@ func (r *resourceReconciler) reconcile(
 		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete {
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
-			_, _ = rm.ResolveReferences(ctx, r.apiReader, res)
-			return r.deleteResource(ctx, rm, res)
+			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, res)
+			return r.deleteResource(ctx, rm, resolved)
 		}
 
 		rlog := ackrtlog.FromContext(ctx)
@@ -246,18 +246,13 @@ func (r *resourceReconciler) Sync(
 	rlog.WithValues("is_adopted", isAdopted)
 
 	rlog.Enter("rm.ResolveReferences")
-	hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
+	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
+	if err != nil {
+		return ackcondition.WithReferencesResolvedCondition(desired, err), err
+	}
 	if hasReferences {
-		desired = ackcondition.WithReferencesResolvedCondition(desired, err)
-	}
-	if err != nil {
-		return desired, err
-	}
-
-	resolved, err := rm.CopyWithResolvedReferences(desired)
-	if err != nil {
-		return desired, err
+		resolved = ackcondition.WithReferencesResolvedCondition(resolved, err)
 	}
 
 	rlog.Enter("rm.EnsureTags")
@@ -649,15 +644,8 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	}()
 
 	// Remove resolved references from the objects before patching
-	desiredCleaned, err := rm.ClearResolvedReferences(desired)
-	if err != nil {
-		return latest, err
-	}
-
-	latestCleaned, err := rm.ClearResolvedReferences(latest)
-	if err != nil {
-		return latest, err
-	}
+	desiredCleaned := rm.ClearResolvedReferences(desired)
+	latestCleaned := rm.ClearResolvedReferences(latest)
 
 	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desiredCleaned.MetaObject(), latestCleaned.MetaObject())
 	if err != nil {
