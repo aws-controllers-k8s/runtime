@@ -252,7 +252,7 @@ func WithReferencesResolvedCondition(
 		}
 		SetReferencesResolved(ko, conditionStatus, &FailedReferenceResolutionMessage, &errString)
 	} else {
-		SetReferencesResolved(ko, corev1.ConditionTrue, &FailedReferenceResolutionMessage, nil)
+		SetReferencesResolved(ko, corev1.ConditionTrue, nil, nil)
 	}
 	return ko
 }
