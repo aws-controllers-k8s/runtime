@@ -27,11 +27,13 @@ import (
 	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
+	ackutil "github.com/aws-controllers-k8s/runtime/pkg/util"
 )
 
 const (
@@ -211,7 +213,15 @@ func (cfg *Config) SetAWSAccountID() error {
 }
 
 // Validate ensures the options are valid
-func (cfg *Config) Validate() error {
+func (cfg *Config) Validate(options ...Option) error {
+	merged := mergeOptions(options)
+	if len(merged.gvks) > 0 {
+		err := cfg.validateReconcileConfigResources(merged.gvks)
+		if err != nil {
+			return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceResyncSeconds, err)
+		}
+	}
+
 	if cfg.Region == "" {
 		return errors.New("unable to start service controller as AWS region is missing. Please pass --aws-region flag or set AWS_REGION environment variable")
 	}
@@ -257,12 +267,6 @@ func (cfg *Config) Validate() error {
 	if cfg.ReconcileDefaultResyncSeconds < 0 {
 		return fmt.Errorf("invalid value for flag '%s': resync seconds default must be greater than 0", flagReconcileDefaultResyncSeconds)
 	}
-
-	_, err := cfg.ParseReconcileResourceResyncSeconds()
-	if err != nil {
-		return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceResyncSeconds, err)
-	}
-
 	return nil
 }
 
@@ -270,6 +274,28 @@ func (cfg *Config) checkUnsafeEndpoint(endpoint *url.URL) error {
 	if !cfg.AllowUnsafeEndpointURL {
 		if endpoint.Scheme != "https" && endpoint.Host != "" {
 			return errors.New("using an unsafe endpoint is not allowed. Please review the controller configuration")
+		}
+	}
+	return nil
+}
+
+// validateReconcileConfigResources validates the --reconcile-resource-resync-seconds flag
+// by checking the resource names and their corresponding duration.
+func (cfg *Config) validateReconcileConfigResources(supportedGVKs []schema.GroupVersionKind) error {
+	validResourceNames := []string{}
+	for _, gvk := range supportedGVKs {
+		validResourceNames = append(validResourceNames, gvk.Kind)
+	}
+	for _, resourceResyncSecondsFlag := range cfg.ReconcileResourceResyncSeconds {
+		resourceName, _, err := parseReconcileFlagArgument(resourceResyncSecondsFlag)
+		if err != nil {
+			return fmt.Errorf("error parsing flag argument '%v': %v. Expected format: resource=seconds", resourceResyncSecondsFlag, err)
+		}
+		if !ackutil.InStrings(resourceName, validResourceNames) {
+			return fmt.Errorf(
+				"error parsing flag argument '%v': resource '%v' is not managed by this controller. Expected one of %v",
+				resourceResyncSecondsFlag, resourceName, strings.Join(validResourceNames, ", "),
+			)
 		}
 	}
 	return nil
@@ -284,10 +310,7 @@ func (cfg *Config) ParseReconcileResourceResyncSeconds() (map[string]time.Durati
 	resourceResyncPeriods := make(map[string]time.Duration, len(cfg.ReconcileResourceResyncSeconds))
 	for _, resourceResyncSecondsFlag := range cfg.ReconcileResourceResyncSeconds {
 		// Parse the resource name and resync period from the flag argument
-		resourceName, resyncSeconds, err := parseReconcileFlagArgument(resourceResyncSecondsFlag)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing flag argument '%v': %v. Expected format: resource=seconds", resourceResyncSecondsFlag, err)
-		}
+		resourceName, resyncSeconds, _ := parseReconcileFlagArgument(resourceResyncSecondsFlag)
 		resourceResyncPeriods[strings.ToLower(resourceName)] = time.Duration(resyncSeconds)
 	}
 	return resourceResyncPeriods, nil
