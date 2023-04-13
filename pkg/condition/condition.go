@@ -29,9 +29,10 @@ var (
 	NotManagedReason  = "This resource already exists but is not managed by ACK. " +
 		"To bring the resource under ACK management, you should explicitly adopt " +
 		"the resource by creating a services.k8s.aws/AdoptedResource"
-	UnknownSyncedMessage = "Unable to determine if desired resource state matches latest observed state"
-	NotSyncedMessage     = "Resource not synced"
-	SyncedMessage        = "Resource synced successfully"
+	UnknownSyncedMessage             = "Unable to determine if desired resource state matches latest observed state"
+	NotSyncedMessage                 = "Resource not synced"
+	SyncedMessage                    = "Resource synced successfully"
+	FailedReferenceResolutionMessage = "Reference resolution failed"
 )
 
 // Synced returns the Condition in the resource's Conditions collection that is
@@ -235,23 +236,25 @@ func RemoveReferencesResolved(
 	}
 }
 
-// WithReferencesResolvedCondition sets the ConditionTypeReferencesResolved in
-// AWSResource based on the err parameter and returns (AWSResource,error)
+// WithReferencesResolvedCondition returns a new AWSResource with the
+// ConditionTypeReferencesResolved set based on the err parameter
 func WithReferencesResolvedCondition(
 	resource acktypes.AWSResource,
 	err error,
-) (acktypes.AWSResource, error) {
+) acktypes.AWSResource {
+	ko := resource.DeepCopy()
+
 	if err != nil {
 		errString := err.Error()
 		conditionStatus := corev1.ConditionUnknown
 		if strings.Contains(errString, ackerr.ResourceReferenceTerminal.Error()) {
 			conditionStatus = corev1.ConditionFalse
 		}
-		SetReferencesResolved(resource, conditionStatus, &errString, nil)
+		SetReferencesResolved(ko, conditionStatus, &FailedReferenceResolutionMessage, &errString)
 	} else {
-		SetReferencesResolved(resource, corev1.ConditionTrue, nil, nil)
+		SetReferencesResolved(ko, corev1.ConditionTrue, nil, nil)
 	}
-	return resource, err
+	return ko
 }
 
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status

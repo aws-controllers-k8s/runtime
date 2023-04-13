@@ -32,6 +32,22 @@ func (_m *AWSResourceManager) ARNFromName(_a0 string) string {
 	return r0
 }
 
+// ClearResolvedReferences provides a mock function with given fields: _a0
+func (_m *AWSResourceManager) ClearResolvedReferences(_a0 types.AWSResource) types.AWSResource {
+	ret := _m.Called(_a0)
+
+	var r0 types.AWSResource
+	if rf, ok := ret.Get(0).(func(types.AWSResource) types.AWSResource); ok {
+		r0 = rf(_a0)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResource)
+		}
+	}
+
+	return r0
+}
+
 // Create provides a mock function with given fields: _a0, _a1
 func (_m *AWSResourceManager) Create(_a0 context.Context, _a1 types.AWSResource) (types.AWSResource, error) {
 	ret := _m.Called(_a0, _a1)
@@ -160,7 +176,7 @@ func (_m *AWSResourceManager) ReadOne(_a0 context.Context, _a1 types.AWSResource
 }
 
 // ResolveReferences provides a mock function with given fields: _a0, _a1, _a2
-func (_m *AWSResourceManager) ResolveReferences(_a0 context.Context, _a1 client.Reader, _a2 types.AWSResource) (types.AWSResource, error) {
+func (_m *AWSResourceManager) ResolveReferences(_a0 context.Context, _a1 client.Reader, _a2 types.AWSResource) (types.AWSResource, bool, error) {
 	ret := _m.Called(_a0, _a1, _a2)
 
 	var r0 types.AWSResource
@@ -172,14 +188,21 @@ func (_m *AWSResourceManager) ResolveReferences(_a0 context.Context, _a1 client.
 		}
 	}
 
-	var r1 error
-	if rf, ok := ret.Get(1).(func(context.Context, client.Reader, types.AWSResource) error); ok {
+	var r1 bool
+	if rf, ok := ret.Get(1).(func(context.Context, client.Reader, types.AWSResource) bool); ok {
 		r1 = rf(_a0, _a1, _a2)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(bool)
 	}
 
-	return r0, r1
+	var r2 error
+	if rf, ok := ret.Get(2).(func(context.Context, client.Reader, types.AWSResource) error); ok {
+		r2 = rf(_a0, _a1, _a2)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // Update provides a mock function with given fields: _a0, _a1, _a2, _a3

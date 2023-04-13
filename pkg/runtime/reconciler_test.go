@@ -166,8 +166,10 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -196,7 +198,7 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	rm.AssertNumberOfCalls(t, "ReadOne", 6)
 }
 
-func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testing.T) {
+func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.TODO()
@@ -225,8 +227,10 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testi
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -260,9 +264,10 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveTwice(t *testi
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	// Make sure references are resolved twice for the resource creation.
-	// Once before ReadOne call and one after marking the resource managed.
-	rm.AssertNumberOfCalls(t, "ResolveReferences", 2)
+	// Make sure references are only resolved once for the resource creation.
+	// Only before the ReadOne call do they need to be resolved, and then the
+	// referenced values are cleared when calling patch so they aren't persisted to etcd.
+	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
 	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rm.AssertCalled(t, "Create", ctx, desired)
@@ -305,8 +310,10 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	).Once()
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -386,8 +393,10 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	).Once()
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -419,9 +428,9 @@ func TestReconcilerUpdate(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	// Assert that References are resolved only once during resource update
 	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
+	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -469,8 +478,10 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -550,8 +561,10 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -626,8 +639,10 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -706,8 +721,10 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -788,8 +805,10 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -865,8 +884,10 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1006,8 +1027,10 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1123,8 +1146,10 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, nil,
+		desired, false, nil,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1170,26 +1195,28 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	// manager has not set any Conditions on the resource, that at least an
 	// ACK.ResourceSynced condition with status Unknown will be set on the
 	// resource.
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On(
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return().Run(func(args mock.Arguments) {
 		conditions := args.Get(0).([]*ackv1alpha1.Condition)
 		assert.Equal(t, 1, len(conditions))
 		cond := conditions[0]
-		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
-		// The non-terminal reconciler error causes the ResourceSynced
-		// condition to be False
-		assert.Equal(t, corev1.ConditionFalse, cond.Status)
-		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
+		assert.Equal(t, ackv1alpha1.ConditionTypeReferencesResolved, cond.Type)
+		// The non-terminal reconciler error causes the ReferencesResolved
+		// condition to be Unknown
+		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+		assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
 		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		nil, resolveReferenceError,
+		desired, true, resolveReferenceError,
 	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1272,7 +1299,9 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, nil)
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
