@@ -65,6 +65,7 @@ type ResourceFieldSelector struct {
 //
 //	from:
 //	  name: my-api
+//	  namespace: api-namespace
 type AWSResourceReferenceWrapper struct {
 	From *AWSResourceReference `json:"from,omitempty"`
 }
@@ -72,5 +73,6 @@ type AWSResourceReferenceWrapper struct {
 // AWSResourceReference provides all the values necessary to reference another
 // k8s resource for finding the identifier(Id/ARN/Name)
 type AWSResourceReference struct {
-	Name *string `json:"name,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	Namespace *string `json:"namespace,omitempty"`
 }
