@@ -38,6 +38,7 @@ import (
 
 const (
 	flagEnableLeaderElection           = "enable-leader-election"
+	flagLeaderElectionNamespace        = "leader-election-namespace"
 	flagMetricAddr                     = "metrics-addr"
 	flagEnableDevLogging               = "enable-development-logging"
 	flagAWSRegion                      = "aws-region"
@@ -72,6 +73,7 @@ var (
 type Config struct {
 	MetricsAddr                    string
 	EnableLeaderElection           bool
+	LeaderElectionNamespace        string
 	EnableDevelopmentLogging       bool
 	AccountID                      string
 	Region                         string
@@ -110,6 +112,23 @@ func (cfg *Config) BindFlags() {
 		false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.",
+	)
+	flag.StringVar(
+		// In the context of the controller-runtime library, if the LeaderElectionNamespace parametere is not
+		//  explicitly set, the library will automatically default its value to the content of the file
+		// mounted at /var/run/secrets/kubernetes.io/serviceaccount/namespace.
+		// https://github.com/kubernetes-sigs/controller-runtime/blob/main/pkg/leaderelection/leader_election.go#L112-L127
+		//
+		// In Kubernetes, when a pod is created, a service account is automatically associated with it,
+		// unless explicitly specified otherwise. This service account contains relevant information, such
+		// as the namespace in which the pod is deployed. The Kubernetes API server mounts a two files
+		// for the service account in the pod's filesystem at /var/run/secrets/kubernetes.io/serviceaccount/token
+		// and /var/run/secrets/kubernetes.io/serviceaccount/namespace, respectively.
+		// https://github.com/kubernetes/kubernetes/blob/master/pkg/controller/serviceaccount/tokens_controller.go#L399-L402
+		&cfg.LeaderElectionNamespace, flagLeaderElectionNamespace,
+		"",
+		"Specific namespace that the controller will utilize to manage the coordination.k8s.io/lease object for leader election."+
+			" By default it will try to use the namespace of the service account mounted to the controller pod.",
 	)
 	flag.BoolVar(
 		&cfg.EnableDevelopmentLogging, flagEnableDevLogging,
