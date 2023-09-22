@@ -28,6 +28,7 @@ import (
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -205,7 +206,9 @@ func (cfg *Config) SetupLogger() {
 		Level:       lvl,
 		TimeEncoder: zapcore.ISO8601TimeEncoder,
 	}
-	ctrlrt.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
+	logger := zap.New(zap.UseFlagOptions(&zapOptions))
+	ctrlrt.SetLogger(logger)
+	klog.SetLogger(logger)
 }
 
 // SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
