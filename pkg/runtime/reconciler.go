@@ -162,7 +162,7 @@ func (r *reconciler) WriteToSecret(
 	secret := &corev1.Secret{}
 	err := r.apiReader.Get(ctx, nsn, secret)
 	if err != nil {
-		return errors.Wrap(err, ackerr.FieldExportMissingSecret.Error())
+		return ackerr.SecretNotFound
 	}
 
 	// Update the field
@@ -172,12 +172,10 @@ func (r *reconciler) WriteToSecret(
 	}
 	secret.Data[key] = []byte(sourceValue)
 
-	//ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
 	err = r.kc.Patch(ctx, secret, patch)
 	if err != nil {
 		return err
 	}
-	//ackrtlog.InfoFieldExport(r.log, desired, "patched target secret")
 
 	return nil
 }
