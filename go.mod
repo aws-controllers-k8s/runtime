@@ -3,7 +3,7 @@ module github.com/aws-controllers-k8s/runtime
 go 1.19
 
 require (
-	github.com/aws/aws-sdk-go v1.44.93
+	github.com/aws/aws-sdk-go v1.49.0
 	github.com/cenkalti/backoff/v4 v4.1.3
 	github.com/go-logr/logr v1.2.3
 	github.com/google/go-cmp v0.5.9
