@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	kubernetes "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
@@ -100,7 +101,12 @@ func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlu
 		return false, nil
 	}
 
-	restMapperClient, err := apiutil.NewDiscoveryRESTMapper(clusterConfig)
+	httpClient, err := rest.HTTPClientFor(clusterConfig)
+	if err != nil {
+		return false, err
+	}
+
+	restMapperClient, err := apiutil.NewDiscoveryRESTMapper(clusterConfig, httpClient)
 	if err != nil {
 		return false, err
 	}
