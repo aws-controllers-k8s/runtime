@@ -27,6 +27,7 @@ import (
 	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -174,8 +175,8 @@ func (cfg *Config) BindFlags() {
 	flag.StringVar(
 		&cfg.WatchNamespace, flagWatchNamespace,
 		"",
-		"Specific namespace the service controller will watch for object creation from CRD. "+
-			" By default it will listen to all namespaces",
+		"A comma-separated list of valid RFC-1123 namespace names to watch for custom resource events. "+
+			"If unspecified, the controller watches for events in all namespaces.",
 	)
 	flag.Var(
 		&cfg.DeletionPolicy, flagDeletionPolicy,
@@ -365,4 +366,42 @@ func parseReconcileFlagArgument(flagArgument string) (string, int, error) {
 		return "", 0, fmt.Errorf("invalid value in flag argument: expected non-negative integer, got %d", resyncSeconds)
 	}
 	return elements[0], resyncSeconds, nil
+}
+
+// GetWatchNamespaces returns a slice of namespaces to watch for custom resource events.
+// If the watchNamespace flag is empty, the function returns nil, which means that the
+// controller will watch for events in all namespaces.
+func (c *Config) GetWatchNamespaces() ([]string, error) {
+	return parseWatchNamespaceString(c.WatchNamespace)
+}
+
+// parseWatchNamespaceString parses the watchNamespace flag and returns a slice of namespaces
+// to watch. The input string is expected to be a comma-separated list of namespaces.
+//
+// When providing multiple namespaces, the watchNamespace string must not contain
+// spaces, empty namespaces, or duplicate namespaces.
+func parseWatchNamespaceString(namespace string) ([]string, error) {
+	if namespace == "" {
+		// This means that the user did not provide a value for the watchNamespace flag.
+		// In this case, we will watch all namespaces.
+		return nil, nil
+	}
+	visited := make(map[string]bool)
+	namespaces := strings.Split(namespace, ",")
+	for _, ns := range namespaces {
+		if ns == "" {
+			return nil, fmt.Errorf("invalid namespace: empty namespace")
+		}
+		if _, ok := visited[ns]; ok {
+			return nil, fmt.Errorf("duplicate namespace '%s'", ns)
+		}
+		// Settling on the same validation rules as k8s.io/apimachinery/pkg/apis/meta/v1/validation.go
+		// for namespace names. prefix=false means that trailing dashes are not allowed. Trailing dashes
+		// are allowed when the namespace name is used as part of generation.
+		if validationErrorStrings := apimachineryvalidation.ValidateNamespaceName(ns, false); len(validationErrorStrings) > 0 {
+			return nil, fmt.Errorf("invalid namespace '%s': %v", ns, validationErrorStrings)
+		}
+		visited[ns] = true
+	}
+	return namespaces, nil
 }
