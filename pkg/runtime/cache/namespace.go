@@ -80,51 +80,79 @@ type NamespaceCache struct {
 	log logr.Logger
 	// namespaceInfos maps namespaces names to their known namespaceInfo
 	namespaceInfos map[string]*namespaceInfo
+	// watchScope is the list of namespaces we are watching
+	watchScope []string
+	// ignored is the list of namespaces we are ignoring
+	ignored []string
 }
 
 // NewNamespaceCache instanciate a new NamespaceCache.
-func NewNamespaceCache(log logr.Logger) *NamespaceCache {
+func NewNamespaceCache(log logr.Logger, watchScope []string, ignored []string) *NamespaceCache {
 	return &NamespaceCache{
 		log:            log.WithName("cache.namespace"),
 		namespaceInfos: make(map[string]*namespaceInfo),
+		ignored:        ignored,
+		watchScope:     watchScope,
 	}
 }
 
-// isIgnoredNamespace returns true if an object is of type corev1.Namespace and
-// its metadata name is the ACK system namespace, 'kube-system' or
-// 'kube-public'
-func isIgnoredNamespace(raw interface{}) bool {
-	object, ok := raw.(*corev1.Namespace)
-	return ok &&
-		(object.ObjectMeta.Name == ackSystemNamespace ||
-			object.ObjectMeta.Name == "kube-system" ||
-			object.ObjectMeta.Name == "kube-public")
+// isIgnoredNamespace returns true if the namespace is ignored
+func (c *NamespaceCache) isIgnoredNamespace(namespace string) bool {
+	for _, ns := range c.ignored {
+		if namespace == ns {
+			return true
+		}
+	}
+	return false
+}
+
+// inWatchScope returns true if the namespace is in the watch scope
+func (c *NamespaceCache) inWatchScope(namespace string) bool {
+	if len(c.watchScope) == 0 {
+		return true
+	}
+	for _, ns := range c.watchScope {
+		if namespace == ns {
+			return true
+		}
+	}
+	return false
+}
+
+// approvedNamespace returns true if the namespace is not ignored and is in the watch scope
+func (c *NamespaceCache) approvedNamespace(namespace string) bool {
+	return !c.isIgnoredNamespace(namespace) && c.inWatchScope(namespace)
 }
 
 // Run instantiate a new shared informer for namespaces and runs it to begin processing items.
 func (c *NamespaceCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{}) {
+	c.log.V(1).Info("Starting namespace cache", "watchScope", c.watchScope, "ignored", c.ignored)
 	informer := informersv1.NewNamespaceInformer(
 		clientSet,
 		informerResyncPeriod,
-		k8scache.Indexers{},
+		k8scache.Indexers{
+			k8scache.NamespaceIndex: k8scache.MetaNamespaceIndexFunc,
+		},
 	)
 	informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			if !isIgnoredNamespace(obj) {
-				ns := obj.(*corev1.Namespace)
+			// It is guaranteed that the object is of type corev1.Namespace
+			ns := obj.(*corev1.Namespace)
+			if c.approvedNamespace(ns.ObjectMeta.Name) {
 				c.setNamespaceInfoFromK8sObject(ns)
 				c.log.V(1).Info("created namespace", "name", ns.ObjectMeta.Name)
 			}
 		},
 		UpdateFunc: func(orig, desired interface{}) {
-			if !isIgnoredNamespace(desired) {
-				ns := desired.(*corev1.Namespace)
+			ns := desired.(*corev1.Namespace)
+			if c.approvedNamespace(ns.ObjectMeta.Name) {
 				c.setNamespaceInfoFromK8sObject(ns)
 				c.log.V(1).Info("updated namespace", "name", ns.ObjectMeta.Name)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			if !isIgnoredNamespace(obj) {
+			ns := obj.(*corev1.Namespace)
+			if c.approvedNamespace(ns.ObjectMeta.Name) {
 				ns := obj.(*corev1.Namespace)
 				c.deleteNamespaceInfo(ns.ObjectMeta.Name)
 				c.log.V(1).Info("deleted namespace", "name", ns.ObjectMeta.Name)

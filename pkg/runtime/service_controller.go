@@ -14,6 +14,7 @@
 package runtime
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 
@@ -32,6 +33,18 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+)
+
+const (
+	// NamespaceKubeNodeLease is the name of the Kubernetes namespace that
+	// contains the kube-node-lease resources (used for node hearthbeats)
+	NamespaceKubeNodeLease = "kube-node-lease"
+	// NamespacePublic is the name of the Kubernetes namespace that contains
+	// the public info (ConfigMaps)
+	NamespaceKubePublic = "kube-public"
+	// NamespaceSystem is the name of the Kubernetes namespace where we place
+	// system components.
+	NamespaceKubeSystem = "kube-system"
 )
 
 // serviceController wraps a number of `controller-runtime.Reconciler` that are
@@ -187,13 +200,38 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 
-	cache := ackrtcache.New(c.log)
-	if cfg.WatchNamespace == "" {
+	namespaces, err := cfg.GetWatchNamespaces()
+	if err != nil {
+		return fmt.Errorf("unable to get watch namespaces: %v", err)
+	}
+
+	cache := ackrtcache.New(c.log, ackrtcache.Config{
+		WatchScope: namespaces,
+		// Default to ignoring the kube-system, kube-public, and
+		// kube-node-lease namespaces.
+		// NOTE: Maybe we should make this configurable? It's not clear that
+		// we'd ever want to watch these namespaces.
+		Ignored: []string{
+			NamespaceKubeSystem,
+			NamespaceKubePublic,
+			NamespaceKubeNodeLease,
+		}},
+	)
+	// We want to run the caches if the length of the namespaces slice is
+	// either 0 (watching all namespaces) or greater than 1 (watching multiple
+	// namespaces).
+	//
+	// The caches are only used for cross account resource management. If the
+	// controller is not configured to watch multiple namespaces, then we don't
+	// need to run the caches.
+	if len(namespaces) == 0 || len(namespaces) >= 2 {
 		clusterConfig := mgr.GetConfig()
 		clientSet, err := kubernetes.NewForConfig(clusterConfig)
 		if err != nil {
 			return err
 		}
+		// Run the caches. This will not block as the caches are run in
+		// separate goroutines.
 		cache.Run(clientSet)
 	}
 
