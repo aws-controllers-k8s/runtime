@@ -15,6 +15,7 @@ package cache_test
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestNamespaceCache(t *testing.T) {
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 
 	// initlizing account cache
-	namespaceCache := ackrtcache.NewNamespaceCache(fakeLogger)
+	namespaceCache := ackrtcache.NewNamespaceCache(fakeLogger, []string{}, []string{})
 	stopCh := make(chan struct{})
 
 	namespaceCache.Run(k8sClient, stopCh)
@@ -128,4 +129,110 @@ func TestNamespaceCache(t *testing.T) {
 
 	_, ok = namespaceCache.GetDefaultRegion(testNamespace1)
 	require.False(t, ok)
+}
+
+func TestScopedNamespaceCache(t *testing.T) {
+	defaultConfig := ackrtcache.Config{
+		WatchScope: []string{"watch-scope", "watch-scope-2"},
+		Ignored:    []string{"ignored", "ignored-2"},
+	}
+
+	testCases := []struct {
+		name            string
+		createNamespace string
+		expectCacheHit  bool
+		cacheConfig     ackrtcache.Config
+	}{
+		{
+			name:            "namespace in scope",
+			createNamespace: "watch-scope",
+			expectCacheHit:  true,
+			cacheConfig:     defaultConfig,
+		},
+		{
+			name:            "namespace not in scope",
+			createNamespace: "watch-scope-3",
+			expectCacheHit:  false,
+			cacheConfig:     defaultConfig,
+		},
+		{
+			name:            "namespace in ignored",
+			createNamespace: "ignored",
+			expectCacheHit:  false,
+			cacheConfig:     defaultConfig,
+		},
+		{
+			name:            "namespace is nor in scope or ignored",
+			createNamespace: "random-penguin",
+			expectCacheHit:  false,
+			cacheConfig:     defaultConfig,
+		},
+		{
+			name:            "namespace is in scope and ignored",
+			createNamespace: "watch-scope-2",
+			expectCacheHit:  true,
+			cacheConfig:     defaultConfig,
+		},
+		{
+			name:            "cache watching all namespaces - namespace in scope",
+			cacheConfig:     ackrtcache.Config{},
+			createNamespace: "watch-scope",
+			expectCacheHit:  true,
+		},
+		{
+			name:            "cache watching all namespaces - namespace is ignored",
+			cacheConfig:     ackrtcache.Config{Ignored: []string{"kube-system"}},
+			createNamespace: "kube-system",
+			expectCacheHit:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// create a fake k8s client and fake watcher
+			k8sClient := k8sfake.NewSimpleClientset()
+			watcher := watch.NewFake()
+			k8sClient.PrependWatchReactor("random-penguin", k8stesting.DefaultWatchReactor(watcher, nil))
+
+			// New logger writing to specific buffer
+			zapOptions := ctrlrtzap.Options{
+				Development: true,
+				Level:       zapcore.InfoLevel,
+				DestWriter:  io.Discard,
+			}
+			fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+
+			// initlizing account cache
+			namespaceCache := ackrtcache.NewNamespaceCache(fakeLogger, tc.cacheConfig.WatchScope, tc.cacheConfig.Ignored)
+			stopCh := make(chan struct{})
+
+			namespaceCache.Run(k8sClient, stopCh)
+
+			// Create namespace with name testNamespace1
+			_, err := k8sClient.CoreV1().Namespaces().Create(
+				context.Background(),
+				newNamespace(tc.createNamespace),
+				metav1.CreateOptions{},
+			)
+			require.Nil(t, err)
+
+			// Need a better way to wait for the cache to be updated
+			// Thinking informer.WaitForCacheSync() ~ but it's not exported
+			time.Sleep(time.Millisecond * 50)
+
+			_, found := namespaceCache.GetDefaultRegion(tc.createNamespace)
+			require.Equal(t, tc.expectCacheHit, found)
+		})
+	}
+}
+
+func newNamespace(name string) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				ackv1alpha1.AnnotationDefaultRegion: "us-west-2",
+			},
+		},
+	}
 }
