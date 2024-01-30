@@ -119,7 +119,7 @@ func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlu
 		return false, err
 	}
 
-	restMapperClient, err := apiutil.NewDiscoveryRESTMapper(clusterConfig, httpClient)
+	restMapperClient, err := apiutil.NewDynamicRESTMapper(clusterConfig, httpClient)
 	if err != nil {
 		return false, err
 	}
