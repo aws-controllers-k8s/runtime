@@ -42,6 +42,7 @@ const (
 	flagEnableLeaderElection           = "enable-leader-election"
 	flagLeaderElectionNamespace        = "leader-election-namespace"
 	flagMetricAddr                     = "metrics-addr"
+	flagHealthzAddr                    = "healthz-addr"
 	flagEnableDevLogging               = "enable-development-logging"
 	flagAWSRegion                      = "aws-region"
 	flagAWSEndpointURL                 = "aws-endpoint-url"
@@ -74,6 +75,7 @@ var (
 // Config contains configuration options for ACK service controllers
 type Config struct {
 	MetricsAddr                    string
+	HealthzAddr                    string
 	EnableLeaderElection           bool
 	LeaderElectionNamespace        string
 	EnableDevelopmentLogging       bool
@@ -98,6 +100,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.MetricsAddr, flagMetricAddr,
 		"0.0.0.0:8080",
 		"The address the metric endpoint binds to.",
+	)
+	flag.StringVar(
+		&cfg.HealthzAddr, flagHealthzAddr,
+		"0.0.0.0:8081",
+		"The address the health probe endpoint binds to.",
 	)
 	flag.BoolVar(
 		&cfg.EnableWebhookServer, flagEnableWebhookServer,
