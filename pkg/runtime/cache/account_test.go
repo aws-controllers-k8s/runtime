@@ -37,11 +37,14 @@ const (
 	testAccountARN1 = "arn:aws:iam::012345678912:role/S3Access"
 	testAccount2    = "219876543210"
 	testAccountARN2 = "arn:aws:iam::012345678912:role/root"
+	testAccount3    = "321987654321"
+	testAccountARN3 = ""
 )
 
 func TestAccountCache(t *testing.T) {
 	accountsMap1 := map[string]string{
 		testAccount1: testAccountARN1,
+		testAccount3: testAccountARN3,
 	}
 
 	accountsMap2 := map[string]string{
@@ -65,8 +68,14 @@ func TestAccountCache(t *testing.T) {
 	stopCh := make(chan struct{})
 	accountCache.Run(k8sClient, stopCh)
 
+	// Before creating the configmap, the accountCache should error for any
+	// GetAccountRoleARN call.
+	_, err := accountCache.GetAccountRoleARN(testAccount1)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
+
 	// Test create events
-	_, err := k8sClient.CoreV1().ConfigMaps(testNamespace).Create(
+	_, err = k8sClient.CoreV1().ConfigMaps(testNamespace).Create(
 		context.Background(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -80,8 +89,15 @@ func TestAccountCache(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	_, ok := accountCache.GetAccountRoleARN("random-account")
-	require.False(t, ok)
+	// Test with non existing account
+	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
+
+	// Test with existing account
+	_, err = accountCache.GetAccountRoleARN(testAccount1)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
 	k8sClient.CoreV1().ConfigMaps(testNamespace).Create(
 		context.Background(),
@@ -97,12 +113,20 @@ func TestAccountCache(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	roleARN, ok := accountCache.GetAccountRoleARN(testAccount1)
-	require.True(t, ok)
-	require.Equal(t, roleARN, testAccountARN1)
+	// Test with non existing account
+	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
 
-	_, ok = accountCache.GetAccountRoleARN(testAccount2)
-	require.False(t, ok)
+	// Test with existing account - but role ARN is empty
+	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrEmptyRoleARN)
+
+	// Test with existing account
+	roleARN, err := accountCache.GetAccountRoleARN(testAccount1)
+	require.Nil(t, err)
+	require.Equal(t, roleARN, testAccountARN1)
 
 	// Test update events
 	k8sClient.CoreV1().ConfigMaps("ack-system").Update(
@@ -119,12 +143,23 @@ func TestAccountCache(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	roleARN, ok = accountCache.GetAccountRoleARN(testAccount1)
-	require.True(t, ok)
+	// Test with non existing account
+	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
+
+	// Test that account was removed
+	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
+
+	// Test with existing account
+	roleARN, err = accountCache.GetAccountRoleARN(testAccount1)
+	require.Nil(t, err)
 	require.Equal(t, roleARN, testAccountARN1)
 
-	roleARN, ok = accountCache.GetAccountRoleARN(testAccount2)
-	require.True(t, ok)
+	roleARN, err = accountCache.GetAccountRoleARN(testAccount2)
+	require.Nil(t, err)
 	require.Equal(t, roleARN, testAccountARN2)
 
 	// Test delete events
@@ -136,9 +171,16 @@ func TestAccountCache(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	_, ok = accountCache.GetAccountRoleARN(testAccount1)
-	require.False(t, ok)
-	_, ok = accountCache.GetAccountRoleARN(testAccount2)
-	require.False(t, ok)
+	// Test that accounts ware removed
+	_, err = accountCache.GetAccountRoleARN(testAccount1)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
+	_, err = accountCache.GetAccountRoleARN(testAccount2)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
+
+	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	require.NotNil(t, err)
+	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 }

@@ -49,6 +49,10 @@ const (
 	// the successful reconciliation. This behavior for a resource can be
 	// overriden by RequeueOnSuccessSeconds configuration for that resource.
 	defaultResyncPeriod = 10 * time.Hour
+	// roleARNNotAvailableRequeueDelay is the default duration to requeue the
+	// resource if the CARM cache is not synced yet, or if the roleARN is not
+	// available.
+	roleARNNotAvailableRequeueDelay = 15 * time.Second
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -154,11 +158,31 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 
-	acctID := r.getOwnerAccountID(desired)
+	// If a user has specified a namespace that is annotated with the
+	// an owner account ID, we need an appropriate role ARN to assume
+	// in order to perform the reconciliation. The roles ARN are typically
+	// stored in a ConfigMap in the ACK system namespace.
+	// If the ConfigMap is not created, or not populated with an
+	// accountID to roleARN mapping, we need to properly requeue with a
+	// helpful message to the user.
+	var roleARN ackv1alpha1.AWSResourceName
+	acctID, needCARMLookup := r.getOwnerAccountID(desired)
+	if needCARMLookup {
+		// This means that the user is specifying a namespace that is
+		// annotated with an owner account ID. We need to retrieve the
+		// roleARN from the ConfigMap and properly requeue if the roleARN
+		// is not available.
+		roleARN, err = r.getRoleARN(acctID)
+		if err != nil {
+			// r.getRoleARN errors are not terminal, we should requeue.
+			return ctrlrt.Result{}, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
+		}
+	}
 	region := r.getRegion(desired)
-	roleARN := r.getRoleARN(acctID)
+
 	endpointURL := r.getEndpointURL(desired)
 	gvk := r.rd.GroupVersionKind()
+	// New session will only pivot to the roleARN if it is not empty.
 	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err
@@ -970,32 +994,47 @@ func (r *resourceReconciler) HandleReconcileError(
 // by the default AWS account ID associated with the Kubernetes Namespace in
 // which the CR was created, followed by the AWS Account in which the IAM Role
 // that the service controller is in.
+//
+// This function is also returning a boolean stating whether the account ID
+// is retrieved from the namespace annotations. This information is used to
+// determine whether the a role ARN should be assumed to manage the resource,
+// which is typically found in the CARM ConfigMap.
+//
+// If the returned boolean is true, it means that the resource is owned by
+// a different account than the controller's default account ID, and the
+// controller should lookup the CARM ConfigMap.
 func (r *resourceReconciler) getOwnerAccountID(
 	res acktypes.AWSResource,
-) ackv1alpha1.AWSAccountID {
+) (ackv1alpha1.AWSAccountID, bool) {
+	controllerAccountID := ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+
+	// look for owner account id in the resource status
 	acctID := res.Identifiers().OwnerAccountID()
 	if acctID != nil {
-		return *acctID
+		return *acctID, *acctID != controllerAccountID
 	}
 
 	// look for owner account id in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
 	accID, ok := r.cache.Namespaces.GetOwnerAccountID(namespace)
 	if ok {
-		return ackv1alpha1.AWSAccountID(accID)
+		return ackv1alpha1.AWSAccountID(accID), true
 	}
 
 	// use controller configuration
-	return ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+	return controllerAccountID, false
 }
 
 // getRoleARN return the Role ARN that should be assumed in order to manage
 // the resources.
 func (r *resourceReconciler) getRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
-) ackv1alpha1.AWSResourceName {
-	roleARN, _ := r.cache.Accounts.GetAccountRoleARN(string(acctID))
-	return ackv1alpha1.AWSResourceName(roleARN)
+) (ackv1alpha1.AWSResourceName, error) {
+	roleARN, err := r.cache.Accounts.GetAccountRoleARN(string(acctID))
+	if err != nil {
+		return "", fmt.Errorf("unable to retrieve role ARN for account %s: %v", acctID, err)
+	}
+	return ackv1alpha1.AWSResourceName(roleARN), nil
 }
 
 // getRegion returns the region the resource exists in, or if the resource

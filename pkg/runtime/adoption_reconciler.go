@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
@@ -107,10 +108,28 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ackerr.NotAdoptable
 	}
 
-	targetDescriptor := rmf.ResourceDescriptor()
-	acctID := r.getOwnerAccountID(res)
+	// If a user has specified a namespace that is annotated with the
+	// an owner account ID, we need an appropriate role ARN to assume
+	// in order to perform the reconciliation. The roles ARN are typically
+	// stored in a ConfigMap in the ACK system namespace.
+	// If the ConfigMap is not created, or not populated with an
+	// accountID to roleARN mapping, we need to properly requeue with a
+	// helpful message to the user.
+	var roleARN ackv1alpha1.AWSResourceName
+	acctID, needCARMLookup := r.getOwnerAccountID(res)
+	if needCARMLookup {
+		// This means that the user is specifying a namespace that is
+		// annotated with an owner account ID. We need to retrieve the
+		// roleARN from the ConfigMap and properly requeue if the roleARN
+		// is not available.
+		roleARN, err = r.getRoleARN(acctID)
+		if err != nil {
+			// r.getRoleARN errors are not terminal, we should requeue.
+			return requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
+		}
+	}
 	region := r.getRegion(res)
-	roleARN := r.getRoleARN(acctID)
+	targetDescriptor := rmf.ResourceDescriptor()
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
 
@@ -428,16 +447,16 @@ func (r *adoptionReconciler) handleReconcileError(err error) (ctrlrt.Result, err
 // that the service controller is in.
 func (r *adoptionReconciler) getOwnerAccountID(
 	res *ackv1alpha1.AdoptedResource,
-) ackv1alpha1.AWSAccountID {
+) (ackv1alpha1.AWSAccountID, bool) {
 	// look for owner account id in the namespace annotations
 	namespace := res.GetNamespace()
 	accID, ok := r.cache.Namespaces.GetOwnerAccountID(namespace)
 	if ok {
-		return ackv1alpha1.AWSAccountID(accID)
+		return ackv1alpha1.AWSAccountID(accID), true
 	}
 
 	// use controller configuration
-	return ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+	return ackv1alpha1.AWSAccountID(r.cfg.AccountID), false
 }
 
 // getEndpointURL returns the AWS account that owns the supplied resource.
@@ -462,9 +481,12 @@ func (r *adoptionReconciler) getEndpointURL(
 // the resources.
 func (r *adoptionReconciler) getRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
-) ackv1alpha1.AWSResourceName {
-	roleARN, _ := r.cache.Accounts.GetAccountRoleARN(string(acctID))
-	return ackv1alpha1.AWSResourceName(roleARN)
+) (ackv1alpha1.AWSResourceName, error) {
+	roleARN, err := r.cache.Accounts.GetAccountRoleARN(string(acctID))
+	if err != nil {
+		return "", fmt.Errorf("unable to retrieve role ARN for account %s: %v", acctID, err)
+	}
+	return ackv1alpha1.AWSResourceName(roleARN), nil
 }
 
 // getRegion returns the AWS region that the given resource is in or should be
