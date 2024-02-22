@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/arn"
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
@@ -225,6 +226,10 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 	ctx = context.WithValue(ctx, "resourceNamespace", req.Namespace)
 
+	// If a user specified a namespace with team-id annotation,
+	// we need to get the role and set the accout ID to that role.
+	teamID := r.getTeamID(desired)
+
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume
 	// in order to perform the reconciliation. The roles ARN are typically
@@ -232,22 +237,29 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// If the ConfigMap is not created, or not populated with an
 	// accountID to roleARN mapping, we need to properly requeue with a
 	// helpful message to the user.
-	var roleARN ackv1alpha1.AWSResourceName
 	acctID, needCARMLookup := r.getOwnerAccountID(desired)
-	if needCARMLookup {
-		// This means that the user is specifying a namespace that is
-		// annotated with an owner account ID. We need to retrieve the
-		// roleARN from the ConfigMap and properly requeue if the roleARN
-		// is not available.
-		roleARN, err = r.getOwnerAccountRoleARN(acctID)
+
+	var roleARN ackv1alpha1.AWSResourceName
+	if teamID != "" {
+		roleARN, err = r.getTeamRoleARN(teamID)
 		if err != nil {
-			// TODO(a-hilaly): Refactor all the reconcile function to make it
-			// easier to understand and maintain.
-			reason := err.Error()
-			latest := desired.DeepCopy()
-			// set ResourceSynced condition to false with proper error message
-			condition.SetSynced(latest, corev1.ConditionFalse, &condition.UnavailableIAMRoleMessage, &reason)
-			return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
+			return r.handleCacheError(ctx, err, desired)
+		}
+		parsedARN, err := arn.Parse(string(roleARN))
+		if err != nil {
+			return ctrlrt.Result{}, fmt.Errorf("failed to parsed role ARN %q from namespace annotation: %v", roleARN, err)
+		}
+		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
+	} else {
+		if needCARMLookup {
+			// This means that the user is specifying a namespace that is
+			// annotated with an owner account ID or team ID. We need to retrieve the
+			// roleARN from the ConfigMap and properly requeue if the roleARN
+			// is not available.
+			roleARN, err = r.getOwnerAccountRoleARN(acctID)
+			if err != nil {
+				return r.handleCacheError(ctx, err, desired)
+			}
 		}
 	}
 	region := r.getRegion(desired)
@@ -273,6 +285,20 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	}
 	latest, err := r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
+}
+
+func (r *resourceReconciler) handleCacheError(
+	ctx context.Context,
+	err error,
+	desired acktypes.AWSResource,
+) (ctrlrt.Result, error) {
+	// TODO(a-hilaly): Refactor all the reconcile function to make it
+	// easier to understand and maintain.
+	reason := err.Error()
+	latest := desired.DeepCopy()
+	// set ResourceSynced condition to false with proper error message
+	condition.SetSynced(latest, corev1.ConditionFalse, &condition.UnavailableIAMRoleMessage, &reason)
+	return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
 }
 
 // reconcile either cleans up a deleted resource or ensures that the supplied
@@ -1089,8 +1115,21 @@ func (r *resourceReconciler) getOwnerAccountID(
 	return controllerAccountID, false
 }
 
-// getOwnerAccountRoleARN return the Role ARN that should be assumed in order to manage
-// the resources.
+// getTeamID gets the team-id from the namespace annotation.
+func (r *resourceReconciler) getTeamID(
+	res acktypes.AWSResource,
+) ackv1alpha1.TeamID {
+	// look for team ID in the namespace annotations
+	namespace := res.MetaObject().GetNamespace()
+	namespacedTeamID, ok := r.cache.Namespaces.GetTeamID(namespace)
+	if ok {
+		return ackv1alpha1.TeamID(namespacedTeamID)
+	}
+	return ackv1alpha1.TeamID("")
+}
+
+// getRoleARN return the Role ARN that should be assumed for accoutn ID
+// in order to manage the resources.
 func (r *resourceReconciler) getOwnerAccountRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
 ) (ackv1alpha1.AWSResourceName, error) {
@@ -1103,6 +1142,19 @@ func (r *resourceReconciler) getOwnerAccountRoleARN(
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("unable to retrieve role ARN from CARM v2 for account %s: %v", acctID, err)
+	}
+
+	return ackv1alpha1.AWSResourceName(roleARN), nil
+}
+
+// getTeamRoleARN return the Role ARN that should be assumed for a team ID
+// in order to manage the resources.
+func (r *resourceReconciler) getTeamRoleARN(
+	teamID ackv1alpha1.TeamID,
+) (ackv1alpha1.AWSResourceName, error) {
+	roleARN, err := r.cache.CARMMaps.GetValue(ackrtcache.TeamIDPrefix + string(teamID))
+	if err == ackrtcache.ErrCARMConfigMapNotFound || err == ackrtcache.ErrKeyNotFound {
+		return "", fmt.Errorf("unable to retrieve role ARN from CARM v2 for account %s: %v", teamID, err)
 	}
 
 	return ackv1alpha1.AWSResourceName(roleARN), nil

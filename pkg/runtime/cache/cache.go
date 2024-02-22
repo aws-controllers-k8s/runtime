@@ -46,6 +46,9 @@ const (
 
 	// The prefix for owner account ID in the v2 CARM map.
 	OwnerAccountIDPrefix = "owner-account-id/"
+
+	// The prefix for owner team ID in the v2 CARM map.
+	TeamIDPrefix = "team-id/"
 )
 
 // ackSystemNamespace is the namespace in which we look up ACK system
