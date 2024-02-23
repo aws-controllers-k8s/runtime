@@ -158,6 +158,18 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 
+	rlog := ackrtlog.NewResourceLogger(
+		r.log, desired,
+		// All the fields for a resource that do not change during reconciliation
+		// can be initialized during resourceLogger creation
+		"kind", r.rd.GroupVersionKind().Kind,
+		"namespace", req.Namespace,
+		"name", req.Name,
+	)
+	// We're storing a logger pointer in the context, so that any changes to the logger
+	// will be reflected in the context.
+	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
+
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume
 	// in order to perform the reconciliation. The roles ARN are typically
@@ -174,12 +186,16 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		// is not available.
 		roleARN, err = r.getRoleARN(acctID)
 		if err != nil {
-			// r.getRoleARN errors are not terminal, we should requeue.
-			return ctrlrt.Result{}, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
+			// TODO(a-hilaly): Refactor all the reconcile function to make it
+			// easier to understand and maintain.
+			reason := err.Error()
+			latest := desired.DeepCopy()
+			// set ResourceSynced condition to false with proper error message
+			condition.SetSynced(latest, corev1.ConditionFalse, &condition.UnavailableIAMRoleMessage, &reason)
+			return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
 		}
 	}
 	region := r.getRegion(desired)
-
 	endpointURL := r.getEndpointURL(desired)
 	gvk := r.rd.GroupVersionKind()
 	// New session will only pivot to the roleARN if it is not empty.
@@ -188,18 +204,11 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 
-	rlog := ackrtlog.NewResourceLogger(
-		r.log, desired,
+	rlog.WithValues(
 		"account", acctID,
 		"role", roleARN,
 		"region", region,
-		// All the fields for a resource that do not change during reconciliation
-		// can be initialized during resourceLogger creation
-		"kind", r.rd.GroupVersionKind().Kind,
-		"namespace", req.Namespace,
-		"name", req.Name,
 	)
-	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 
 	rm, err := r.rmf.ManagerFor(
 		r.cfg, r.log, r.metrics, r, sess, acctID, region,

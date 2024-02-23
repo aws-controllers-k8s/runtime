@@ -124,6 +124,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 		// is not available.
 		roleARN, err = r.getRoleARN(acctID)
 		if err != nil {
+			ackrtlog.InfoAdoptedResource(r.log, res, fmt.Sprintf("Unable to start adoption reconcilliation %s: %v", acctID, err))
 			// r.getRoleARN errors are not terminal, we should requeue.
 			return requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
 		}
