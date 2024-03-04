@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlrtcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -99,12 +100,17 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
 	rd := r.rmf.ResourceDescriptor()
+	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
 		predicate.GenerationChangedPredicate{},
+	).WithOptions(
+		ctrlrtcontroller.Options{
+			MaxConcurrentReconciles: maxConcurrentReconciles,
+		},
 	).Complete(r)
 }
 

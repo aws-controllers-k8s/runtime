@@ -39,8 +39,8 @@ func TestParseReconcileFlagArgument(t *testing.T) {
 		{"=value", "", 0, true, "missing key in flag argument"},
 		{"key=value1=value2", "", 0, true, "invalid flag argument format: expected key=value"},
 		{"key=a", "", 0, true, "invalid value in flag argument: strconv.Atoi: parsing \"a\": invalid syntax"},
-		{"key=-1", "", 0, true, "invalid value in flag argument: expected non-negative integer, got -1"},
-		{"key=-123456", "", 0, true, "invalid value in flag argument: expected non-negative integer, got -123456"},
+		{"key=-1", "", 0, true, "invalid value in flag argument: value must be greater than 0"},
+		{"key=-123456", "", 0, true, "invalid value in flag argument: value must be greater than 0"},
 		{"key=1.1", "", 0, true, "invalid value in flag argument: strconv.Atoi: parsing \"1.1\": invalid syntax"},
 	}
 	for _, test := range tests {
