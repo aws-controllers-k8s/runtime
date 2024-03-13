@@ -27,6 +27,7 @@ import (
 	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -38,23 +39,26 @@ import (
 )
 
 const (
-	flagEnableLeaderElection           = "enable-leader-election"
-	flagLeaderElectionNamespace        = "leader-election-namespace"
-	flagMetricAddr                     = "metrics-addr"
-	flagEnableDevLogging               = "enable-development-logging"
-	flagAWSRegion                      = "aws-region"
-	flagAWSEndpointURL                 = "aws-endpoint-url"
-	flagAWSIdentityEndpointURL         = "aws-identity-endpoint-url"
-	flagUnsafeAWSEndpointURLs          = "allow-unsafe-aws-endpoint-urls"
-	flagLogLevel                       = "log-level"
-	flagResourceTags                   = "resource-tags"
-	flagWatchNamespace                 = "watch-namespace"
-	flagEnableWebhookServer            = "enable-webhook-server"
-	flagWebhookServerAddr              = "webhook-server-addr"
-	flagDeletionPolicy                 = "deletion-policy"
-	flagReconcileDefaultResyncSeconds  = "reconcile-default-resync-seconds"
-	flagReconcileResourceResyncSeconds = "reconcile-resource-resync-seconds"
-	envVarAWSRegion                    = "AWS_REGION"
+	flagEnableLeaderElection            = "enable-leader-election"
+	flagLeaderElectionNamespace         = "leader-election-namespace"
+	flagMetricAddr                      = "metrics-addr"
+	flagHealthzAddr                     = "healthz-addr"
+	flagEnableDevLogging                = "enable-development-logging"
+	flagAWSRegion                       = "aws-region"
+	flagAWSEndpointURL                  = "aws-endpoint-url"
+	flagAWSIdentityEndpointURL          = "aws-identity-endpoint-url"
+	flagUnsafeAWSEndpointURLs           = "allow-unsafe-aws-endpoint-urls"
+	flagLogLevel                        = "log-level"
+	flagResourceTags                    = "resource-tags"
+	flagWatchNamespace                  = "watch-namespace"
+	flagEnableWebhookServer             = "enable-webhook-server"
+	flagWebhookServerAddr               = "webhook-server-addr"
+	flagDeletionPolicy                  = "deletion-policy"
+	flagReconcileDefaultResyncSeconds   = "reconcile-default-resync-seconds"
+	flagReconcileResourceResyncSeconds  = "reconcile-resource-resync-seconds"
+	flagReconcileDefaultMaxConcurrency  = "reconcile-default-max-concurrent-syncs"
+	flagReconcileResourceMaxConcurrency = "reconcile-resource-max-concurrent-syncs"
+	envVarAWSRegion                     = "AWS_REGION"
 )
 
 var (
@@ -72,23 +76,26 @@ var (
 
 // Config contains configuration options for ACK service controllers
 type Config struct {
-	MetricsAddr                    string
-	EnableLeaderElection           bool
-	LeaderElectionNamespace        string
-	EnableDevelopmentLogging       bool
-	AccountID                      string
-	Region                         string
-	IdentityEndpointURL            string
-	EndpointURL                    string
-	AllowUnsafeEndpointURL         bool
-	LogLevel                       string
-	ResourceTags                   []string
-	WatchNamespace                 string
-	EnableWebhookServer            bool
-	WebhookServerAddr              string
-	DeletionPolicy                 ackv1alpha1.DeletionPolicy
-	ReconcileDefaultResyncSeconds  int
-	ReconcileResourceResyncSeconds []string
+	MetricsAddr                     string
+	HealthzAddr                     string
+	EnableLeaderElection            bool
+	LeaderElectionNamespace         string
+	EnableDevelopmentLogging        bool
+	AccountID                       string
+	Region                          string
+	IdentityEndpointURL             string
+	EndpointURL                     string
+	AllowUnsafeEndpointURL          bool
+	LogLevel                        string
+	ResourceTags                    []string
+	WatchNamespace                  string
+	EnableWebhookServer             bool
+	WebhookServerAddr               string
+	DeletionPolicy                  ackv1alpha1.DeletionPolicy
+	ReconcileDefaultResyncSeconds   int
+	ReconcileResourceResyncSeconds  []string
+	ReconcileDefaultMaxConcurrency  int
+	ReconcileResourceMaxConcurrency []string
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -97,6 +104,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.MetricsAddr, flagMetricAddr,
 		"0.0.0.0:8080",
 		"The address the metric endpoint binds to.",
+	)
+	flag.StringVar(
+		&cfg.HealthzAddr, flagHealthzAddr,
+		"0.0.0.0:8081",
+		"The address the health probe endpoint binds to.",
 	)
 	flag.BoolVar(
 		&cfg.EnableWebhookServer, flagEnableWebhookServer,
@@ -174,8 +186,8 @@ func (cfg *Config) BindFlags() {
 	flag.StringVar(
 		&cfg.WatchNamespace, flagWatchNamespace,
 		"",
-		"Specific namespace the service controller will watch for object creation from CRD. "+
-			" By default it will listen to all namespaces",
+		"A comma-separated list of valid RFC-1123 namespace names to watch for custom resource events. "+
+			"If unspecified, the controller watches for events in all namespaces.",
 	)
 	flag.Var(
 		&cfg.DeletionPolicy, flagDeletionPolicy,
@@ -193,6 +205,19 @@ func (cfg *Config) BindFlags() {
 		"A Key/Value list of strings representing the reconcile resync configuration for each resource. This"+
 			" configuration maps resource kinds to drift remediation periods in seconds. If provided, "+
 			" resource-specific resync periods take precedence over the default period.",
+	)
+	flag.IntVar(
+		&cfg.ReconcileDefaultMaxConcurrency, flagReconcileDefaultMaxConcurrency,
+		1,
+		"The default maximum number of concurrent reconciles for a resource reconciler. This value is used if no "+
+			"resource-specific override has been specified. Default is 1.",
+	)
+	flag.StringArrayVar(
+		&cfg.ReconcileResourceMaxConcurrency, flagReconcileResourceMaxConcurrency,
+		[]string{},
+		"A Key/Value list of strings representing the reconcile max concurrency configuration for each resource. This"+
+			" configuration maps resource kinds to maximum number of concurrent reconciles. If provided, "+
+			" resource-specific max concurrency takes precedence over the default max concurrency.",
 	)
 }
 
@@ -214,7 +239,6 @@ func (cfg *Config) SetupLogger() {
 // SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
 // in Config
 func (cfg *Config) SetAWSAccountID() error {
-
 	awsCfg := aws.Config{}
 	if cfg.IdentityEndpointURL != "" {
 		awsCfg.Endpoint = aws.String(cfg.IdentityEndpointURL)
@@ -289,6 +313,9 @@ func (cfg *Config) Validate(options ...Option) error {
 	if cfg.ReconcileDefaultResyncSeconds < 0 {
 		return fmt.Errorf("invalid value for flag '%s': resync seconds default must be greater than 0", flagReconcileDefaultResyncSeconds)
 	}
+	if cfg.ReconcileDefaultMaxConcurrency < 1 {
+		return fmt.Errorf("invalid value for flag '%s': max concurrency default must be greater than 0", flagReconcileDefaultMaxConcurrency)
+	}
 	return nil
 }
 
@@ -301,24 +328,41 @@ func (cfg *Config) checkUnsafeEndpoint(endpoint *url.URL) error {
 	return nil
 }
 
-// validateReconcileConfigResources validates the --reconcile-resource-resync-seconds flag
-// by checking the resource names and their corresponding duration.
+// validateReconcileConfigResources validates the --reconcile-resource-resync-seconds and
+// --reconcile-resource-max-concurrent-syncs flags. It ensures that the resource names provided
+// in the flags are valid and managed by the controller.
 func (cfg *Config) validateReconcileConfigResources(supportedGVKs []schema.GroupVersionKind) error {
 	validResourceNames := []string{}
 	for _, gvk := range supportedGVKs {
 		validResourceNames = append(validResourceNames, gvk.Kind)
 	}
-	for _, resourceResyncSecondsFlag := range cfg.ReconcileResourceResyncSeconds {
-		resourceName, _, err := parseReconcileFlagArgument(resourceResyncSecondsFlag)
-		if err != nil {
-			return fmt.Errorf("error parsing flag argument '%v': %v. Expected format: resource=seconds", resourceResyncSecondsFlag, err)
+	for _, resourceFlagArgument := range cfg.ReconcileResourceResyncSeconds {
+		if err := validateReconcileConfigResource(validResourceNames, resourceFlagArgument); err != nil {
+			return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceResyncSeconds, err)
 		}
-		if !ackutil.InStrings(resourceName, validResourceNames) {
-			return fmt.Errorf(
-				"error parsing flag argument '%v': resource '%v' is not managed by this controller. Expected one of %v",
-				resourceResyncSecondsFlag, resourceName, strings.Join(validResourceNames, ", "),
-			)
+	}
+	for _, resourceFlagArgument := range cfg.ReconcileResourceMaxConcurrency {
+		if err := validateReconcileConfigResource(validResourceNames, resourceFlagArgument); err != nil {
+			return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceMaxConcurrency, err)
 		}
+	}
+	return nil
+}
+
+// validateReconcileConfigResource validates a single flag argument of any flag that is used to configure
+// resource-specific reconcile settings. It ensures that the resource name is valid and managed by the
+// controller, and that the value is a positive integer. If the flag argument is not in the expected format
+// or has invalid elements, an error is returned.
+func validateReconcileConfigResource(validResourceNames []string, resourceFlagArgument string) error {
+	resourceName, _, err := parseReconcileFlagArgument(resourceFlagArgument)
+	if err != nil {
+		return fmt.Errorf("error parsing flag argument '%v': %v. Expected format: string=number", resourceFlagArgument, err)
+	}
+	if !ackutil.InStrings(resourceName, validResourceNames) {
+		return fmt.Errorf(
+			"error parsing flag argument '%v': resource '%v' is not managed by this controller. Expected one of %v",
+			resourceFlagArgument, resourceName, strings.Join(validResourceNames, ", "),
+		)
 	}
 	return nil
 }
@@ -336,6 +380,20 @@ func (cfg *Config) ParseReconcileResourceResyncSeconds() (map[string]time.Durati
 		resourceResyncPeriods[strings.ToLower(resourceName)] = time.Duration(resyncSeconds)
 	}
 	return resourceResyncPeriods, nil
+}
+
+// GetReconcileResourceMaxConcurrency returns the maximum number of concurrent reconciles for a
+// given resource name. If the resource name is not found in the --reconcile-resource-max-concurrent-syncs
+// flag, the function returns the default maximum concurrency value.
+func (cfg *Config) GetReconcileResourceMaxConcurrency(resourceName string) int {
+	for _, resourceMaxConcurrencyFlag := range cfg.ReconcileResourceMaxConcurrency {
+		// Parse the resource name and max concurrency from the flag argument
+		name, maxConcurrency, _ := parseReconcileFlagArgument(resourceMaxConcurrencyFlag)
+		if strings.EqualFold(name, resourceName) {
+			return maxConcurrency
+		}
+	}
+	return cfg.ReconcileDefaultMaxConcurrency
 }
 
 // parseReconcileFlagArgument parses a flag argument of the form "key=value" into
@@ -357,12 +415,50 @@ func parseReconcileFlagArgument(flagArgument string) (string, int, error) {
 		return "", 0, fmt.Errorf("missing value in flag argument")
 	}
 
-	resyncSeconds, err := strconv.Atoi(elements[1])
+	value, err := strconv.Atoi(elements[1])
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid value in flag argument: %v", err)
 	}
-	if resyncSeconds < 0 {
-		return "", 0, fmt.Errorf("invalid value in flag argument: expected non-negative integer, got %d", resyncSeconds)
+	if value <= 0 {
+		return "", 0, fmt.Errorf("invalid value in flag argument: value must be greater than 0")
 	}
-	return elements[0], resyncSeconds, nil
+	return elements[0], value, nil
+}
+
+// GetWatchNamespaces returns a slice of namespaces to watch for custom resource events.
+// If the watchNamespace flag is empty, the function returns nil, which means that the
+// controller will watch for events in all namespaces.
+func (c *Config) GetWatchNamespaces() ([]string, error) {
+	return parseWatchNamespaceString(c.WatchNamespace)
+}
+
+// parseWatchNamespaceString parses the watchNamespace flag and returns a slice of namespaces
+// to watch. The input string is expected to be a comma-separated list of namespaces.
+//
+// When providing multiple namespaces, the watchNamespace string must not contain
+// spaces, empty namespaces, or duplicate namespaces.
+func parseWatchNamespaceString(namespace string) ([]string, error) {
+	if namespace == "" {
+		// This means that the user did not provide a value for the watchNamespace flag.
+		// In this case, we will watch all namespaces.
+		return nil, nil
+	}
+	visited := make(map[string]bool)
+	namespaces := strings.Split(namespace, ",")
+	for _, ns := range namespaces {
+		if ns == "" {
+			return nil, fmt.Errorf("invalid namespace: empty namespace")
+		}
+		if _, ok := visited[ns]; ok {
+			return nil, fmt.Errorf("duplicate namespace '%s'", ns)
+		}
+		// Settling on the same validation rules as k8s.io/apimachinery/pkg/apis/meta/v1/validation.go
+		// for namespace names. prefix=false means that trailing dashes are not allowed. Trailing dashes
+		// are allowed when the namespace name is used as part of generation.
+		if validationErrorStrings := apimachineryvalidation.ValidateNamespaceName(ns, false); len(validationErrorStrings) > 0 {
+			return nil, fmt.Errorf("invalid namespace '%s': %v", ns, validationErrorStrings)
+		}
+		visited[ns] = true
+	}
+	return namespaces, nil
 }

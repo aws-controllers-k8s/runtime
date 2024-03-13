@@ -13,7 +13,10 @@
 
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseReconcileFlagArgument(t *testing.T) {
 	tests := []struct {
@@ -36,8 +39,8 @@ func TestParseReconcileFlagArgument(t *testing.T) {
 		{"=value", "", 0, true, "missing key in flag argument"},
 		{"key=value1=value2", "", 0, true, "invalid flag argument format: expected key=value"},
 		{"key=a", "", 0, true, "invalid value in flag argument: strconv.Atoi: parsing \"a\": invalid syntax"},
-		{"key=-1", "", 0, true, "invalid value in flag argument: expected non-negative integer, got -1"},
-		{"key=-123456", "", 0, true, "invalid value in flag argument: expected non-negative integer, got -123456"},
+		{"key=-1", "", 0, true, "invalid value in flag argument: value must be greater than 0"},
+		{"key=-123456", "", 0, true, "invalid value in flag argument: value must be greater than 0"},
 		{"key=1.1", "", 0, true, "invalid value in flag argument: strconv.Atoi: parsing \"1.1\": invalid syntax"},
 	}
 	for _, test := range tests {
@@ -56,6 +59,51 @@ func TestParseReconcileFlagArgument(t *testing.T) {
 		}
 		if val != test.expectedVal {
 			t.Errorf("unexpected value for flag argument '%s': expected %d, got %d", test.flagArgument, test.expectedVal, val)
+		}
+	}
+}
+
+const (
+	dns1123SubdomainErrorMsg string = "a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-', and must start and end with an alphanumeric character"
+)
+
+func TestParseNamespace(t *testing.T) {
+	tests := []struct {
+		name                 string
+		watchNamespaceString string
+		expectedNamespaces   []string
+		expectedErr          bool
+		expectedErrMsg       string
+	}{
+		{"empty namespace", "", nil, false, ""},
+		{"default namespace", "default", []string{"default"}, false, ""},
+		{"two valid namespaces", "default,foo", []string{"default", "foo"}, false, ""},
+		{"three valid namespaces", "default,foo,bar", []string{"default", "foo", "bar"}, false, ""},
+		{"multiple empty namespace", ",,,,,", nil, true, "invalid namespace: empty namespace"},
+		{"duplicate namespace", "foo,bar,bar", nil, true, "duplicate namespace 'bar'"},
+		{"valid namespaces and one empty namespace", "default,foo,", nil, true, "invalid namespace: empty namespace"},
+		{"last namespace is invalid", "default,foo,---", nil, true, dns1123SubdomainErrorMsg},
+		{"non RFC 1123 label compliant namespace - dot", "foo.bar", nil, true, "must not contain dots"},
+		{"non RFC 1123 label compliant namespace - underscore", "foo_bar", nil, true, dns1123SubdomainErrorMsg},
+	}
+	for _, test := range tests {
+		namespaces, err := parseWatchNamespaceString(test.watchNamespaceString)
+		if err != nil && !test.expectedErr {
+			t.Errorf("unexpected error for namespace '%s': %v", test.watchNamespaceString, err)
+		}
+		if err == nil && test.expectedErr {
+			t.Errorf("expected error for namespace '%s', got nil", test.watchNamespaceString)
+		}
+		if err != nil && !strings.Contains(err.Error(), test.expectedErrMsg) {
+			t.Errorf("unexpected error message for namespace '%s': expected '%s', got '%v'", test.watchNamespaceString, test.expectedErrMsg, err)
+		}
+		if len(namespaces) != len(test.expectedNamespaces) {
+			t.Errorf("unexpected number of namespaces for namespace '%s': expected %d, got %d", test.watchNamespaceString, len(test.expectedNamespaces), len(namespaces))
+		}
+		for i, ns := range namespaces {
+			if ns != test.expectedNamespaces[i] {
+				t.Errorf("unexpected namespace for namespace '%s': expected '%s', got '%s'", test.watchNamespaceString, test.expectedNamespaces[i], ns)
+			}
 		}
 	}
 }

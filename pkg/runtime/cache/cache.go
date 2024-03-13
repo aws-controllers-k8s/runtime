@@ -58,6 +58,14 @@ func init() {
 	)
 }
 
+// Config is used to configure the caches.
+type Config struct {
+	// WatchScope is a list of namespaces to watch for resources
+	WatchScope []string
+	// Ignored is a list of namespaces to ignore
+	Ignored []string
+}
+
 // Caches is used to interact with the different caches
 type Caches struct {
 	// stopCh is a channel use to stop all the
@@ -72,10 +80,10 @@ type Caches struct {
 }
 
 // New instantiate a new Caches object.
-func New(log logr.Logger) Caches {
+func New(log logr.Logger, config Config) Caches {
 	return Caches{
 		Accounts:   NewAccountCache(log),
-		Namespaces: NewNamespaceCache(log),
+		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
 }
 

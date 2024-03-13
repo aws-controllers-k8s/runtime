@@ -33,6 +33,7 @@ var (
 	NotSyncedMessage                 = "Resource not synced"
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
+	UnavailableIAMRoleMessage        = "IAM Role is not available"
 )
 
 // Synced returns the Condition in the resource's Conditions collection that is

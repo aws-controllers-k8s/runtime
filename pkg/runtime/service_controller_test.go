@@ -31,7 +31,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/config/v1alpha1"
+	ctrlrtconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -106,8 +106,12 @@ func (m *fakeManager) GetLogger() logr.Logger {
 	return logr.New(log.NullLogSink{})
 }
 
-func (m *fakeManager) GetControllerOptions() v1alpha1.ControllerConfigurationSpec {
-	return v1alpha1.ControllerConfigurationSpec{}
+func (m *fakeManager) GetControllerOptions() ctrlrtconfig.Controller {
+	return ctrlrtconfig.Controller{}
+}
+
+func (m *fakeManager) GetHTTPClient() *http.Client {
+	return &http.Client{}
 }
 
 func (m *fakeManager) Add(ctrlmanager.Runnable) error                                 { return nil }
@@ -125,7 +129,7 @@ func (m *fakeManager) GetCache() cache.Cache                                    
 func (m *fakeManager) GetEventRecorderFor(name string) record.EventRecorder           { return nil }
 func (m *fakeManager) GetRESTMapper() meta.RESTMapper                                 { return nil }
 func (m *fakeManager) GetAPIReader() client.Reader                                    { return nil }
-func (m *fakeManager) GetWebhookServer() *webhook.Server                              { return nil }
+func (m *fakeManager) GetWebhookServer() webhook.Server                               { return nil }
 
 func TestServiceController(t *testing.T) {
 	require := require.New(t)
