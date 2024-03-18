@@ -43,6 +43,9 @@ const (
 	// caching system not to set up resyncs with an authoritative state source
 	// (i.e. a Kubernetes API server) on a periodic basis.
 	informerResyncPeriod = 0 * time.Second
+
+	// The prefix for owner account ID in the v2 CARM map.
+	OwnerAccountIDPrefix = "owner-account-id/"
 )
 
 // ackSystemNamespace is the namespace in which we look up ACK system
@@ -73,7 +76,10 @@ type Caches struct {
 	stopCh chan struct{}
 
 	// Accounts cache
-	Accounts *AccountCache
+	Accounts *CARMMap
+
+	// CARMMaps v2 cache
+	CARMMaps *CARMMap
 
 	// Namespaces cache
 	Namespaces *NamespaceCache
@@ -82,7 +88,8 @@ type Caches struct {
 // New instantiate a new Caches object.
 func New(log logr.Logger, config Config) Caches {
 	return Caches{
-		Accounts:   NewAccountCache(log),
+		Accounts:   NewCARMMapCache(log),
+		CARMMaps:   NewCARMMapCache(log),
 		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
 }
@@ -91,7 +98,10 @@ func New(log logr.Logger, config Config) Caches {
 func (c Caches) Run(clientSet kubernetes.Interface) {
 	stopCh := make(chan struct{})
 	if c.Accounts != nil {
-		c.Accounts.Run(clientSet, stopCh)
+		c.Accounts.Run(ACKRoleAccountMap, clientSet, stopCh)
+	}
+	if c.CARMMaps != nil {
+		c.CARMMaps.Run(ACKCARMMapV2, clientSet, stopCh)
 	}
 	if c.Namespaces != nil {
 		c.Namespaces.Run(clientSet, stopCh)
