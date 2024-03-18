@@ -32,6 +32,8 @@ type namespaceInfo struct {
 	defaultRegion string
 	// services.k8s.aws/owner-account-id Annotation
 	ownerAccountID string
+	// services.k8s.aws/team-id Annotation
+	teamID string
 	// services.k8s.aws/endpoint-url Annotation
 	endpointURL string
 	// {service}.services.k8s.aws/deletion-policy Annotations (keyed by service)
@@ -52,6 +54,14 @@ func (n *namespaceInfo) getOwnerAccountID() string {
 		return ""
 	}
 	return n.ownerAccountID
+}
+
+// getTeamID returns the namespace team-id
+func (n *namespaceInfo) getTeamID() string {
+	if n == nil {
+		return ""
+	}
+	return n.teamID
 }
 
 // getEndpointURL returns the namespace Endpoint URL
@@ -182,6 +192,16 @@ func (c *NamespaceCache) GetOwnerAccountID(namespace string) (string, bool) {
 	return "", false
 }
 
+// GetTeamID returns the team-id if it exists
+func (c *NamespaceCache) GetTeamID(namespace string) (string, bool) {
+	info, ok := c.getNamespaceInfo(namespace)
+	if ok {
+		a := info.getTeamID()
+		return a, a != ""
+	}
+	return "", false
+}
+
 // GetEndpointURL returns the endpoint URL if it exists
 func (c *NamespaceCache) GetEndpointURL(namespace string) (string, bool) {
 	info, ok := c.getNamespaceInfo(namespace)
@@ -224,6 +244,10 @@ func (c *NamespaceCache) setNamespaceInfoFromK8sObject(ns *corev1.Namespace) {
 	OwnerAccountID, ok := nsa[ackv1alpha1.AnnotationOwnerAccountID]
 	if ok {
 		nsInfo.ownerAccountID = OwnerAccountID
+	}
+	TeamID, ok := nsa[ackv1alpha1.AnnotationTeamID]
+	if ok {
+		nsInfo.teamID = TeamID
 	}
 	EndpointURL, ok := nsa[ackv1alpha1.AnnotationEndpointURL]
 	if ok {
