@@ -39,6 +39,7 @@ import (
 )
 
 const (
+	flagEnableAdoptedResourceReconciler = "enable-adopted-resource-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
 	flagLeaderElectionNamespace         = "leader-election-namespace"
 	flagMetricAddr                      = "metrics-addr"
@@ -79,6 +80,7 @@ type Config struct {
 	MetricsAddr                     string
 	HealthzAddr                     string
 	EnableLeaderElection            bool
+	EnableAdoptedResourceReconciler bool
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
 	AccountID                       string
@@ -125,6 +127,11 @@ func (cfg *Config) BindFlags() {
 		false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.",
+	)
+	flag.BoolVar(
+		&cfg.EnableAdoptedResourceReconciler, flagEnableAdoptedResourceReconciler,
+		true,
+		"Enable the AdoptedResource reconciler.",
 	)
 	flag.StringVar(
 		// In the context of the controller-runtime library, if the LeaderElectionNamespace parametere is not
