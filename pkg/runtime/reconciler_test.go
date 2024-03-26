@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -196,6 +197,69 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 6)
+}
+
+func TestReconcilerReadOnlyResource(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("my-read-only-book-arn")
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationReadOnly: "true",
+	})
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On("MetaObject").Return(metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationReadOnly: "true",
+		},
+	})
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	).Once()
+	rm.On("Create", ctx, desired).Return(
+		latest, nil,
+	)
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	_, err := r.Sync(ctx, rm, desired)
+	require.Nil(err)
+	rm.AssertNumberOfCalls(t, "ReadOne", 1)
+	// Assert that the resource is not created or updated
+	rm.AssertNotCalled(t, "Create", 0)
+	rm.AssertNotCalled(t, "Update", 0)
+	rm.AssertNotCalled(t, "Delta", 0)
 }
 
 func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testing.T) {
