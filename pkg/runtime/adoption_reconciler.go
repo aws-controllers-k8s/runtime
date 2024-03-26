@@ -122,7 +122,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 		// annotated with an owner account ID. We need to retrieve the
 		// roleARN from the ConfigMap and properly requeue if the roleARN
 		// is not available.
-		roleARN, err = r.getRoleARN(acctID)
+		roleARN, err = r.getOwnerAccountRoleARN(acctID)
 		if err != nil {
 			ackrtlog.InfoAdoptedResource(r.log, res, fmt.Sprintf("Unable to start adoption reconcilliation %s: %v", acctID, err))
 			// r.getRoleARN errors are not terminal, we should requeue.
@@ -478,14 +478,20 @@ func (r *adoptionReconciler) getEndpointURL(
 	return r.cfg.EndpointURL
 }
 
-// getRoleARN return the Role ARN that should be assumed in order to manage
+// getOwnerAccountRoleARN return the Role ARN that should be assumed in order to manage
 // the resources.
-func (r *adoptionReconciler) getRoleARN(
+func (r *adoptionReconciler) getOwnerAccountRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
 ) (ackv1alpha1.AWSResourceName, error) {
-	roleARN, err := r.cache.Accounts.GetAccountRoleARN(string(acctID))
-	if err != nil {
-		return "", fmt.Errorf("unable to retrieve role ARN for account %s: %v", acctID, err)
+	roleARN, err := r.cache.CARMMaps.GetValue(ackrtcache.OwnerAccountIDPrefix + string(acctID))
+	if err == ackrtcache.ErrCARMConfigMapNotFound || err == ackrtcache.ErrKeyNotFound {
+		// CARM map v2 not defined. Check v1 map.
+		roleARN, err = r.cache.Accounts.GetValue(string(acctID))
+		if err != nil {
+			return "", fmt.Errorf("unable to retrieve role ARN for account %s: %v", acctID, err)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("unable to retrieve role ARN from CARM v2 for account %s: %v", acctID, err)
 	}
 	return ackv1alpha1.AWSResourceName(roleARN), nil
 }
