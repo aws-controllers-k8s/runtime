@@ -126,8 +126,18 @@ func (r *reconciler) SecretValueFromReference(
 	}
 
 	namespace := ref.Namespace
-	if namespace == "" {
-		namespace = "default"
+	// During the reconcile process, the resourceNamespace is stored in the context
+	// and can be used to fetch the secret if the namespace is not provided in the
+	// SecretKeyReference.
+	//
+	// NOTE(a-hilaly): When refactoring the runtime, we might want to consider passing
+	// the ObjectMeta in the context.
+	ctxResourceNamespace := ctx.Value("resourceNamespace")
+	if namespace == "" && ctxResourceNamespace != nil {
+		ctxNamespace, ok := ctxResourceNamespace.(string)
+		if ok {
+			namespace = ctxNamespace
+		}
 	}
 
 	nsn := client.ObjectKey{
@@ -175,6 +185,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// We're storing a logger pointer in the context, so that any changes to the logger
 	// will be reflected in the context.
 	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
+	ctx = context.WithValue(ctx, "resourceNamespace", req.Namespace)
 
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume
