@@ -32,4 +32,7 @@ type Reconciler interface {
 	// SecretValueFromReference fetches the value of a Secret given a
 	// SecretKeyReference
 	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)
+	// WriteToSecret writes a value to a Secret given the namespace, name,
+	// and key of the Secret
+	WriteToSecret(context.Context, string, string, string, string) error
 }

@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -160,6 +161,43 @@ func (r *reconciler) SecretValueFromReference(
 	}
 
 	return "", ackerr.SecretNotFound
+}
+
+// WriteToSecret writes a value to a Secret given the namespace, name,
+// and key of the Secret
+func (r *reconciler) WriteToSecret(
+	ctx context.Context,
+	sourceValue string,
+	namespace string,
+	name string,
+	key string,
+) error {
+
+	// Get the initial secret
+	nsn := types.NamespacedName{
+		Name: name,
+	}
+	nsn.Namespace = namespace
+
+	secret := &corev1.Secret{}
+	err := r.apiReader.Get(ctx, nsn, secret)
+	if err != nil {
+		return ackerr.SecretNotFound
+	}
+
+	// Update the field
+	patch := client.StrategicMergeFrom(secret.DeepCopy())
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte, 1)
+	}
+	secret.Data[key] = []byte(sourceValue)
+
+	err = r.kc.Patch(ctx, secret, patch)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
