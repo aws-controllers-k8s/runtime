@@ -19,6 +19,9 @@ type AWSRegion string
 // AWSAccountID represents an AWS account identifier
 type AWSAccountID string
 
+// TeamID represents a team ID identifier.
+type TeamID string
+
 // AWSResourceName represents an AWS Resource Name (ARN)
 type AWSResourceName string
 

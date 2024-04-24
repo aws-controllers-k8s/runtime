@@ -35,6 +35,15 @@ const (
 	// TODO(jaypipes): Link to documentation on cross-account resource
 	// management
 	AnnotationOwnerAccountID = AnnotationPrefix + "owner-account-id"
+	// AnnotationTeamID is an annotation whose value is the identifier
+	// for the AWS team ID to manage the resources.  If this annotation
+	// is set on a CR, the Kubernetes user is indicating that the ACK service
+	// controller should create/patch/delete the resource in the specified AWS
+	// role for this team ID. In order for this cross-account resource management
+	// to succeed, the AWS IAM Role that the ACK service controller runs as needs
+	// to have the ability to call the AWS STS::AssumeRole API call and assume an
+	// IAM Role in the target AWS Account.
+	AnnotationTeamID = AnnotationPrefix + "team-id"
 	// AnnotationRegion is an annotation whose value is the identifier for the
 	// the AWS region in which the resources should be created. If this annotation
 	// is set on a CR metadata, that means the user is indicating to the ACK service
