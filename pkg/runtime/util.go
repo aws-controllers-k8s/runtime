@@ -52,3 +52,19 @@ func IsSynced(res acktypes.AWSResource) bool {
 	}
 	return false
 }
+
+// IsReadOnly returns true if the supplied AWSResource has an annotation
+// indicating that it is in read-only mode.
+func IsReadOnly(res acktypes.AWSResource) bool {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("IsReadOnly received resource with nil RuntimeObject")
+	}
+	for k, v := range mo.GetAnnotations() {
+		if k == ackv1alpha1.AnnotationReadOnly {
+			return strings.ToLower(v) == "true"
+		}
+	}
+	return false
+}
