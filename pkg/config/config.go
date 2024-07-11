@@ -236,7 +236,7 @@ func (cfg *Config) BindFlags() {
 		"",
 		"Feature gates to enable. The format is a comma-separated list of key=value pairs. "+
 			"Valid keys are feature names and valid values are 'true' or 'false'."+
-			"Avaliable features: "+strings.Join(featuregate.GetDefaultFeatureGates().GetFeatureNames(), ", "),
+			"Available features: "+strings.Join(featuregate.GetDefaultFeatureGates().GetFeatureNames(), ", "),
 	)
 }
 
