@@ -14,6 +14,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -105,5 +106,80 @@ func TestParseNamespace(t *testing.T) {
 				t.Errorf("unexpected namespace for namespace '%s': expected '%s', got '%s'", test.watchNamespaceString, test.expectedNamespaces[i], ns)
 			}
 		}
+	}
+}
+
+func TestParseFeatureGates(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    map[string]bool
+		wantErr bool
+	}{
+		{
+			name:  "Empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "Single feature enabled",
+			input: "Feature1=true",
+			want:  map[string]bool{"Feature1": true},
+		},
+		{
+			name:  "Single feature disabled",
+			input: "Feature1=false",
+			want:  map[string]bool{"Feature1": false},
+		},
+		{
+			name:  "Multiple features",
+			input: "Feature1=true,Feature2=false,Feature3=true",
+			want: map[string]bool{
+				"Feature1": true,
+				"Feature2": false,
+				"Feature3": true,
+			},
+		},
+		{
+			name:  "Whitespace in input",
+			input: " Feature1 = true , Feature2 = false ",
+			want: map[string]bool{
+				"Feature1": true,
+				"Feature2": false,
+			},
+		},
+		{
+			name:    "Invalid format",
+			input:   "Feature1:true",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid boolean value",
+			input:   "Feature1=yes",
+			wantErr: true,
+		},
+		{
+			name:    "Missing value",
+			input:   "Feature1=",
+			wantErr: true,
+		},
+		{
+			name:    "Missing key",
+			input:   "=true",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseFeatureGates(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseFeatureGates() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseFeatureGates() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

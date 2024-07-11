@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 	ackutil "github.com/aws-controllers-k8s/runtime/pkg/util"
 )
@@ -59,6 +60,7 @@ const (
 	flagReconcileResourceResyncSeconds  = "reconcile-resource-resync-seconds"
 	flagReconcileDefaultMaxConcurrency  = "reconcile-default-max-concurrent-syncs"
 	flagReconcileResourceMaxConcurrency = "reconcile-resource-max-concurrent-syncs"
+	flagFeatureGates                    = "feature-gates"
 	envVarAWSRegion                     = "AWS_REGION"
 )
 
@@ -98,6 +100,9 @@ type Config struct {
 	ReconcileResourceResyncSeconds  []string
 	ReconcileDefaultMaxConcurrency  int
 	ReconcileResourceMaxConcurrency []string
+	// TODO(a-hilaly): migrate to k8s.io/component-base and implement a proper parser for feature gates.
+	FeatureGates    featuregate.FeatureGates
+	featureGatesRaw string
 }
 
 // BindFlags defines CLI/runtime configuration options
@@ -226,6 +231,13 @@ func (cfg *Config) BindFlags() {
 			" configuration maps resource kinds to maximum number of concurrent reconciles. If provided, "+
 			" resource-specific max concurrency takes precedence over the default max concurrency.",
 	)
+	flag.StringVar(
+		&cfg.featureGatesRaw, flagFeatureGates,
+		"",
+		"Feature gates to enable. The format is a comma-separated list of key=value pairs. "+
+			"Valid keys are feature names and valid values are 'true' or 'false'."+
+			"Available features: "+strings.Join(featuregate.GetDefaultFeatureGates().GetFeatureNames(), ", "),
+	)
 }
 
 // SetupLogger initializes the logger used in the service controller
@@ -323,6 +335,13 @@ func (cfg *Config) Validate(options ...Option) error {
 	if cfg.ReconcileDefaultMaxConcurrency < 1 {
 		return fmt.Errorf("invalid value for flag '%s': max concurrency default must be greater than 0", flagReconcileDefaultMaxConcurrency)
 	}
+
+	featureGatesMap, err := parseFeatureGates(cfg.featureGatesRaw)
+	if err != nil {
+		return fmt.Errorf("invalid value for flag '%s': %v", flagFeatureGates, err)
+	}
+	cfg.FeatureGates = featuregate.GetFeatureGatesWithOverrides(featureGatesMap)
+
 	return nil
 }
 
@@ -468,4 +487,44 @@ func parseWatchNamespaceString(namespace string) ([]string, error) {
 		visited[ns] = true
 	}
 	return namespaces, nil
+}
+
+// parseFeatureGates converts a raw string of feature gate settings into a FeatureGates structure.
+//
+// The input string should be in the format "feature1=bool,feature2=bool,...".
+// For example: "MyFeature=true,AnotherFeature=false"
+//
+// This function:
+// - Parses the input string into individual feature gate settings
+// - Validates the format of each setting
+// - Converts the boolean values
+// - Applies these settings as overrides to the default feature gates
+func parseFeatureGates(featureGatesRaw string) (map[string]bool, error) {
+	featureGatesRaw = strings.TrimSpace(featureGatesRaw)
+	if featureGatesRaw == "" {
+		return nil, nil
+	}
+
+	featureGatesMap := map[string]bool{}
+	for _, featureGate := range strings.Split(featureGatesRaw, ",") {
+		featureGateKV := strings.SplitN(featureGate, "=", 2)
+		if len(featureGateKV) != 2 {
+			return nil, fmt.Errorf("invalid feature gate format: %s", featureGate)
+		}
+
+		featureName := strings.TrimSpace(featureGateKV[0])
+		if featureName == "" {
+			return nil, fmt.Errorf("invalid feature gate name: %s", featureGate)
+		}
+
+		featureValue := strings.TrimSpace(featureGateKV[1])
+		featureEnabled, err := strconv.ParseBool(featureValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid feature gate value for %s: %s", featureName, featureValue)
+		}
+
+		featureGatesMap[featureName] = featureEnabled
+	}
+
+	return featureGatesMap, nil
 }
