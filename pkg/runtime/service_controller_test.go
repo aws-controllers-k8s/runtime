@@ -130,6 +130,7 @@ func (m *fakeManager) GetEventRecorderFor(name string) record.EventRecorder     
 func (m *fakeManager) GetRESTMapper() meta.RESTMapper                                 { return nil }
 func (m *fakeManager) GetAPIReader() client.Reader                                    { return nil }
 func (m *fakeManager) GetWebhookServer() webhook.Server                               { return nil }
+func (m *fakeManager) AddMetricsServerExtraHandler(string, http.Handler) error        { return nil }
 
 func TestServiceController(t *testing.T) {
 	require := require.New(t)
