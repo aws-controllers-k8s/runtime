@@ -1054,14 +1054,14 @@ func (r *resourceReconciler) HandleReconcileError(
 }
 
 // getOwnerAccountID returns the AWS account that owns the supplied resource.
-// The function looks to the common `Status.ACKResourceState` object, followed
-// by the default AWS account ID associated with the Kubernetes Namespace in
-// which the CR was created, followed by the AWS Account in which the IAM Role
-// that the service controller is in.
+// The function looks first to the default AWS account ID associated with the
+// Kubernetes Namespace in which the CR was created, followed by the common
+// `status.ackResourceMetadata` object, and finally the AWS Account in which the
+// IAM Role that the service controller is in.
 //
 // This function is also returning a boolean stating whether the account ID
 // is retrieved from the namespace annotations. This information is used to
-// determine whether the a role ARN should be assumed to manage the resource,
+// determine whether a role ARN should be assumed to manage the resource,
 // which is typically found in the CARM ConfigMap.
 //
 // If the returned boolean is true, it means that the resource is owned by
@@ -1070,19 +1070,18 @@ func (r *resourceReconciler) HandleReconcileError(
 func (r *resourceReconciler) getOwnerAccountID(
 	res acktypes.AWSResource,
 ) (ackv1alpha1.AWSAccountID, bool) {
-	controllerAccountID := ackv1alpha1.AWSAccountID(r.cfg.AccountID)
-
-	// look for owner account id in the resource status
-	acctID := res.Identifiers().OwnerAccountID()
-	if acctID != nil {
-		return *acctID, *acctID != controllerAccountID
-	}
-
 	// look for owner account id in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
 	accID, ok := r.cache.Namespaces.GetOwnerAccountID(namespace)
 	if ok {
 		return ackv1alpha1.AWSAccountID(accID), true
+	}
+
+	controllerAccountID := ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+	// look for owner account id in the resource status
+	acctID := res.Identifiers().OwnerAccountID()
+	if acctID != nil {
+		return *acctID, *acctID != controllerAccountID
 	}
 
 	// use controller configuration
