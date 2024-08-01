@@ -50,6 +50,7 @@ type AccountCache struct {
 	log              logr.Logger
 	roleARNs         map[string]string
 	configMapCreated bool
+	hasSynced        func() bool
 }
 
 // NewAccountCache instanciate a new AccountCache.
@@ -111,6 +112,7 @@ func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{
 		},
 	})
 	go informer.Run(stopCh)
+	c.hasSynced = informer.HasSynced
 }
 
 // GetAccountRoleARN queries the AWS accountID associated Role ARN

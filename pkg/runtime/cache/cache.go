@@ -14,11 +14,13 @@
 package cache
 
 import (
+	"context"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/jaypipes/envutil"
 	kubernetes "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
 
 const (
@@ -96,7 +98,14 @@ func (c Caches) Run(clientSet kubernetes.Interface) {
 	if c.Namespaces != nil {
 		c.Namespaces.Run(clientSet, stopCh)
 	}
-	c.stopCh = stopCh
+}
+
+// WaitForCachesToSync waits for both of the namespace and configMap
+// informers to sync - by checking their hasSynced functions.
+func (c Caches) WaitForCachesToSync(ctx context.Context) bool {
+	namespaceSynced := cache.WaitForCacheSync(ctx.Done(), c.Namespaces.hasSynced)
+	accountSynced := cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
+	return namespaceSynced && accountSynced
 }
 
 // Stop closes the stop channel and cause all the SharedInformers

@@ -84,6 +84,9 @@ type NamespaceCache struct {
 	watchScope []string
 	// ignored is the list of namespaces we are ignoring
 	ignored []string
+	// hasSynced is a function that will return true if namespace informer
+	// has received "at least" once the full list of the namespaces.
+	hasSynced func() bool
 }
 
 // NewNamespaceCache instanciate a new NamespaceCache.
@@ -160,6 +163,7 @@ func (c *NamespaceCache) Run(clientSet kubernetes.Interface, stopCh <-chan struc
 		},
 	})
 	go informer.Run(stopCh)
+	c.hasSynced = informer.HasSynced
 }
 
 // GetDefaultRegion returns the default region if it it exists
