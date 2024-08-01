@@ -131,6 +131,101 @@ func TestNamespaceCache(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestNamespaceCacheWithRoleARN(t *testing.T) {
+	// create a fake k8s client and fake watcher
+	k8sClient := k8sfake.NewSimpleClientset()
+	watcher := watch.NewFake()
+	k8sClient.PrependWatchReactor("production", k8stesting.DefaultWatchReactor(watcher, nil))
+
+	// New logger writing to specific buffer
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+
+	// initlizing account cache
+	namespaceCache := ackrtcache.NewNamespaceCache(fakeLogger, []string{}, []string{})
+	stopCh := make(chan struct{})
+
+	namespaceCache.Run(k8sClient, stopCh)
+
+	// Test create events
+	_, err := k8sClient.CoreV1().Namespaces().Create(
+		context.Background(),
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "production",
+				Annotations: map[string]string{
+					ackv1alpha1.AnnotationDefaultRegion: "us-west-2",
+					ackv1alpha1.AnnotationTeamID:        "team-a",
+					ackv1alpha1.AnnotationEndpointURL:   "https://amazon-service.region.amazonaws.com",
+				},
+			},
+		},
+		metav1.CreateOptions{},
+	)
+	require.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	defaultRegion, ok := namespaceCache.GetDefaultRegion("production")
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", defaultRegion)
+
+	teamID, ok := namespaceCache.GetTeamID("production")
+	require.True(t, ok)
+	require.Equal(t, "team-a", teamID)
+
+	endpointURL, ok := namespaceCache.GetEndpointURL("production")
+	require.True(t, ok)
+	require.Equal(t, "https://amazon-service.region.amazonaws.com", endpointURL)
+
+	// Test update events
+	_, err = k8sClient.CoreV1().Namespaces().Update(
+		context.Background(),
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "production",
+				Annotations: map[string]string{
+					ackv1alpha1.AnnotationDefaultRegion: "us-est-1",
+					ackv1alpha1.AnnotationTeamID:        "team-b",
+					ackv1alpha1.AnnotationEndpointURL:   "https://amazon-other-service.region.amazonaws.com",
+				},
+			},
+		},
+		metav1.UpdateOptions{},
+	)
+	require.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	defaultRegion, ok = namespaceCache.GetDefaultRegion("production")
+	require.True(t, ok)
+	require.Equal(t, "us-est-1", defaultRegion)
+
+	teamID, ok = namespaceCache.GetTeamID("production")
+	require.True(t, ok)
+	require.Equal(t, "team-b", teamID)
+
+	endpointURL, ok = namespaceCache.GetEndpointURL("production")
+	require.True(t, ok)
+	require.Equal(t, "https://amazon-other-service.region.amazonaws.com", endpointURL)
+
+	// Test delete events
+	err = k8sClient.CoreV1().Namespaces().Delete(
+		context.Background(),
+		"production",
+		metav1.DeleteOptions{},
+	)
+	require.Nil(t, err)
+
+	time.Sleep(time.Second)
+
+	_, ok = namespaceCache.GetDefaultRegion(testNamespace1)
+	require.False(t, ok)
+}
+
 func TestScopedNamespaceCache(t *testing.T) {
 	defaultConfig := ackrtcache.Config{
 		WatchScope: []string{"watch-scope", "watch-scope-2"},
