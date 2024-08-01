@@ -176,7 +176,10 @@ func TestServiceController(t *testing.T) {
 	require.Empty(recons)
 
 	mgr := &fakeManager{}
-	cfg := ackcfg.Config{}
+	cfg := ackcfg.Config{
+		// Disable caches, by setting a mono-namespace watch mode
+		WatchNamespace: "default",
+	}
 	err := sc.BindControllerManager(mgr, cfg)
 	require.Nil(err)
 

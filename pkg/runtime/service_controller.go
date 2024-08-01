@@ -14,6 +14,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -233,6 +234,10 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		// Run the caches. This will not block as the caches are run in
 		// separate goroutines.
 		cache.Run(clientSet)
+		// Wait for the caches to sync
+		ctx := context.TODO()
+		synced := cache.WaitForCachesToSync(ctx)
+		c.log.Info("Waited for the caches to sync", "synced", synced)
 	}
 
 	if cfg.EnableAdoptedResourceReconciler {
