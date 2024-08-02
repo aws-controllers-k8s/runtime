@@ -16,11 +16,16 @@
 // optionally overridden.
 package featuregate
 
+const (
+	// FeatureCARMv2 is the name of the CARMv2 feature.
+	FeatureCARMv2 = "CARMv2"
+)
+
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
 	// Set feature gates here
-	// "feature1": {Stage: Alpha, Enabled: false},
+	FeatureCARMv2: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

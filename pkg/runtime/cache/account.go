@@ -60,7 +60,7 @@ type CARMMap struct {
 // NewCARMMapCache instanciate a new CARMMap.
 func NewCARMMapCache(log logr.Logger) *CARMMap {
 	return &CARMMap{
-		log:              log.WithName("cache.account"),
+		log:              log.WithName("cache.carm"),
 		data:             make(map[string]string),
 		configMapCreated: false,
 	}
