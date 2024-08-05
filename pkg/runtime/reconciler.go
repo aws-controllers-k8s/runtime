@@ -1140,16 +1140,23 @@ func (r *resourceReconciler) getTeamID(
 func (r *resourceReconciler) getOwnerAccountRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
 ) (ackv1alpha1.AWSResourceName, error) {
+	globalAccountID := ackrtcache.OwnerAccountIDPrefix + string(acctID)
 	// v2
 	if r.cfg.FeatureGates.IsEnabled(featuregate.FeatureCARMv2) {
-		roleARN, err := r.cache.CARMMaps.GetValue(ackrtcache.OwnerAccountIDPrefix + string(acctID))
+		// use service level roleARN if present
+		serviceAccountID := r.sc.GetMetadata().ServiceAlias + "." + globalAccountID
+		if roleARN, err := r.cache.CARMMaps.GetValue(serviceAccountID); err == nil {
+			return ackv1alpha1.AWSResourceName(roleARN), nil
+		}
+		// otherwise use account level roleARN
+		roleARN, err := r.cache.CARMMaps.GetValue(globalAccountID)
 		if err != nil {
 			return "", fmt.Errorf("retrieving role ARN for accountID %q from %q configmap: %v", acctID, ackrtcache.ACKCARMMapV2, err)
 		}
 		return ackv1alpha1.AWSResourceName(roleARN), nil
 	}
 	// v1
-	roleARN, err := r.cache.Accounts.GetValue(ackrtcache.OwnerAccountIDPrefix + string(acctID))
+	roleARN, err := r.cache.Accounts.GetValue(globalAccountID)
 	if err != nil {
 		return "", fmt.Errorf("retrieving role ARN for accountID %q from %q configMap: %v", acctID, ackrtcache.ACKRoleAccountMap, err)
 	}
@@ -1161,7 +1168,14 @@ func (r *resourceReconciler) getOwnerAccountRoleARN(
 func (r *resourceReconciler) getTeamRoleARN(
 	teamID ackv1alpha1.TeamID,
 ) (ackv1alpha1.AWSResourceName, error) {
-	roleARN, err := r.cache.CARMMaps.GetValue(ackrtcache.TeamIDPrefix + string(teamID))
+	globalTeamID := ackrtcache.TeamIDPrefix + string(teamID)
+	serviceTeamID := r.sc.GetMetadata().ServiceAlias + "." + globalTeamID
+	// use service level roleARN if present
+	if roleARN, err := r.cache.CARMMaps.GetValue(serviceTeamID); err == nil {
+		return ackv1alpha1.AWSResourceName(roleARN), nil
+	}
+	// otherwise use team level roleARN
+	roleARN, err := r.cache.CARMMaps.GetValue(globalTeamID)
 	if err != nil {
 		return "", fmt.Errorf("retrieving role ARN for teamID %q from configMap %q: %v", teamID, ackrtcache.ACKCARMMapV2, err)
 	}
