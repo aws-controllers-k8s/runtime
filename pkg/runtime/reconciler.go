@@ -1140,9 +1140,9 @@ func (r *resourceReconciler) getTeamID(
 func (r *resourceReconciler) getOwnerAccountRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
 ) (ackv1alpha1.AWSResourceName, error) {
-	globalAccountID := ackrtcache.OwnerAccountIDPrefix + string(acctID)
 	// v2
 	if r.cfg.FeatureGates.IsEnabled(featuregate.FeatureCARMv2) {
+		globalAccountID := ackrtcache.OwnerAccountIDPrefix + string(acctID)
 		// use service level roleARN if present
 		serviceAccountID := r.sc.GetMetadata().ServiceAlias + "." + globalAccountID
 		if roleARN, err := r.cache.CARMMaps.GetValue(serviceAccountID); err == nil {
@@ -1156,7 +1156,7 @@ func (r *resourceReconciler) getOwnerAccountRoleARN(
 		return ackv1alpha1.AWSResourceName(roleARN), nil
 	}
 	// v1
-	roleARN, err := r.cache.Accounts.GetValue(globalAccountID)
+	roleARN, err := r.cache.Accounts.GetValue(string(acctID))
 	if err != nil {
 		return "", fmt.Errorf("retrieving role ARN for accountID %q from %q configMap: %v", acctID, ackrtcache.ACKRoleAccountMap, err)
 	}

@@ -517,14 +517,14 @@ func (r *adoptionReconciler) getEndpointURL(
 	return r.cfg.EndpointURL
 }
 
-// getRoleARN return the Role ARN that should be assumed for account ID
+// getOwnerAccountRoleARN return the Role ARN that should be assumed for account ID
 // in order to manage the resources.
 func (r *adoptionReconciler) getOwnerAccountRoleARN(
 	acctID ackv1alpha1.AWSAccountID,
 ) (ackv1alpha1.AWSResourceName, error) {
-	globalAccountID := ackrtcache.OwnerAccountIDPrefix + string(acctID)
 	// v2
 	if r.cfg.FeatureGates.IsEnabled(featuregate.FeatureCARMv2) {
+		globalAccountID := ackrtcache.OwnerAccountIDPrefix + string(acctID)
 		// use service level roleARN if present
 		serviceAccountID := r.sc.GetMetadata().ServiceAlias + "." + globalAccountID
 		if roleARN, err := r.cache.CARMMaps.GetValue(serviceAccountID); err == nil {
@@ -538,7 +538,7 @@ func (r *adoptionReconciler) getOwnerAccountRoleARN(
 		return ackv1alpha1.AWSResourceName(roleARN), nil
 	}
 	// v1
-	roleARN, err := r.cache.Accounts.GetValue(globalAccountID)
+	roleARN, err := r.cache.Accounts.GetValue(string(acctID))
 	if err != nil {
 		return "", fmt.Errorf("retrieving role ARN for accountID %q from %q configMap: %v", acctID, ackrtcache.ACKRoleAccountMap, err)
 	}
