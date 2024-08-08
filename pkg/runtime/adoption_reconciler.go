@@ -120,7 +120,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	acctID, needCARMLookup := r.getOwnerAccountID(res)
 
 	var roleARN ackv1alpha1.AWSResourceName
-	if r.cfg.FeatureGates.IsEnabled(featuregate.FeatureCARMv2) {
+	if r.cfg.FeatureGates.IsEnabled(featuregate.CARMv2) {
 		teamID := r.getTeamID(res)
 		if teamID != "" {
 			// The user is specifying a namespace that is annotated with a team ID.
