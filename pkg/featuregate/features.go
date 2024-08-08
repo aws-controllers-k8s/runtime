@@ -16,11 +16,15 @@
 // optionally overridden.
 package featuregate
 
+const (
+	ReadOnly = "ReadOnly"
+)
+
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
 	// Set feature gates here
-	// "feature1": {Stage: Alpha, Enabled: false},
+	ReadOnly: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
