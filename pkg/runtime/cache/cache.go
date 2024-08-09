@@ -43,12 +43,6 @@ const (
 	// caching system not to set up resyncs with an authoritative state source
 	// (i.e. a Kubernetes API server) on a periodic basis.
 	informerResyncPeriod = 0 * time.Second
-
-	// The prefix for owner account ID in the v2 CARM map.
-	OwnerAccountIDPrefix = "owner-account-id/"
-
-	// The prefix for owner team ID in the v2 CARM map.
-	TeamIDPrefix = "team-id/"
 )
 
 // ackSystemNamespace is the namespace in which we look up ACK system
