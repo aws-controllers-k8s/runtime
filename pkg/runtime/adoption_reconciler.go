@@ -142,7 +142,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region,
+		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
 	)
 	if err != nil {
 		return err

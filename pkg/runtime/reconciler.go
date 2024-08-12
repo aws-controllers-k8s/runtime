@@ -266,7 +266,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	)
 
 	rm, err := r.rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region,
+		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
 	)
 	if err != nil {
 		return ctrlrt.Result{}, err
