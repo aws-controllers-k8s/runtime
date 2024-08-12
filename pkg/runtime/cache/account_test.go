@@ -64,13 +64,13 @@ func TestAccountCache(t *testing.T) {
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 
 	// initlizing account cache
-	accountCache := ackrtcache.NewAccountCache(fakeLogger)
+	accountCache := ackrtcache.NewCARMMapCache(fakeLogger)
 	stopCh := make(chan struct{})
-	accountCache.Run(k8sClient, stopCh)
+	accountCache.Run(ackrtcache.ACKRoleAccountMap, k8sClient, stopCh)
 
 	// Before creating the configmap, the accountCache should error for any
 	// GetAccountRoleARN call.
-	_, err := accountCache.GetAccountRoleARN(testAccount1)
+	_, err := accountCache.GetValue(testAccount1)
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
@@ -90,12 +90,12 @@ func TestAccountCache(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// Test with non existing account
-	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	_, err = accountCache.GetValue("random-account-not-exist")
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
 	// Test with existing account
-	_, err = accountCache.GetAccountRoleARN(testAccount1)
+	_, err = accountCache.GetValue(testAccount1)
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
@@ -114,17 +114,17 @@ func TestAccountCache(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// Test with non existing account
-	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	_, err = accountCache.GetValue("random-account-not-exist")
 	require.NotNil(t, err)
-	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
+	require.Equal(t, err, ackrtcache.ErrKeyNotFound)
 
 	// Test with existing account - but role ARN is empty
-	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	_, err = accountCache.GetValue(testAccount3)
 	require.NotNil(t, err)
-	require.Equal(t, err, ackrtcache.ErrEmptyRoleARN)
+	require.Equal(t, err, ackrtcache.ErrEmptyValue)
 
 	// Test with existing account
-	roleARN, err := accountCache.GetAccountRoleARN(testAccount1)
+	roleARN, err := accountCache.GetValue(testAccount1)
 	require.Nil(t, err)
 	require.Equal(t, roleARN, testAccountARN1)
 
@@ -144,21 +144,21 @@ func TestAccountCache(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// Test with non existing account
-	_, err = accountCache.GetAccountRoleARN("random-account-not-exist")
+	_, err = accountCache.GetValue("random-account-not-exist")
 	require.NotNil(t, err)
-	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
+	require.Equal(t, err, ackrtcache.ErrKeyNotFound)
 
 	// Test that account was removed
-	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	_, err = accountCache.GetValue(testAccount3)
 	require.NotNil(t, err)
-	require.Equal(t, err, ackrtcache.ErrAccountIDNotFound)
+	require.Equal(t, err, ackrtcache.ErrKeyNotFound)
 
 	// Test with existing account
-	roleARN, err = accountCache.GetAccountRoleARN(testAccount1)
+	roleARN, err = accountCache.GetValue(testAccount1)
 	require.Nil(t, err)
 	require.Equal(t, roleARN, testAccountARN1)
 
-	roleARN, err = accountCache.GetAccountRoleARN(testAccount2)
+	roleARN, err = accountCache.GetValue(testAccount2)
 	require.Nil(t, err)
 	require.Equal(t, roleARN, testAccountARN2)
 
@@ -172,15 +172,15 @@ func TestAccountCache(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// Test that accounts ware removed
-	_, err = accountCache.GetAccountRoleARN(testAccount1)
+	_, err = accountCache.GetValue(testAccount1)
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
-	_, err = accountCache.GetAccountRoleARN(testAccount2)
+	_, err = accountCache.GetValue(testAccount2)
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 
-	_, err = accountCache.GetAccountRoleARN(testAccount3)
+	_, err = accountCache.GetValue(testAccount3)
 	require.NotNil(t, err)
 	require.Equal(t, err, ackrtcache.ErrCARMConfigMapNotFound)
 }
