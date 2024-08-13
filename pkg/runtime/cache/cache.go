@@ -21,6 +21,8 @@ import (
 	"github.com/jaypipes/envutil"
 	kubernetes "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 )
 
 const (
@@ -85,10 +87,16 @@ type Caches struct {
 }
 
 // New instantiate a new Caches object.
-func New(log logr.Logger, config Config) Caches {
+func New(log logr.Logger, config Config, features featuregate.FeatureGates) Caches {
+	var carmMaps, accounts *CARMMap
+	if features.IsEnabled(featuregate.CARMv2) {
+		carmMaps = NewCARMMapCache(log)
+	} else {
+		accounts = NewCARMMapCache(log)
+	}
 	return Caches{
-		Accounts:   NewCARMMapCache(log),
-		CARMMaps:   NewCARMMapCache(log),
+		Accounts:   accounts,
+		CARMMaps:   carmMaps,
 		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
 }
@@ -110,9 +118,19 @@ func (c Caches) Run(clientSet kubernetes.Interface) {
 // WaitForCachesToSync waits for both of the namespace and configMap
 // informers to sync - by checking their hasSynced functions.
 func (c Caches) WaitForCachesToSync(ctx context.Context) bool {
-	namespaceSynced := cache.WaitForCacheSync(ctx.Done(), c.Namespaces.hasSynced)
-	accountSynced := cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
-	return namespaceSynced && accountSynced
+	// if the cache is not initialized, sync status should be true
+	namespaceSynced, accountSynced, carmSynced := true, true, true
+	// otherwise check their hasSynced functions
+	if c.Namespaces != nil {
+		namespaceSynced = cache.WaitForCacheSync(ctx.Done(), c.Namespaces.hasSynced)
+	}
+	if c.Accounts != nil {
+		accountSynced = cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
+	}
+	if c.CARMMaps != nil {
+		carmSynced = cache.WaitForCacheSync(ctx.Done(), c.CARMMaps.hasSynced)
+	}
+	return namespaceSynced && accountSynced && carmSynced
 }
 
 // Stop closes the stop channel and cause all the SharedInformers

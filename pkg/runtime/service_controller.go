@@ -217,6 +217,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			NamespaceKubePublic,
 			NamespaceKubeNodeLease,
 		}},
+		cfg.FeatureGates,
 	)
 	// We want to run the caches if the length of the namespaces slice is
 	// either 0 (watching all namespaces) or greater than 1 (watching multiple
