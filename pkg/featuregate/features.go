@@ -17,15 +17,19 @@
 package featuregate
 
 const (
-	// CARMv2 is the name of the CARMv2 feature.
-	CARMv2 = "CARMv2"
+	// TeamLevelCARM is a feature gate for enabling CARM for team-level resources.
+	TeamLevelCARM = "TL-CARM"
+
+	// ServiceLevelCARM is a feature gate for enabling CARM for service-level resources.
+	ServiceLevelCARM = "SL-CARM"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
 	// Set feature gates here
-	CARMv2: {Stage: Alpha, Enabled: false},
+	TeamLevelCARM:    {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

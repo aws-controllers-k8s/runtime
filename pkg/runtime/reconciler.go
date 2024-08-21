@@ -230,40 +230,30 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume
 	// in order to perform the reconciliation. The roles ARN are typically
-	// stored in a ConfigMap in the ACK system namespace.
+	// stored in the `ack-role-account-map` ConfigMap in the ACK system namespace.
 	// If the ConfigMap is not created, or not populated with an
 	// accountID to roleARN mapping, we need to properly requeue with a
 	// helpful message to the user.
 	acctID, needCARMLookup := r.getOwnerAccountID(desired)
 
 	var roleARN ackv1alpha1.AWSResourceName
-	if r.cfg.FeatureGates.IsEnabled(featuregate.CARMv2) {
-		teamID := r.getTeamID(desired)
-		if teamID != "" {
-			// The user is specifying a namespace that is annotated with a team ID.
-			// Requeue if the corresponding roleARN is not available in the CARMv2 configmap.
-			// Additionally, set the account ID to the role's account ID.
-			roleARN, err = r.getRoleARNv2(string(teamID))
-			if err != nil {
-				return r.handleCacheError(ctx, err, desired)
-			}
-			parsedARN, err := arn.Parse(string(roleARN))
-			if err != nil {
-				return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from namespace annotation: %v", roleARN, err)
-			}
-			acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
-		} else if needCARMLookup {
-			// The user is specifying a namespace that is annotated with an owner account ID.
-			// Requeue if the corresponding roleARN is not available in the CARMv2 configmap.
-			roleARN, err = r.getRoleARNv2(string(acctID))
-			if err != nil {
-				return r.handleCacheError(ctx, err, desired)
-			}
+	if teamID := r.getTeamID(desired); teamID != "" && r.cfg.FeatureGates.IsEnabled(featuregate.TeamLevelCARM) {
+		// The user is specifying a namespace that is annotated with a team ID.
+		// Requeue if the corresponding roleARN is not available in the Teams configmap.
+		// Additionally, set the account ID to the role's account ID.
+		roleARN, err = r.getRoleARN(string(teamID), ackrtcache.ACKRoleTeamMap)
+		if err != nil {
+			return r.handleCacheError(ctx, err, desired)
 		}
+		parsedARN, err := arn.Parse(string(roleARN))
+		if err != nil {
+			return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from %q configmap: %v", roleARN, ackrtcache.ACKRoleTeamMap, err)
+		}
+		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
 	} else if needCARMLookup {
 		// The user is specifying a namespace that is annotated with an owner account ID.
-		// Requeue if the corresponding roleARN is not available in the Accounts (CARMv1) configmap.
-		roleARN, err = r.getRoleARN(acctID)
+		// Requeue if the corresponding roleARN is not available in the Accounts configmap.
+		roleARN, err = r.getRoleARN(string(acctID), ackrtcache.ACKRoleAccountMap)
 		if err != nil {
 			return r.handleCacheError(ctx, err, desired)
 		}
@@ -1134,28 +1124,31 @@ func (r *resourceReconciler) getTeamID(
 	return ackv1alpha1.TeamID("")
 }
 
-// getRoleARNv2 returns the Role ARN that should be assumed for the given account/team ID,
-// from the CARMv2 configmap, in order to manage the resources.
-func (r *resourceReconciler) getRoleARNv2(id string) (ackv1alpha1.AWSResourceName, error) {
-	// use service level roleARN if present
-	serviceID := r.sc.GetMetadata().ServiceAlias + "." + id
-	if roleARN, err := r.cache.CARMMaps.GetValue(serviceID); err == nil {
-		return ackv1alpha1.AWSResourceName(roleARN), nil
+// getRoleARN returns the Role ARN that should be assumed for the given accountID or teamID,
+// from the appropriate configmap, in order to manage the resources.
+func (r *resourceReconciler) getRoleARN(id string, cacheName string) (ackv1alpha1.AWSResourceName, error) {
+	var cache *ackrtcache.CARMMap
+	switch cacheName {
+	case ackrtcache.ACKRoleTeamMap:
+		cache = r.cache.Teams
+	case ackrtcache.ACKRoleAccountMap:
+		cache = r.cache.Accounts
+	default:
+		return "", fmt.Errorf("invalid cache name: %s", cacheName)
 	}
-	// otherwise use account/team level roleARN
-	roleARN, err := r.cache.CARMMaps.GetValue(id)
-	if err != nil {
-		return "", fmt.Errorf("retrieving role ARN for account/team ID %q from %q configmap: %v", id, ackrtcache.ACKCARMMapV2, err)
-	}
-	return ackv1alpha1.AWSResourceName(roleARN), nil
-}
 
-// getRoleARN returns the Role ARN that should be assumed for the given account ID,
-// from the CARMv1 configmap, in order to manage the resources.
-func (r *resourceReconciler) getRoleARN(acctID ackv1alpha1.AWSAccountID) (ackv1alpha1.AWSResourceName, error) {
-	roleARN, err := r.cache.Accounts.GetValue(string(acctID))
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ServiceLevelCARM) {
+		// use service level roleARN if present
+		serviceID := r.sc.GetMetadata().ServiceAlias + "." + id
+		if roleARN, err := cache.GetValue(serviceID); err == nil {
+			return ackv1alpha1.AWSResourceName(roleARN), nil
+		}
+	}
+
+	// otherwise use account/team level roleARN
+	roleARN, err := cache.GetValue(id)
 	if err != nil {
-		return "", fmt.Errorf("retrieving role ARN for account ID %q from %q configMap: %v", acctID, ackrtcache.ACKRoleAccountMap, err)
+		return "", fmt.Errorf("retrieving role ARN for account/team ID %q from %q configmap: %v", id, cacheName, err)
 	}
 	return ackv1alpha1.AWSResourceName(roleARN), nil
 }
