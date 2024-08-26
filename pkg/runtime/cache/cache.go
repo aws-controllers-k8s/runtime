@@ -88,14 +88,12 @@ type Caches struct {
 
 // New instantiate a new Caches object.
 func New(log logr.Logger, config Config, features featuregate.FeatureGates) Caches {
-	var teams, accounts *CARMMap
+	var teams *CARMMap
 	if features.IsEnabled(featuregate.TeamLevelCARM) {
 		teams = NewCARMMapCache(log)
-	} else {
-		accounts = NewCARMMapCache(log)
 	}
 	return Caches{
-		Accounts:   accounts,
+		Accounts:   NewCARMMapCache(log),
 		Teams:      teams,
 		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
