@@ -18,10 +18,10 @@ package featuregate
 
 const (
 	// TeamLevelCARM is a feature gate for enabling CARM for team-level resources.
-	TeamLevelCARM = "TL-CARM"
+	TeamLevelCARM = "TeamLevelCARM"
 
 	// ServiceLevelCARM is a feature gate for enabling CARM for service-level resources.
-	ServiceLevelCARM = "SL-CARM"
+	ServiceLevelCARM = "ServiceLevelCARM"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
