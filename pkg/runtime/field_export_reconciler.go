@@ -658,6 +658,8 @@ func (r *fieldExportResourceReconciler) BindControllerManager(mgr ctrlrt.Manager
 	).WithEventFilter(
 		// Update on both status and spec changes
 		predicate.ResourceVersionChangedPredicate{},
+	).Named(
+		"field-export." + r.rd.GroupVersionKind().String(),
 	).Complete(r)
 }
 
