@@ -36,25 +36,25 @@ func (_m *AWSResourceManagerFactory) IsAdoptable() bool {
 	return r0
 }
 
-// ManagerFor provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4, _a5, _a6
-func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 logr.Logger, _a2 *metrics.Metrics, _a3 types.Reconciler, _a4 *session.Session, _a5 v1alpha1.AWSAccountID, _a6 v1alpha1.AWSRegion) (types.AWSResourceManager, error) {
-	ret := _m.Called(_a0, _a1, _a2, _a3, _a4, _a5, _a6)
+// ManagerFor provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7
+func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 logr.Logger, _a2 *metrics.Metrics, _a3 types.Reconciler, _a4 *session.Session, _a5 v1alpha1.AWSAccountID, _a6 v1alpha1.AWSRegion, _a7 v1alpha1.AWSResourceName) (types.AWSResourceManager, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
 
 	var r0 types.AWSResourceManager
 	var r1 error
-	if rf, ok := ret.Get(0).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion) (types.AWSResourceManager, error)); ok {
-		return rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6)
+	if rf, ok := ret.Get(0).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) (types.AWSResourceManager, error)); ok {
+		return rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
 	}
-	if rf, ok := ret.Get(0).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion) types.AWSResourceManager); ok {
-		r0 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6)
+	if rf, ok := ret.Get(0).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) types.AWSResourceManager); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(types.AWSResourceManager)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion) error); ok {
-		r1 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6)
+	if rf, ok := ret.Get(1).(func(config.Config, logr.Logger, *metrics.Metrics, types.Reconciler, *session.Session, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
 	} else {
 		r1 = ret.Error(1)
 	}
