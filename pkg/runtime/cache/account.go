@@ -41,10 +41,9 @@ const (
 	// all the AWS Account IDs associated with their AWS Role ARNs.
 	ACKRoleAccountMap = "ack-role-account-map"
 
-	// ACKCARMMapV2 is the name of the v2 CARM map.
-	// It stores the mapping for:
-	// - Account ID to the AWS role ARNs.
-	ACKCARMMapV2 = "ack-carm-map"
+	// ACKRoleTeamMap is the name of the config map object storing
+	// all the AWS Team IDs associated with their AWS Role ARNs.
+	ACKRoleTeamMap = "ack-role-team-map"
 )
 
 // CARMMap is responsible for caching the CARM configmap

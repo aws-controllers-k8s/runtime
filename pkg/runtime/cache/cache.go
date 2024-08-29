@@ -79,8 +79,8 @@ type Caches struct {
 	// Accounts cache
 	Accounts *CARMMap
 
-	// CARMMaps v2 cache
-	CARMMaps *CARMMap
+	// Teams cache
+	Teams *CARMMap
 
 	// Namespaces cache
 	Namespaces *NamespaceCache
@@ -88,15 +88,13 @@ type Caches struct {
 
 // New instantiate a new Caches object.
 func New(log logr.Logger, config Config, features featuregate.FeatureGates) Caches {
-	var carmMaps, accounts *CARMMap
-	if features.IsEnabled(featuregate.CARMv2) {
-		carmMaps = NewCARMMapCache(log)
-	} else {
-		accounts = NewCARMMapCache(log)
+	var teams *CARMMap
+	if features.IsEnabled(featuregate.TeamLevelCARM) {
+		teams = NewCARMMapCache(log)
 	}
 	return Caches{
-		Accounts:   accounts,
-		CARMMaps:   carmMaps,
+		Accounts:   NewCARMMapCache(log),
+		Teams:      teams,
 		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
 }
@@ -107,8 +105,8 @@ func (c Caches) Run(clientSet kubernetes.Interface) {
 	if c.Accounts != nil {
 		c.Accounts.Run(ACKRoleAccountMap, clientSet, stopCh)
 	}
-	if c.CARMMaps != nil {
-		c.CARMMaps.Run(ACKCARMMapV2, clientSet, stopCh)
+	if c.Teams != nil {
+		c.Teams.Run(ACKRoleTeamMap, clientSet, stopCh)
 	}
 	if c.Namespaces != nil {
 		c.Namespaces.Run(clientSet, stopCh)
@@ -127,8 +125,8 @@ func (c Caches) WaitForCachesToSync(ctx context.Context) bool {
 	if c.Accounts != nil {
 		accountSynced = cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
 	}
-	if c.CARMMaps != nil {
-		carmSynced = cache.WaitForCacheSync(ctx.Done(), c.CARMMaps.hasSynced)
+	if c.Teams != nil {
+		carmSynced = cache.WaitForCacheSync(ctx.Done(), c.Teams.hasSynced)
 	}
 	return namespaceSynced && accountSynced && carmSynced
 }
