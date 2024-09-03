@@ -472,7 +472,7 @@ func (r *adoptionReconciler) getOwnerAccountID(
 	}
 
 	// use controller configuration
-	return ackv1alpha1.AWSAccountID(r.cfg.AccountID), false
+	return ackv1alpha1.AWSAccountID(r.cfg.DefaultAccountID), false
 }
 
 // getTeamID returns the team ID that owns the supplied resource.

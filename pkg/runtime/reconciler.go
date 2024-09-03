@@ -257,6 +257,8 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		if err != nil {
 			return r.handleCacheError(ctx, err, desired)
 		}
+	} else if !needCARMLookup && acctID == "" {
+		return ctrlrt.Result{}, fmt.Errorf("unable to locate AWS credentials to manage resource: both controller credentials and a proper CARM configuration are missing")
 	}
 
 	region := r.getRegion(desired)
@@ -1100,7 +1102,7 @@ func (r *resourceReconciler) getOwnerAccountID(
 		return ackv1alpha1.AWSAccountID(accID), true
 	}
 
-	controllerAccountID := ackv1alpha1.AWSAccountID(r.cfg.AccountID)
+	controllerAccountID := ackv1alpha1.AWSAccountID(r.cfg.DefaultAccountID)
 	// look for owner account id in the resource status
 	acctID := res.Identifiers().OwnerAccountID()
 	if acctID != nil {

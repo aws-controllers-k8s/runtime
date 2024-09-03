@@ -85,7 +85,7 @@ type Config struct {
 	EnableAdoptedResourceReconciler bool
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
-	AccountID                       string
+	DefaultAccountID                string
 	Region                          string
 	IdentityEndpointURL             string
 	EndpointURL                     string
@@ -271,9 +271,15 @@ func (cfg *Config) SetAWSAccountID() error {
 	client := sts.New(session)
 	res, err := client.GetCallerIdentity(&sts.GetCallerIdentityInput{})
 	if err != nil {
-		return fmt.Errorf("unable to get caller identity: %v", err)
+		// When a default account ID is not provided,
+		// we will be checking namespaces and carm
+		// for accountIDs in main reconciliation loop
+		klog.Info("Default account ID not found")
+		cfg.DefaultAccountID = ""
+	} else {
+		cfg.DefaultAccountID = *res.Account
 	}
-	cfg.AccountID = *res.Account
+	
 	return nil
 }
 
