@@ -28,49 +28,53 @@ var (
 	// ErrCARMConfigMapNotFound is an error that is returned when the CARM
 	// configmap is not found.
 	ErrCARMConfigMapNotFound = errors.New("CARM configmap not found")
-	// ErrAccountIDNotFound is an error that is returned when the account ID
+	// ErrKeyNotFound is an error that is returned when the account ID
 	// is not found in the CARM configmap.
-	ErrAccountIDNotFound = errors.New("account ID not found in CARM configmap")
-	// ErrEmptyRoleARN is an error that is returned when the role ARN is empty
+	ErrKeyNotFound = errors.New("key not found in CARM configmap")
+	// ErrEmptyValue is an error that is returned when the role ARN is empty
 	// in the CARM configmap.
-	ErrEmptyRoleARN = errors.New("role ARN is empty in CARM configmap")
+	ErrEmptyValue = errors.New("role value is empty in CARM configmap")
 )
 
 const (
 	// ACKRoleAccountMap is the name of the configmap map object storing
 	// all the AWS Account IDs associated with their AWS Role ARNs.
 	ACKRoleAccountMap = "ack-role-account-map"
+
+	// ACKRoleTeamMap is the name of the config map object storing
+	// all the AWS Team IDs associated with their AWS Role ARNs.
+	ACKRoleTeamMap = "ack-role-team-map"
 )
 
-// AccountCache is responsible for caching the CARM configmap
+// CARMMap is responsible for caching the CARM configmap
 // data. It is listening to all the events related to the CARM map and
 // make the changes accordingly.
-type AccountCache struct {
+type CARMMap struct {
 	sync.RWMutex
 	log              logr.Logger
-	roleARNs         map[string]string
+	data             map[string]string
 	configMapCreated bool
 	hasSynced        func() bool
 }
 
-// NewAccountCache instanciate a new AccountCache.
-func NewAccountCache(log logr.Logger) *AccountCache {
-	return &AccountCache{
-		log:              log.WithName("cache.account"),
-		roleARNs:         make(map[string]string),
+// NewCARMMapCache instanciate a new CARMMap.
+func NewCARMMapCache(log logr.Logger) *CARMMap {
+	return &CARMMap{
+		log:              log.WithName("cache.carm"),
+		data:             make(map[string]string),
 		configMapCreated: false,
 	}
 }
 
-// resourceMatchACKRoleAccountConfigMap verifies if a resource is
+// resourceMatchCARMConfigMap verifies if a resource is
 // the CARM configmap. It verifies the name, namespace and object type.
-func resourceMatchACKRoleAccountsConfigMap(raw interface{}) bool {
+func resourceMatchCARMConfigMap(raw interface{}, name string) bool {
 	object, ok := raw.(*corev1.ConfigMap)
-	return ok && object.ObjectMeta.Name == ACKRoleAccountMap
+	return ok && object.ObjectMeta.Name == name
 }
 
 // Run instantiate a new SharedInformer for ConfigMaps and runs it to begin processing items.
-func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{}) {
+func (c *CARMMap) Run(name string, clientSet kubernetes.Interface, stopCh <-chan struct{}) {
 	c.log.V(1).Info("Starting shared informer for accounts cache", "targetConfigMap", ACKRoleAccountMap)
 	informer := informersv1.NewConfigMapInformer(
 		clientSet,
@@ -80,33 +84,33 @@ func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{
 	)
 	informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			if resourceMatchACKRoleAccountsConfigMap(obj) {
+			if resourceMatchCARMConfigMap(obj, name) {
 				cm := obj.(*corev1.ConfigMap)
 				object := cm.DeepCopy()
 				// To avoid multiple mutex locks, we are updating the cache
 				// and the configmap existence flag in the same function.
 				configMapCreated := true
-				c.updateAccountRoleData(configMapCreated, object.Data)
+				c.updateData(configMapCreated, object.Data)
 				c.log.V(1).Info("created account config map", "name", cm.ObjectMeta.Name)
 			}
 		},
 		UpdateFunc: func(orig, desired interface{}) {
-			if resourceMatchACKRoleAccountsConfigMap(desired) {
+			if resourceMatchCARMConfigMap(desired, name) {
 				cm := desired.(*corev1.ConfigMap)
 				object := cm.DeepCopy()
 				//TODO(a-hilaly): compare data checksum before updating the cache
-				c.updateAccountRoleData(true, object.Data)
+				c.updateData(true, object.Data)
 				c.log.V(1).Info("updated account config map", "name", cm.ObjectMeta.Name)
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			if resourceMatchACKRoleAccountsConfigMap(obj) {
+			if resourceMatchCARMConfigMap(obj, name) {
 				cm := obj.(*corev1.ConfigMap)
 				newMap := make(map[string]string)
 				// To avoid multiple mutex locks, we are updating the cache
 				// and the configmap existence flag in the same function.
 				configMapCreated := false
-				c.updateAccountRoleData(configMapCreated, newMap)
+				c.updateData(configMapCreated, newMap)
 				c.log.V(1).Info("deleted account config map", "name", cm.ObjectMeta.Name)
 			}
 		},
@@ -115,33 +119,33 @@ func (c *AccountCache) Run(clientSet kubernetes.Interface, stopCh <-chan struct{
 	c.hasSynced = informer.HasSynced
 }
 
-// GetAccountRoleARN queries the AWS accountID associated Role ARN
+// GetValue queries the value
 // from the cached CARM configmap. It will return an error if the
-// configmap is not found, the accountID is not found or the role ARN
+// configmap is not found, the key is not found or the value
 // is empty.
 //
 // This function is thread safe.
-func (c *AccountCache) GetAccountRoleARN(accountID string) (string, error) {
+func (c *CARMMap) GetValue(key string) (string, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if !c.configMapCreated {
 		return "", ErrCARMConfigMapNotFound
 	}
-	roleARN, ok := c.roleARNs[accountID]
+	roleARN, ok := c.data[key]
 	if !ok {
-		return "", ErrAccountIDNotFound
+		return "", ErrKeyNotFound
 	}
 	if roleARN == "" {
-		return "", ErrEmptyRoleARN
+		return "", ErrEmptyValue
 	}
 	return roleARN, nil
 }
 
-// updateAccountRoleData updates the CARM map. This function is thread safe.
-func (c *AccountCache) updateAccountRoleData(exist bool, data map[string]string) {
+// updateData updates the CARM map. This function is thread safe.
+func (c *CARMMap) updateData(exist bool, data map[string]string) {
 	c.Lock()
 	defer c.Unlock()
-	c.roleARNs = data
+	c.data = data
 	c.configMapCreated = exist
 }

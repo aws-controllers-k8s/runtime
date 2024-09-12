@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +33,7 @@ import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
@@ -111,24 +113,37 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume
 	// in order to perform the reconciliation. The roles ARN are typically
-	// stored in a ConfigMap in the ACK system namespace.
+	// stored in the `ack-role-account-map` ConfigMap in the ACK system namespace.
 	// If the ConfigMap is not created, or not populated with an
 	// accountID to roleARN mapping, we need to properly requeue with a
 	// helpful message to the user.
-	var roleARN ackv1alpha1.AWSResourceName
 	acctID, needCARMLookup := r.getOwnerAccountID(res)
-	if needCARMLookup {
-		// This means that the user is specifying a namespace that is
-		// annotated with an owner account ID. We need to retrieve the
-		// roleARN from the ConfigMap and properly requeue if the roleARN
-		// is not available.
-		roleARN, err = r.getRoleARN(acctID)
+
+	var roleARN ackv1alpha1.AWSResourceName
+	if teamID := r.getTeamID(res); teamID != "" && r.cfg.FeatureGates.IsEnabled(featuregate.TeamLevelCARM) {
+		// The user is specifying a namespace that is annotated with a team ID.
+		// Requeue if the corresponding roleARN is not available in the Teams configmap.
+		// Additionally, set the account ID to the role's account ID.
+		roleARN, err = r.getRoleARN(string(teamID), ackrtcache.ACKRoleTeamMap)
 		if err != nil {
 			ackrtlog.InfoAdoptedResource(r.log, res, fmt.Sprintf("Unable to start adoption reconcilliation %s: %v", acctID, err))
-			// r.getRoleARN errors are not terminal, we should requeue.
+			return requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
+		}
+		parsedARN, err := arn.Parse(string(roleARN))
+		if err != nil {
+			return fmt.Errorf("parsing role ARN %q from %q configmap: %v", roleARN, ackrtcache.ACKRoleTeamMap, err)
+		}
+		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
+	} else if needCARMLookup {
+		// The user is specifying a namespace that is annotated with an owner account ID.
+		// Requeue if the corresponding roleARN is not available in the Accounts configmap.
+		roleARN, err = r.getRoleARN(string(acctID), ackrtcache.ACKRoleAccountMap)
+		if err != nil {
+			ackrtlog.InfoAdoptedResource(r.log, res, fmt.Sprintf("Unable to start adoption reconcilliation %s: %v", acctID, err))
 			return requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay)
 		}
 	}
+
 	region := r.getRegion(res)
 	targetDescriptor := rmf.ResourceDescriptor()
 	endpointURL := r.getEndpointURL(res)
@@ -142,7 +157,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region,
+		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
 	)
 	if err != nil {
 		return err
@@ -460,6 +475,19 @@ func (r *adoptionReconciler) getOwnerAccountID(
 	return ackv1alpha1.AWSAccountID(r.cfg.AccountID), false
 }
 
+// getTeamID returns the team ID that owns the supplied resource.
+func (r *adoptionReconciler) getTeamID(
+	res *ackv1alpha1.AdoptedResource,
+) ackv1alpha1.TeamID {
+	// look for team id in the namespace annotations
+	namespace := res.GetNamespace()
+	teamID, ok := r.cache.Namespaces.GetTeamID(namespace)
+	if ok {
+		return ackv1alpha1.TeamID(teamID)
+	}
+	return ""
+}
+
 // getEndpointURL returns the AWS account that owns the supplied resource.
 // We look for the namespace associated endpoint url, if that is set we use it.
 // Otherwise if none of these annotations are set we use the endpoint url specified
@@ -478,14 +506,31 @@ func (r *adoptionReconciler) getEndpointURL(
 	return r.cfg.EndpointURL
 }
 
-// getRoleARN return the Role ARN that should be assumed in order to manage
-// the resources.
-func (r *adoptionReconciler) getRoleARN(
-	acctID ackv1alpha1.AWSAccountID,
-) (ackv1alpha1.AWSResourceName, error) {
-	roleARN, err := r.cache.Accounts.GetAccountRoleARN(string(acctID))
+// getRoleARN returns the Role ARN that should be assumed for the given accountID or teamID,
+// from the appropriate configmap, in order to manage the resources.
+func (r *adoptionReconciler) getRoleARN(id string, cacheName string) (ackv1alpha1.AWSResourceName, error) {
+	var cache *ackrtcache.CARMMap
+	switch cacheName {
+	case ackrtcache.ACKRoleTeamMap:
+		cache = r.cache.Teams
+	case ackrtcache.ACKRoleAccountMap:
+		cache = r.cache.Accounts
+	default:
+		return "", fmt.Errorf("invalid cache name: %s", cacheName)
+	}
+
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ServiceLevelCARM) {
+		// use service level roleARN if present
+		serviceID := r.sc.GetMetadata().ServiceAlias + "." + id
+		if roleARN, err := cache.GetValue(serviceID); err == nil {
+			return ackv1alpha1.AWSResourceName(roleARN), nil
+		}
+	}
+
+	// otherwise use account/team level roleARN
+	roleARN, err := cache.GetValue(id)
 	if err != nil {
-		return "", fmt.Errorf("unable to retrieve role ARN for account %s: %v", acctID, err)
+		return "", fmt.Errorf("retrieving role ARN for account/team ID %q from %q configmap: %v", id, cacheName, err)
 	}
 	return ackv1alpha1.AWSResourceName(roleARN), nil
 }

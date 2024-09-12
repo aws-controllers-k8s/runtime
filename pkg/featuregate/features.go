@@ -18,13 +18,21 @@ package featuregate
 
 const (
 	ReadOnly = "ReadOnly"
+  
+	// TeamLevelCARM is a feature gate for enabling CARM for team-level resources.
+	TeamLevelCARM = "TeamLevelCARM"
+
+	// ServiceLevelCARM is a feature gate for enabling CARM for service-level resources.
+	ServiceLevelCARM = "ServiceLevelCARM"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
 	// Set feature gates here
-	ReadOnly: {Stage: Alpha, Enabled: false},
+	ReadOnly:         {Stage: Alpha, Enabled: false},
+	TeamLevelCARM:    {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

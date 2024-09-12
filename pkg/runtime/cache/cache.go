@@ -21,6 +21,8 @@ import (
 	"github.com/jaypipes/envutil"
 	kubernetes "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 )
 
 const (
@@ -75,16 +77,24 @@ type Caches struct {
 	stopCh chan struct{}
 
 	// Accounts cache
-	Accounts *AccountCache
+	Accounts *CARMMap
+
+	// Teams cache
+	Teams *CARMMap
 
 	// Namespaces cache
 	Namespaces *NamespaceCache
 }
 
 // New instantiate a new Caches object.
-func New(log logr.Logger, config Config) Caches {
+func New(log logr.Logger, config Config, features featuregate.FeatureGates) Caches {
+	var teams *CARMMap
+	if features.IsEnabled(featuregate.TeamLevelCARM) {
+		teams = NewCARMMapCache(log)
+	}
 	return Caches{
-		Accounts:   NewAccountCache(log),
+		Accounts:   NewCARMMapCache(log),
+		Teams:      teams,
 		Namespaces: NewNamespaceCache(log, config.WatchScope, config.Ignored),
 	}
 }
@@ -93,7 +103,10 @@ func New(log logr.Logger, config Config) Caches {
 func (c Caches) Run(clientSet kubernetes.Interface) {
 	stopCh := make(chan struct{})
 	if c.Accounts != nil {
-		c.Accounts.Run(clientSet, stopCh)
+		c.Accounts.Run(ACKRoleAccountMap, clientSet, stopCh)
+	}
+	if c.Teams != nil {
+		c.Teams.Run(ACKRoleTeamMap, clientSet, stopCh)
 	}
 	if c.Namespaces != nil {
 		c.Namespaces.Run(clientSet, stopCh)
@@ -103,9 +116,19 @@ func (c Caches) Run(clientSet kubernetes.Interface) {
 // WaitForCachesToSync waits for both of the namespace and configMap
 // informers to sync - by checking their hasSynced functions.
 func (c Caches) WaitForCachesToSync(ctx context.Context) bool {
-	namespaceSynced := cache.WaitForCacheSync(ctx.Done(), c.Namespaces.hasSynced)
-	accountSynced := cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
-	return namespaceSynced && accountSynced
+	// if the cache is not initialized, sync status should be true
+	namespaceSynced, accountSynced, carmSynced := true, true, true
+	// otherwise check their hasSynced functions
+	if c.Namespaces != nil {
+		namespaceSynced = cache.WaitForCacheSync(ctx.Done(), c.Namespaces.hasSynced)
+	}
+	if c.Accounts != nil {
+		accountSynced = cache.WaitForCacheSync(ctx.Done(), c.Accounts.hasSynced)
+	}
+	if c.Teams != nil {
+		carmSynced = cache.WaitForCacheSync(ctx.Done(), c.Teams.hasSynced)
+	}
+	return namespaceSynced && accountSynced && carmSynced
 }
 
 // Stop closes the stop channel and cause all the SharedInformers
