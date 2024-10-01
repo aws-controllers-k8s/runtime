@@ -308,8 +308,12 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
-		// Determine whether we should retain or delete the resource
-		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete {
+		// We only delete resources that are not read-only and have a deletion
+		// policy set to delete.
+		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete &&
+			// If the ReadOnly feature gate is enabled, and the resource is read-only,
+			// we don't delete the resource.
+			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnly) && IsReadOnly(res)) {
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
 			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, res)
@@ -355,6 +359,60 @@ func (r *resourceReconciler) Sync(
 
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
+
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnly) {
+		isReadOnly := IsReadOnly(desired)
+		rlog.WithValues("is_read_only", isReadOnly)
+
+		// NOTE(a-hilaly): When the time comes to support adopting resources
+		// using annotations, we will need to think a little bit more about
+		// the case where a user, wants to adopt a resource as read-only.
+
+		// If the resource is read-only, we enter a different code path where we
+		// only read the resource and patch the metadata and spec.
+		if isReadOnly {
+			rlog.Enter("rm.ResolveReferences")
+			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, desired)
+			// NOTE(a-hilaly): One might be wondering why are we ignoring the
+			// error here. The reason is that the current implementation of
+			// ResolveReference doesn't take into consideration the read-only
+			// resources (and their fields).
+			//
+			// In a nutshell, `ResolveReferences` implementation was designed to
+			// be used for the create/update operations, and not for the read-only
+			// resources. This means that the implementation of `ResolveReferences`
+			// returns an error when any of the required references (for create)
+			// are not resolved. This is not helpful for read-only resources.
+			//
+			// We need to refactor the `ResolveReferences` implementation to
+			// be able to resolve read-only required fields. For example, EKS
+			// NodeGroups, only require the `ClusterName` field to be resolved.
+			// This is not the case for create/update operations where we need to
+			// resolve all the references (e.g. `ClusterName`, `NodeRoleArn`, etc.).
+			// See https://github.com/aws-controllers-k8s/eks-controller/blob/main/pkg/resource/nodegroup/references.go#L72-L114
+			//
+			// What's the worst that can happen? If we don't resolve the references
+			// for read-only resources, ReadOne call will fail with an error, causing
+			// the resource to be requeued.
+			//
+			// TODO(a-hilaly): Implement resolve references for read-only resources,
+			// maybe part of the DynamicReferences work.
+			rlog.Exit("rm.ResolveReferences", err)
+
+			rlog.Enter("rm.ReadOne")
+			latest, err = rm.ReadOne(ctx, resolved)
+			rlog.Exit("rm.ReadOne", err)
+			if err != nil {
+				if err == ackerr.NotFound {
+					return nil, ackerr.ReadOnlyResourceNotFound
+				}
+				return latest, err
+			}
+
+			err = r.patchResourceStatus(ctx, desired, latest)
+			return latest, err
+		}
+	}
 
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)

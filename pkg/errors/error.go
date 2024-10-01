@@ -24,6 +24,9 @@ var (
 	// information that the resource being checked for existence was
 	// previously-created out of band from ACK
 	AdoptedResourceNotFound = fmt.Errorf("adopted resource not found")
+	// ReadOnlyResourceNotFound is like NotFound but provides the caller with
+	// information that the resource is on read-only mode and was not found
+	ReadOnlyResourceNotFound = fmt.Errorf("read-only resource not found")
 	// MissingNameIdentifier indicates an unexpected nil name identifier pointer
 	MissingNameIdentifier = fmt.Errorf("expected name identifier, found nil")
 	// NotAdoptable is to indicate the current resource has been explicitly
