@@ -313,7 +313,7 @@ func (r *resourceReconciler) reconcile(
 		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete &&
 			// If the ReadOnly feature gate is enabled, and the resource is read-only,
 			// we don't delete the resource.
-			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnly) && IsReadOnly(res)) {
+			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) && IsReadOnly(res)) {
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
 			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, res)
@@ -360,7 +360,7 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
-	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnly) {
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) {
 		isReadOnly := IsReadOnly(desired)
 		rlog.WithValues("is_read_only", isReadOnly)
 

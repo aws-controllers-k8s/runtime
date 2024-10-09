@@ -16,9 +16,12 @@
 // optionally overridden.
 package featuregate
 
+import "fmt"
+
 const (
-	ReadOnly = "ReadOnly"
-  
+	// ReadOnlyResources is a feature gate for enabling ReadOnly resources annotation.
+	ReadOnlyResources = "ReadOnlyResources"
+
 	// TeamLevelCARM is a feature gate for enabling CARM for team-level resources.
 	TeamLevelCARM = "TeamLevelCARM"
 
@@ -29,10 +32,9 @@ const (
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	// Set feature gates here
-	ReadOnly:         {Stage: Alpha, Enabled: false},
-	TeamLevelCARM:    {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM: {Stage: Alpha, Enabled: false},
+	ReadOnlyResources: {Stage: Alpha, Enabled: false},
+	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
@@ -102,13 +104,15 @@ func GetDefaultFeatureGates() FeatureGates {
 
 // GetFeatureGatesWithOverrides returns a new FeatureGates instance with the default features,
 // but with the provided overrides applied. This allows for runtime configuration of feature gates.
-func GetFeatureGatesWithOverrides(featureGateOverrides map[string]bool) FeatureGates {
+func GetFeatureGatesWithOverrides(featureGateOverrides map[string]bool) (FeatureGates, error) {
 	gates := GetDefaultFeatureGates()
 	for name, enabled := range featureGateOverrides {
 		if feature, ok := gates[name]; ok {
 			feature.Enabled = enabled
 			gates[name] = feature
+		} else {
+			return nil, fmt.Errorf("unknown feature gate: %v", name)
 		}
 	}
-	return gates
+	return gates, nil
 }
