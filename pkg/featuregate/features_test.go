@@ -15,6 +15,8 @@ package featuregate
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsEnabled(t *testing.T) {
@@ -108,10 +110,10 @@ func TestGetFeatureGatesWithOverrides(t *testing.T) {
 	overrides := map[string]bool{
 		"feature1": true,
 		"feature2": false,
-		"feature4": true, // This should be ignored as it's not in defaultFeatureGates
 	}
 
-	gates := GetFeatureGatesWithOverrides(overrides)
+	gates, err := GetFeatureGatesWithOverrides(overrides)
+	require.Nil(t, err)
 
 	tests := []struct {
 		name     string

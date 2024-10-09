@@ -340,7 +340,10 @@ func (cfg *Config) Validate(options ...Option) error {
 	if err != nil {
 		return fmt.Errorf("invalid value for flag '%s': %v", flagFeatureGates, err)
 	}
-	cfg.FeatureGates = featuregate.GetFeatureGatesWithOverrides(featureGatesMap)
+	cfg.FeatureGates, err = featuregate.GetFeatureGatesWithOverrides(featureGatesMap)
+	if err != nil {
+		return fmt.Errorf("error overriding feature gates: %v", err)
+	}
 
 	return nil
 }
