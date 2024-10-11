@@ -39,6 +39,8 @@ import (
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	svcsdkV2 "github.com/aws/aws-sdk-go-v2/config"
 )
 
 const (
@@ -145,6 +147,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	}
 
 	region := r.getRegion(res)
+	config := r.getsdkV2Config()
 	targetDescriptor := rmf.ResourceDescriptor()
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
@@ -157,8 +160,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
-	)
+		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN, config)
 	if err != nil {
 		return err
 	}
@@ -559,6 +561,16 @@ func (r *adoptionReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// AWS-SDK-GO-V2
+func (r *adoptionReconciler) getsdkV2Config() aws.Config {
+	config, err := svcsdkV2.LoadDefaultConfig(context.Background(), svcsdkV2.WithRegion(r.cfg.Region))
+	if err != nil {
+		fmt.Println(err.Error())
+		panic("Unable to create config for AWS SDK V2")
+	}
+	return config
 }
 
 // patchMetadataAndSpec patches the Metadata and Spec for AdoptedResource into
