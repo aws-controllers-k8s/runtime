@@ -23,6 +23,7 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
+	awssdkv2 "github.com/aws/aws-sdk-go-v2/aws"
 )
 
 // AWSResourceManager is responsible for providing a consistent way to perform
@@ -90,6 +91,7 @@ type AWSResourceManager interface {
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
 // manage AWS resources for a particular AWS account
 // TODO(jaypipes): Move AWSResourceManagerFactory into its own file
+// This is for AWS-SDK-GO-V2 - ADDED SDK V2 Config as parameter for ManageFor method - This is require for authentication
 type AWSResourceManagerFactory interface {
 	// ResourceDescriptor returns an AWSResourceDescriptor that can be used by
 	// the upstream controller-runtime to introspect the CRs that the resource
@@ -107,6 +109,7 @@ type AWSResourceManagerFactory interface {
 		ackv1alpha1.AWSAccountID,
 		ackv1alpha1.AWSRegion,
 		ackv1alpha1.AWSResourceName,
+		awssdkv2.Config,
 	) (AWSResourceManager, error)
 	// IsAdoptable returns true if the resource is able to be adopted
 	IsAdoptable() bool
