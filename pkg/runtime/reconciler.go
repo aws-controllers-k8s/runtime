@@ -360,6 +360,81 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ForcedAdoptResources) {
+		
+		// If the resource is being adopted by force, we need to access
+		// the required field passed by annotation and attempt a read.
+		if NeedAdoption(desired) {
+			rlog.WithValues("is_forced_adoption", "true")
+			rlog.Info("Adopting Resource")
+			extractedFields, err := ExtractAdoptionFields(desired)
+			if err != nil {
+				return desired, err
+			}
+			if extractedFields == nil {
+				// TODO(michaelhtm) figure out error here
+				return nil, fmt.Errorf("Failed extracting fields from annotation")
+			}
+			res := desired.DeepCopy()
+			err = res.PopulateResourceFromAnnotation(extractedFields)
+			if err != nil {
+				return nil, err
+			}
+			resolved := res
+			if hasRef, ok := extractedFields["hasReferences"]; ok && hasRef == "true" {
+				rlog.Enter("rm.ResolveReferences")
+				resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, res)
+				rlog.Exit("rm.ResolveReferences", err)
+				if err != nil {
+					return ackcondition.WithReferencesResolvedCondition(res, err), err
+				}
+				if hasReferences {
+					resolved = ackcondition.WithReferencesResolvedCondition(resolved, err)
+				}
+			}
+
+			rlog.Enter("rm.EnsureTags")
+			err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
+			rlog.Exit("rm.EnsureTags", err)
+			if err != nil {
+				return resolved, err
+			}
+			rlog.Enter("rm.ReadOne")
+			latest, err = rm.ReadOne(ctx, resolved)
+			if err != nil {
+				return nil, err
+			}
+
+			if !r.rd.IsManaged(latest) {
+				if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+					return nil, err
+				}
+
+				// Ensure tags again after adding the finalizer and patching the
+				// resource. Patching desired resource omits the controller tags
+				// because they are not persisted in etcd. So we again ensure
+				// that tags are present before performing the create operation.
+				rlog.Enter("rm.EnsureTags")
+				err = rm.EnsureTags(ctx, latest, r.sc.GetMetadata())
+				rlog.Exit("rm.EnsureTags", err)
+				if err != nil {
+					return latest, err
+				}
+			}
+			r.rd.MarkAdopted(latest)
+			latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+			if err != nil {
+				return latest, err
+			}
+			err = r.patchResourceStatus(ctx, desired, latest)
+			if err != nil {
+				return latest, err
+			}
+			rlog.Info("Resource Adopted")
+			return latest, requeue.NeededAfter(nil, 5)
+		}
+	}
+
 	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) {
 		isReadOnly := IsReadOnly(desired)
 		rlog.WithValues("is_read_only", isReadOnly)
@@ -367,6 +442,8 @@ func (r *resourceReconciler) Sync(
 		// NOTE(a-hilaly): When the time comes to support adopting resources
 		// using annotations, we will need to think a little bit more about
 		// the case where a user, wants to adopt a resource as read-only.
+		//
+		// NOTE(michaelhtm): Done, tnx :)
 
 		// If the resource is read-only, we enter a different code path where we
 		// only read the resource and patch the metadata and spec.

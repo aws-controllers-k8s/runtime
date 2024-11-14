@@ -81,4 +81,13 @@ const (
 	// the resource is read-only and should not be created/patched/deleted by the
 	// ACK service controller.
 	AnnotationReadOnly = AnnotationPrefix + "read-only"
+	// AnnotationForceAdoption is an annotation whose value is the identifier for whether
+	// we will force adoption or not. If this annotation is set to true on a CR, that
+	// means the user is indicating to the ACK service controller that it should
+	// force adoption of the resource.
+	AnnotationForceAdoption = AnnotationPrefix + "force-adoption"
+	// AnnotationAdoptionFields is an annotation whose value contains a json-like
+	// format of the requied fields to do a ReadOne when attempting to force-adopt
+	// a Resource
+	AnnotationAdoptionFields = AnnotationPrefix + "adoption-fields"
 )

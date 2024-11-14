@@ -14,6 +14,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -67,4 +68,51 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 		}
 	}
 	return false
+}
+
+// IsForcedAdoption returns true if the supplied AWSResource has an annotation
+// indicating that it should be adopted
+func isForcedAdoption(res acktypes.AWSResource) bool {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("IsForcedAdoption received resource with nil RuntimeObject")
+	}
+	for k, v := range mo.GetAnnotations() {
+		if k == ackv1alpha1.AnnotationForceAdoption {
+			return strings.ToLower(v) == "true"
+		}
+	}
+	return false
+}
+
+func NeedAdoption(res acktypes.AWSResource) bool {
+	return isForcedAdoption(res) && !IsAdopted(res)
+}
+
+func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {
+	fields := extractFieldsFromAnnotation(res)
+
+	extractedFields := &map[string]string{}
+	err := json.Unmarshal([]byte(fields), extractedFields)
+	if err != nil {
+		return nil, err
+	}
+
+	return *extractedFields, nil
+}
+
+func extractFieldsFromAnnotation(res acktypes.AWSResource) string {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("ExtractRequiredFields received resource with nil RuntimeObject")
+	}
+
+	for k, v := range mo.GetAnnotations() {
+		if k == ackv1alpha1.AnnotationAdoptionFields {
+			return v
+		}
+	}
+	return ""
 }

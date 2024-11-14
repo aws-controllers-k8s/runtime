@@ -19,6 +19,10 @@ package featuregate
 import "fmt"
 
 const (
+	// ForcedAdoptResources is a feature gate for enabling forced adoption of resources
+	// by annotation
+	ForcedAdoptResources = "ForcedAdoptResources"
+
 	// ReadOnlyResources is a feature gate for enabling ReadOnly resources annotation.
 	ReadOnlyResources = "ReadOnlyResources"
 
@@ -32,9 +36,10 @@ const (
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ReadOnlyResources: {Stage: Alpha, Enabled: false},
-	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
+	ForcedAdoptResources: {Stage: Alpha, Enabled: false},
+	ReadOnlyResources:    {Stage: Alpha, Enabled: false},
+	TeamLevelCARM:        {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:     {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
