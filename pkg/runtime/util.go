@@ -70,13 +70,13 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 	return false
 }
 
-// IsForcedAdoption returns true if the supplied AWSResource has an annotation
+// hasAdoptAnnotation returns true if the supplied AWSResource has an annotation
 // indicating that it should be adopted
-func isForcedAdoption(res acktypes.AWSResource) bool {
+func hasAdoptAnnotation(res acktypes.AWSResource) bool {
 	mo := res.MetaObject()
 	if mo == nil {
 		// Should never happen... if it does, it's buggy code.
-		panic("IsForcedAdoption received resource with nil RuntimeObject")
+		panic("hasAdoptAnnotation received resource with nil RuntimeObject")
 	}
 	for k, v := range mo.GetAnnotations() {
 		if k == ackv1alpha1.AnnotationForceAdoption {
@@ -86,12 +86,18 @@ func isForcedAdoption(res acktypes.AWSResource) bool {
 	return false
 }
 
+func createOrAdopt(res acktypes.AWSResource) bool {
+	return hasAdoptAnnotation(res) || IsAdopted(res)
+}
+
+// NeedAdoption returns true when the resource has 
+// adopt annotation but is not yet adopted
 func NeedAdoption(res acktypes.AWSResource) bool {
-	return isForcedAdoption(res) && !IsAdopted(res)
+	return hasAdoptAnnotation(res) && !IsAdopted(res)
 }
 
 func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {
-	fields := extractFieldsFromAnnotation(res)
+	fields := getAdoptionFields(res)
 
 	extractedFields := &map[string]string{}
 	err := json.Unmarshal([]byte(fields), extractedFields)
@@ -102,7 +108,7 @@ func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) 
 	return *extractedFields, nil
 }
 
-func extractFieldsFromAnnotation(res acktypes.AWSResource) string {
+func getAdoptionFields(res acktypes.AWSResource) string {
 	mo := res.MetaObject()
 	if mo == nil {
 		// Should never happen... if it does, it's buggy code.
