@@ -70,30 +70,29 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 	return false
 }
 
-// hasAdoptAnnotation returns true if the supplied AWSResource has an annotation
-// indicating that it should be adopted
-func hasAdoptAnnotation(res acktypes.AWSResource) bool {
+// GetAdoptionPolicy returns the Adoption Policy of the resource
+// defined by the user in annotation. Possible values are: 
+// adopt-only | adopt-or-create
+// adopt-only keeps requing until the resource is found
+// adopt-or-create creates the resource if does not exist
+func GetAdoptionPolicy(res acktypes.AWSResource) string {
 	mo := res.MetaObject()
 	if mo == nil {
-		// Should never happen... if it does, it's buggy code.
-		panic("hasAdoptAnnotation received resource with nil RuntimeObject")
+		panic("getAdoptionPolicy received resource with nil RuntimeObject")
 	}
 	for k, v := range mo.GetAnnotations() {
-		if k == ackv1alpha1.AnnotationForceAdoption {
-			return strings.ToLower(v) == "true"
+		if k == ackv1alpha1.AnnotationAdoptionPolicy {
+			return v
 		}
 	}
-	return false
+
+	return ""
 }
 
-func createOrAdopt(res acktypes.AWSResource) bool {
-	return hasAdoptAnnotation(res) || IsAdopted(res)
-}
-
-// NeedAdoption returns true when the resource has 
+// NeedAdoption returns true when the resource has
 // adopt annotation but is not yet adopted
 func NeedAdoption(res acktypes.AWSResource) bool {
-	return hasAdoptAnnotation(res) && !IsAdopted(res)
+	return GetAdoptionPolicy(res) != "" && !IsAdopted(res) 
 }
 
 func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {

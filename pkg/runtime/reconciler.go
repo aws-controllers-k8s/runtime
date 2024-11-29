@@ -57,6 +57,10 @@ const (
 	// resource if the CARM cache is not synced yet, or if the roleARN is not
 	// available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
+	// adoptOrCreate is an annotation field that decides whether to create the
+	// resource if it doesn't exist, or adopt the resource if it exists.
+	// value comes from getAdoptionPolicy
+	// adoptOrCreate = "adopt-or-create"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -307,29 +311,23 @@ func (r *resourceReconciler) handleAdoption(
 	// If the resource is being adopted by force, we need to access
 	// the required field passed by annotation and attempt a read.
 
-	// continueReconcile will decide whether or not to continue the
-	// reconciliation. The cases where this would happen is when the
-	// resource is already adopted, or if we want to create the resource
-	// if user wants to create it when not found 
-	if !NeedAdoption(desired) {
-		return desired, nil
-	}
-
 	rlog.Info("Adopting Resource")
 	extractedFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
 		return desired, ackerr.NewTerminalError(err)
 	}
 	if len(extractedFields) == 0 {
-		// TODO(michaelhtm) figure out error here
+		// TODO(michaelhtm) Here we need to figure out if we want to have an
+		// error or not. should we consider accepting values from Spec?
+		// And then we can let the ReadOne figure out if we have missing
+		// required fields for a Read
 		return nil, fmt.Errorf("failed extracting fields from annotation")
 	}
-	res := desired.DeepCopy()
-	err = res.PopulateResourceFromAnnotation(extractedFields)
+	resolved := desired.DeepCopy()
+	err = resolved.PopulateResourceFromAnnotation(extractedFields)
 	if err != nil {
 		return nil, err
 	}
-	resolved := res
 
 	rlog.Enter("rm.EnsureTags")
 	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
@@ -340,24 +338,22 @@ func (r *resourceReconciler) handleAdoption(
 	rlog.Enter("rm.ReadOne")
 	latest, err := rm.ReadOne(ctx, resolved)
 	if err != nil {
-		return nil, err
+		return latest, err
 	}
 
-	if !r.rd.IsManaged(latest) {
-		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
-			return nil, err
-		}
+	if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+		return latest, err
+	}
 
-		// Ensure tags again after adding the finalizer and patching the
-		// resource. Patching desired resource omits the controller tags
-		// because they are not persisted in etcd. So we again ensure
-		// that tags are present before performing the create operation.
-		rlog.Enter("rm.EnsureTags")
-		err = rm.EnsureTags(ctx, latest, r.sc.GetMetadata())
-		rlog.Exit("rm.EnsureTags", err)
-		if err != nil {
-			return latest, err
-		}
+	// Ensure tags again after adding the finalizer and patching the
+	// resource. Patching desired resource omits the controller tags
+	// because they are not persisted in etcd. So we again ensure
+	// that tags are present before performing the create operation.
+	rlog.Enter("rm.EnsureTags")
+	err = rm.EnsureTags(ctx, latest, r.sc.GetMetadata())
+	rlog.Exit("rm.EnsureTags", err)
+	if err != nil {
+		return latest, err
 	}
 	r.rd.MarkAdopted(latest)
 	rlog.WithValues("is_adopted", "true")
@@ -365,12 +361,9 @@ func (r *resourceReconciler) handleAdoption(
 	if err != nil {
 		return latest, err
 	}
-	err = r.patchResourceStatus(ctx, desired, latest)
-	if err != nil {
-		return latest, err
-	}
+
 	rlog.Info("Resource Adopted")
-	return latest, requeue.NeededAfter(nil, 5)
+	return latest, nil
 }
 
 // reconcile either cleans up a deleted resource or ensures that the supplied
@@ -435,10 +428,18 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
-	if r.cfg.FeatureGates.IsEnabled(featuregate.AdoptResources) {
-		latest, err := r.handleAdoption(ctx, rm, desired, rlog)
-		if err != nil {
-			return latest, err
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption) {
+		if NeedAdoption(desired) && !r.rd.IsManaged(desired) {
+			latest, err := r.handleAdoption(ctx, rm, desired, rlog)
+
+			if err != nil {
+				// If we get an error, we want to return here
+				// TODO(michaelhtm): Change the handling of
+				// the error to allow Adopt or Create here
+				// when supported
+				return latest, err
+			}
+			return latest, nil
 		}
 	}
 

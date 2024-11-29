@@ -74,8 +74,8 @@ func TestIsForcedAdoption(t *testing.T) {
 	res := &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationForceAdoption: "true",
-			ackv1alpha1.AnnotationAdopted: "false",
+			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdopted:        "false",
 		},
 	})
 	require.True(ackrt.NeedAdoption(res))
@@ -83,8 +83,8 @@ func TestIsForcedAdoption(t *testing.T) {
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationForceAdoption: "true",
-			ackv1alpha1.AnnotationAdopted: "true",
+			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdopted:        "true",
 		},
 	})
 	require.False(ackrt.NeedAdoption(res))
@@ -92,8 +92,8 @@ func TestIsForcedAdoption(t *testing.T) {
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationForceAdoption: "false",
-			ackv1alpha1.AnnotationAdopted: "true",
+			ackv1alpha1.AnnotationAdoptionPolicy: "false",
+			ackv1alpha1.AnnotationAdopted:        "true",
 		},
 	})
 	require.False(ackrt.NeedAdoption(res))
@@ -111,10 +111,10 @@ func TestExtractAdoptionFields(t *testing.T) {
 			}`,
 		},
 	})
-	
+
 	expected := map[string]string{
 		"clusterName": "my-cluster",
-		"name": "ng-1234",
+		"name":        "ng-1234",
 	}
 	actual, err := ackrt.ExtractAdoptionFields(res)
 	require.NoError(err)
