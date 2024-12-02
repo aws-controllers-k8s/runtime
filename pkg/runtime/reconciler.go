@@ -57,6 +57,10 @@ const (
 	// resource if the CARM cache is not synced yet, or if the roleARN is not
 	// available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
+	// adoptOrCreate is an annotation field that decides whether to create the
+	// resource if it doesn't exist, or adopt the resource if it exists.
+	// value comes from getAdoptionPolicy
+	// adoptOrCreate = "adopt-or-create"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -298,6 +302,70 @@ func (r *resourceReconciler) handleCacheError(
 	return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
 }
 
+func (r *resourceReconciler) handleAdoption(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	rlog acktypes.Logger,
+) (acktypes.AWSResource, error) {
+	// If the resource is being adopted by force, we need to access
+	// the required field passed by annotation and attempt a read.
+
+	rlog.Info("Adopting Resource")
+	extractedFields, err := ExtractAdoptionFields(desired)
+	if err != nil {
+		return desired, ackerr.NewTerminalError(err)
+	}
+	if len(extractedFields) == 0 {
+		// TODO(michaelhtm) Here we need to figure out if we want to have an
+		// error or not. should we consider accepting values from Spec?
+		// And then we can let the ReadOne figure out if we have missing
+		// required fields for a Read
+		return nil, fmt.Errorf("failed extracting fields from annotation")
+	}
+	resolved := desired.DeepCopy()
+	err = resolved.PopulateResourceFromAnnotation(extractedFields)
+	if err != nil {
+		return nil, err
+	}
+
+	rlog.Enter("rm.EnsureTags")
+	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
+	rlog.Exit("rm.EnsureTags", err)
+	if err != nil {
+		return resolved, err
+	}
+	rlog.Enter("rm.ReadOne")
+	latest, err := rm.ReadOne(ctx, resolved)
+	if err != nil {
+		return latest, err
+	}
+
+	if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+		return latest, err
+	}
+
+	// Ensure tags again after adding the finalizer and patching the
+	// resource. Patching desired resource omits the controller tags
+	// because they are not persisted in etcd. So we again ensure
+	// that tags are present before performing the create operation.
+	rlog.Enter("rm.EnsureTags")
+	err = rm.EnsureTags(ctx, latest, r.sc.GetMetadata())
+	rlog.Exit("rm.EnsureTags", err)
+	if err != nil {
+		return latest, err
+	}
+	r.rd.MarkAdopted(latest)
+	rlog.WithValues("is_adopted", "true")
+	latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+	if err != nil {
+		return latest, err
+	}
+
+	rlog.Info("Resource Adopted")
+	return latest, nil
+}
+
 // reconcile either cleans up a deleted resource or ensures that the supplied
 // AWSResource's backing API resource matches the supplied desired state.
 //
@@ -360,6 +428,21 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
+	if r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption) {
+		if NeedAdoption(desired) && !r.rd.IsManaged(desired) {
+			latest, err := r.handleAdoption(ctx, rm, desired, rlog)
+
+			if err != nil {
+				// If we get an error, we want to return here
+				// TODO(michaelhtm): Change the handling of
+				// the error to allow Adopt or Create here
+				// when supported
+				return latest, err
+			}
+			return latest, nil
+		}
+	}
+
 	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) {
 		isReadOnly := IsReadOnly(desired)
 		rlog.WithValues("is_read_only", isReadOnly)
@@ -367,6 +450,8 @@ func (r *resourceReconciler) Sync(
 		// NOTE(a-hilaly): When the time comes to support adopting resources
 		// using annotations, we will need to think a little bit more about
 		// the case where a user, wants to adopt a resource as read-only.
+		//
+		// NOTE(michaelhtm): Done, tnx :)
 
 		// If the resource is read-only, we enter a different code path where we
 		// only read the resource and patch the metadata and spec.

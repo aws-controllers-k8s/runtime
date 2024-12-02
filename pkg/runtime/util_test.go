@@ -67,3 +67,56 @@ func TestIsSynced(t *testing.T) {
 	})
 	require.False(ackrt.IsSynced(res))
 }
+
+func TestIsForcedAdoption(t *testing.T) {
+	require := require.New(t)
+
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdopted:        "false",
+		},
+	})
+	require.True(ackrt.NeedAdoption(res))
+
+	res = &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdopted:        "true",
+		},
+	})
+	require.False(ackrt.NeedAdoption(res))
+
+	res = &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionPolicy: "false",
+			ackv1alpha1.AnnotationAdopted:        "true",
+		},
+	})
+	require.False(ackrt.NeedAdoption(res))
+}
+
+func TestExtractAdoptionFields(t *testing.T) {
+	require := require.New(t)
+
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionFields: `{
+				"clusterName": "my-cluster",
+				"name": "ng-1234"
+			}`,
+		},
+	})
+
+	expected := map[string]string{
+		"clusterName": "my-cluster",
+		"name":        "ng-1234",
+	}
+	actual, err := ackrt.ExtractAdoptionFields(res)
+	require.NoError(err)
+	require.Equal(expected, actual)
+}

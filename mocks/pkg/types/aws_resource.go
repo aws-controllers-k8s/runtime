@@ -131,6 +131,20 @@ func (_m *AWSResource) SetIdentifiers(_a0 *v1alpha1.AWSIdentifiers) error {
 	return r0
 }
 
+// PopulateResourceFromAnnotation provides a mock function with given fields: _a0
+func (_m *AWSResource) PopulateResourceFromAnnotation(_a0 map[string]string) error {
+	ret := _m.Called(_a0)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(map[string]string) error); ok {
+		r0 = rf(_a0)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // SetObjectMeta provides a mock function with given fields: meta
 func (_m *AWSResource) SetObjectMeta(meta v1.ObjectMeta) {
 	_m.Called(meta)
