@@ -376,6 +376,10 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
+		// Ensure the resource is managed before attempting delete
+		if !r.rd.IsManaged(res) {
+			return res, nil
+		}
 		// We only delete resources that are not read-only and have a deletion
 		// policy set to delete.
 		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete &&
