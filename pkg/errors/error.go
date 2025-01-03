@@ -14,9 +14,10 @@
 package errors
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/smithy-go"
 )
 
 var (
@@ -68,15 +69,17 @@ var (
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go
 // Error interface
-func AWSError(err error) (awserr.Error, bool) {
-	awsErr, ok := err.(awserr.Error)
+func AWSError(err error) (*smithy.GenericAPIError, bool) {
+	var awsErr *smithy.GenericAPIError
+	ok := errors.As(err, &awsErr)
 	return awsErr, ok
 }
 
 // AWSRequestFailure returns the type conversion for the supplied error to an
 // aws-sdk-go RequestFailure interface
-func AWSRequestFailure(err error) (awserr.RequestFailure, bool) {
-	awsRF, ok := err.(awserr.RequestFailure)
+func AWSRequestFailure(err error) (*smithy.GenericAPIError, bool) {
+	var awsRF *smithy.GenericAPIError
+	ok := errors.As(err, &awsRF)
 	return awsRF, ok
 }
 
@@ -95,7 +98,7 @@ func HTTPStatusCode(err error) int {
 	if !ok {
 		return -1
 	}
-	return awsRF.StatusCode()
+	return int(awsRF.ErrorFault())
 }
 
 // TerminalError defines an error that should be considered terminal, and placed

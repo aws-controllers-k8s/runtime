@@ -14,7 +14,9 @@
 package types
 
 import (
-	"github.com/aws/aws-sdk-go/aws/session"
+	"context"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -42,8 +44,6 @@ type ServiceControllerMetadata struct {
 	// ServiceAPIGroup is a string with the full DNS-correct API group that
 	// this service controller manages, e.g. "s3.services.k8s.aws"
 	ServiceAPIGroup string
-	// ServiceEndpointsID is a string with the service API's EndpointsID, e.g. "api.sagemaker"
-	ServiceEndpointsID string
 }
 
 // ServiceController wraps one or more reconcilers (for individual resources in
@@ -76,16 +76,16 @@ type ServiceController interface {
 		ackcfg.Config,
 	) error
 
-	// NewSession returns a new session object. By default the returned session
-	// is created using pod IRSA environment variables. If assumeRoleARN is not
-	// empty, NewSession will call STS::AssumeRole and use the returned
-	// credentials to create the session.
-	NewSession(
+	// NewConfig returns a new config object. By default the returned config
+	// is created using pod IRSA environment variables. The BaseEndpoint is 
+	// configured if the provided endpointURL is not empty.
+	NewConfig(
+		context.Context,
 		ackv1alpha1.AWSRegion,
 		*string,
 		ackv1alpha1.AWSResourceName,
 		schema.GroupVersionKind,
-	) (*session.Session, error)
+	) (aws.Config, error)
 
 	// GetMetadata returns the metadata associated with the service controller.
 	GetMetadata() ServiceControllerMetadata

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/arn"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
@@ -266,8 +266,9 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	region := r.getRegion(desired)
 	endpointURL := r.getEndpointURL(desired)
 	gvk := r.rd.GroupVersionKind()
-	// New session will only pivot to the roleARN if it is not empty.
-	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
+	// The config pivot to the roleARN will happen if it is not empty.
+	// in the NewResourceManager
+	clientConfig, err := r.sc.NewConfig(ctx, region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
@@ -279,7 +280,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	)
 
 	rm, err := r.rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
+		r.cfg, clientConfig, r.log, r.metrics, r, acctID, region, roleARN,
 	)
 	if err != nil {
 		return ctrlrt.Result{}, err
@@ -338,7 +339,7 @@ func (r *resourceReconciler) handleAdoption(
 	rlog.Enter("rm.ReadOne")
 	latest, err := rm.ReadOne(ctx, resolved)
 	if err != nil {
-		return latest, err
+		return nil, err
 	}
 
 	if err = r.setResourceManaged(ctx, rm, latest); err != nil {
@@ -441,7 +442,7 @@ func (r *resourceReconciler) Sync(
 				// TODO(michaelhtm): Change the handling of
 				// the error to allow Adopt or Create here
 				// when supported
-				return latest, err
+				return desired, err
 			}
 			return latest, nil
 		}
