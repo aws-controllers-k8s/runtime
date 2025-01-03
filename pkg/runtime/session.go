@@ -14,13 +14,15 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/endpoints"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -28,68 +30,65 @@ import (
 
 const appName = "aws-controllers-k8s"
 
-// NewSession returns a new session object. By default the returned session is
-// created using pod IRSA environment variables. If assumeRoleARN is not empty,
-// NewSession will call STS::AssumeRole and use the returned credentials to create
-// the session.
-func (c *serviceController) NewSession(
+func (c *serviceController) NewConfig(
+	ctx context.Context,
 	region ackv1alpha1.AWSRegion,
 	endpointURL *string,
-	assumeRoleARN ackv1alpha1.AWSResourceName,
+	roleARN ackv1alpha1.AWSResourceName,
 	groupVersionKind schema.GroupVersionKind,
-) (*session.Session, error) {
-	awsCfg := aws.Config{
-		Region:              aws.String(string(region)),
-		STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
-	}
+) (aws.Config, error) {
+
+	val := c.getHandlerValue(groupVersionKind)
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion(string(region)),
+		config.WithAPIOptions(SetHttpHeader(appName, val)),
+	)
 
 	if *endpointURL != "" {
-		endpointServiceResolver := func(service, region string, optFns ...func(*endpoints.Options)) (endpoints.ResolvedEndpoint, error) {
-			if service == c.ServiceEndpointsID {
-				return endpoints.ResolvedEndpoint{
-					URL: *endpointURL,
-				}, nil
-			}
-			return endpoints.DefaultResolver().EndpointFor(service, region)
-		}
-		awsCfg.EndpointResolver = endpoints.ResolverFunc(endpointServiceResolver)
+		awsCfg.BaseEndpoint = endpointURL
 	}
 
-	sess, err := session.NewSession(&awsCfg)
+	if roleARN != "" {
+		client := sts.NewFromConfig(awsCfg)
+		awsCfg.Credentials = stscreds.NewAssumeRoleProvider(client, string(roleARN))
+	}
+
 	if err != nil {
-		return nil, err
+		return awsCfg, err
 	}
 
-	if assumeRoleARN != "" {
-		// call STS::AssumeRole
-		creds := stscreds.NewCredentials(sess, string(assumeRoleARN))
-		// recreate session with the new credentials
-		awsCfg.Credentials = creds
-		sess, err = session.NewSession(&awsCfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-	//injecting session handler info
-	c.injectUserAgent(&sess.Handlers, groupVersionKind)
-
-	// TODO(jaypipes): Handle throttling
-	return sess, nil
+	return awsCfg, nil
 }
 
-// injectUserAgent will inject app specific user-agent into awsSDK
-func (c *serviceController) injectUserAgent(
-	handlers *request.Handlers,
-	groupVersionKind schema.GroupVersionKind,
-) {
-	handlers.Build.PushFrontNamed(request.NamedHandler{
-		Name: fmt.Sprintf("%s/user-agent", appName),
-		Fn: request.MakeAddToUserAgentHandler(
-			appName,
-			groupVersionKind.Group+"-"+c.VersionInfo.GitVersion,
-			"GitCommit/"+c.VersionInfo.GitCommit,
-			"BuildDate/"+c.VersionInfo.BuildDate,
-			"CRDKind/"+groupVersionKind.Kind,
-			"CRDVersion/"+groupVersionKind.Version),
-	})
+func SetHttpHeader(key, value string) []func(*middleware.Stack) error {
+	return []func(stack *middleware.Stack) error{
+		func(stack *middleware.Stack) error {
+			return stack.Build.Add(middleware.BuildMiddlewareFunc(fmt.Sprintf("%s/user-agent", key), func(
+				ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler,
+			) (
+				middleware.BuildOutput, middleware.Metadata, error,
+			) {
+				switch v := in.Request.(type) {
+				case *smithyhttp.Request:
+					v.Header.Add(key, value)
+				}
+				return next.HandleBuild(ctx, in)
+			}), middleware.Before)
+		},
+	}
+}
+
+func (c *serviceController) getHandlerValue(groupVersionKind schema.GroupVersionKind) string {
+
+	val := fmt.Sprintf("%s/%s (%s) (%s) (%s) (%s)",
+		appName,
+		groupVersionKind.Group+"-"+c.VersionInfo.GitVersion,
+		"GitCommit/"+c.VersionInfo.GitCommit,
+		"BuildDate/"+c.VersionInfo.BuildDate,
+		"CRDKind/"+groupVersionKind.Kind,
+		"CRDVersion/"+groupVersionKind.Version,
+	)
+
+	return val
 }

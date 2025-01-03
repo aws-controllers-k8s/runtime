@@ -149,7 +149,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
 
-	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
+	awsconfig, err := r.sc.NewConfig(ctx, region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
+		r.cfg, awsconfig, r.log, r.metrics, r, acctID, region, roleARN,
 	)
 	if err != nil {
 		return err

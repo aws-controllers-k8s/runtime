@@ -16,7 +16,7 @@ package types
 import (
 	"context"
 
-	"github.com/aws/aws-sdk-go/aws/session"
+	awscfg "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/go-logr/logr"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -100,10 +100,10 @@ type AWSResourceManagerFactory interface {
 	// behalf of a particular AWS account and in a specific AWS region
 	ManagerFor(
 		ackcfg.Config, // passed by-value to avoid mutation by consumers
+		awscfg.Config,
 		logr.Logger,
 		*ackmetrics.Metrics,
 		Reconciler,
-		*session.Session,
 		ackv1alpha1.AWSAccountID,
 		ackv1alpha1.AWSRegion,
 		ackv1alpha1.AWSResourceName,

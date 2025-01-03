@@ -96,6 +96,20 @@ func (_m *AWSResource) MetaObject() v1.Object {
 	return r0
 }
 
+// PopulateResourceFromAnnotation provides a mock function with given fields: fields
+func (_m *AWSResource) PopulateResourceFromAnnotation(fields map[string]string) error {
+	ret := _m.Called(fields)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(map[string]string) error); ok {
+		r0 = rf(fields)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // ReplaceConditions provides a mock function with given fields: _a0
 func (_m *AWSResource) ReplaceConditions(_a0 []*v1alpha1.Condition) {
 	_m.Called(_a0)
@@ -123,20 +137,6 @@ func (_m *AWSResource) SetIdentifiers(_a0 *v1alpha1.AWSIdentifiers) error {
 
 	var r0 error
 	if rf, ok := ret.Get(0).(func(*v1alpha1.AWSIdentifiers) error); ok {
-		r0 = rf(_a0)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// PopulateResourceFromAnnotation provides a mock function with given fields: _a0
-func (_m *AWSResource) PopulateResourceFromAnnotation(_a0 map[string]string) error {
-	ret := _m.Called(_a0)
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(map[string]string) error); ok {
 		r0 = rf(_a0)
 	} else {
 		r0 = ret.Error(0)
