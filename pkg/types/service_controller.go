@@ -76,9 +76,9 @@ type ServiceController interface {
 		ackcfg.Config,
 	) error
 
-	// NewSession returns a new session object. By default the returned session
+	// NewClient returns a new session object. By default the returned session
 	// is created using pod IRSA environment variables. If assumeRoleARN is not
-	// empty, NewSession will call STS::AssumeRole and use the returned
+	// empty, NewClient will call STS::AssumeRole and use the returned
 	// credentials to create the session.
 	NewSession(
 		ackv1alpha1.AWSRegion,

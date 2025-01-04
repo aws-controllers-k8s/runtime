@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	awscfg "github.com/aws/aws-sdk-go-v2/aws"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -149,15 +150,10 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
 
-	sess, err := r.sc.NewSession(region, &endpointURL, roleARN, gvk)
-	if err != nil {
-		return err
-	}
-
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, r.log, r.metrics, r, sess, acctID, region, roleARN,
+		r.cfg, *awscfg.NewConfig(), r.log, r.metrics, r, acctID, region, roleARN, endpointURL, gvk,
 	)
 	if err != nil {
 		return err
