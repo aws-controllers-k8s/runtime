@@ -69,16 +69,17 @@ var (
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go
 // Error interface
-func AWSError(err error) (*smithy.GenericAPIError, bool) {
-	var awsErr *smithy.GenericAPIError
+func AWSError(err error) (smithy.APIError, bool) {
+	var awsErr smithy.APIError
 	ok := errors.As(err, &awsErr)
+
 	return awsErr, ok
 }
 
 // AWSRequestFailure returns the type conversion for the supplied error to an
 // aws-sdk-go RequestFailure interface
-func AWSRequestFailure(err error) (*smithy.GenericAPIError, bool) {
-	var awsRF *smithy.GenericAPIError
+func AWSRequestFailure(err error) (smithy.APIError, bool) {
+	var awsRF smithy.APIError
 	ok := errors.As(err, &awsRF)
 	return awsRF, ok
 }

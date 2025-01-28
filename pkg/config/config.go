@@ -259,9 +259,12 @@ func (cfg *Config) SetupLogger() {
 // SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
 // in Config
 func (cfg *Config) SetAWSAccountID(ctx context.Context) error {
-	awsCfg, err := config.LoadDefaultConfig(ctx)
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion(cfg.Region),
+	)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to create awsCfg for SetAccountID: %v", err)
 	}
 	if cfg.IdentityEndpointURL != "" {
 		awsCfg.BaseEndpoint = aws.String(cfg.IdentityEndpointURL)
