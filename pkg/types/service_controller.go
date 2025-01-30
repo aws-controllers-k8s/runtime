@@ -76,10 +76,10 @@ type ServiceController interface {
 		ackcfg.Config,
 	) error
 
-	// NewConfig returns a new config object. By default the returned config
-	// is created using pod IRSA environment variables. The BaseEndpoint is 
+	// NewAWSConfig returns a new config object. By default the returned config
+	// is created using pod IRSA environment variables. The BaseEndpoint is
 	// configured if the provided endpointURL is not empty.
-	NewConfig(
+	NewAWSConfig(
 		context.Context,
 		ackv1alpha1.AWSRegion,
 		*string,

@@ -88,8 +88,8 @@ func (_m *ServiceController) GetResourceManagerFactories() map[string]types.AWSR
 	return r0
 }
 
-// NewConfig provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
-func (_m *ServiceController) NewConfig(_a0 context.Context, _a1 v1alpha1.AWSRegion, _a2 *string, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind) (aws.Config, error) {
+// NewAWSConfig provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
+func (_m *ServiceController) NewAWSConfig(_a0 context.Context, _a1 v1alpha1.AWSRegion, _a2 *string, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind) (aws.Config, error) {
 	ret := _m.Called(_a0, _a1, _a2, _a3, _a4)
 
 	var r0 aws.Config

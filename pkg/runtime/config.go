@@ -31,7 +31,7 @@ import (
 
 const appName = "aws-controllers-k8s"
 
-func (c *serviceController) NewConfig(
+func (c *serviceController) NewAWSConfig(
 	ctx context.Context,
 	region ackv1alpha1.AWSRegion,
 	endpointURL *string,
@@ -39,12 +39,13 @@ func (c *serviceController) NewConfig(
 	groupVersionKind schema.GroupVersionKind,
 ) (aws.Config, error) {
 
-	val := handlerValue(
+	val := formatUserAgent(
 		appName,
 		groupVersionKind.Group+"-"+c.VersionInfo.GitVersion,
-		"BuildDate/" + c.VersionInfo.BuildDate,
-		"CRDKind/" + groupVersionKind.Kind,
-		"CRDVersion/" + groupVersionKind.Version,
+		"GitCommit/"+c.VersionInfo.GitCommit,
+		"BuildDate/"+c.VersionInfo.BuildDate,
+		"CRDKind/"+groupVersionKind.Kind,
+		"CRDVersion/"+groupVersionKind.Version,
 	)
 
 	userAgentAppender := func(stack *middleware.Stack) error {
@@ -85,7 +86,7 @@ func (c *serviceController) NewConfig(
 	return awsCfg, nil
 }
 
-func handlerValue(name, version string, extra ...string) string {
+func formatUserAgent(name, version string, extra ...string) string {
 	ua := fmt.Sprintf("%s/%s", name, version)
 	if len(extra) > 0 {
 		ua += fmt.Sprintf(" (%s)", strings.Join(extra, "; "))

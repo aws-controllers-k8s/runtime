@@ -149,7 +149,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
 
-	awsconfig, err := r.sc.NewConfig(ctx, region, &endpointURL, roleARN, gvk)
+	awsconfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return err
 	}

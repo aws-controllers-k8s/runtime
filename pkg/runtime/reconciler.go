@@ -268,7 +268,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	gvk := r.rd.GroupVersionKind()
 	// The config pivot to the roleARN will happen if it is not empty.
 	// in the NewResourceManager
-	clientConfig, err := r.sc.NewConfig(ctx, region, &endpointURL, roleARN, gvk)
+	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
@@ -339,7 +339,7 @@ func (r *resourceReconciler) handleAdoption(
 	rlog.Enter("rm.ReadOne")
 	latest, err := rm.ReadOne(ctx, resolved)
 	if err != nil {
-		return nil, err
+		return latest, err
 	}
 
 	if err = r.setResourceManaged(ctx, rm, latest); err != nil {
@@ -442,7 +442,7 @@ func (r *resourceReconciler) Sync(
 				// TODO(michaelhtm): Change the handling of
 				// the error to allow Adopt or Create here
 				// when supported
-				return desired, err
+				return latest, err
 			}
 			return latest, nil
 		}

@@ -127,7 +127,7 @@ func managerFactoryMocks(
 	rd.On("GroupVersionKind").Return(
 		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
-			Kind:  "fakeBookx",
+			Kind:  "fakeBook",
 		},
 	)
 	rd.On("EmptyRuntimeObject").Return(
