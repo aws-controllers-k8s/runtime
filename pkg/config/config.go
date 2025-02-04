@@ -14,6 +14,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/jaypipes/envutil"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
@@ -257,19 +258,21 @@ func (cfg *Config) SetupLogger() {
 
 // SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
 // in Config
-func (cfg *Config) SetAWSAccountID() error {
-	awsCfg := aws.Config{}
+func (cfg *Config) SetAWSAccountID(ctx context.Context) error {
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion(cfg.Region),
+	)
+	if err != nil {
+		return fmt.Errorf("unable to create awsCfg for SetAccountID: %v", err)
+	}
 	if cfg.IdentityEndpointURL != "" {
-		awsCfg.Endpoint = aws.String(cfg.IdentityEndpointURL)
+		awsCfg.BaseEndpoint = aws.String(cfg.IdentityEndpointURL)
 	}
 
 	// use sts to find AWS AccountId
-	session, err := session.NewSession(&awsCfg)
-	if err != nil {
-		return fmt.Errorf("unable to create session: %v", err)
-	}
-	client := sts.New(session)
-	res, err := client.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+	client := sts.NewFromConfig(awsCfg)
+	res, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
 		return fmt.Errorf("unable to get caller identity: %v", err)
 	}
@@ -278,7 +281,7 @@ func (cfg *Config) SetAWSAccountID() error {
 }
 
 // Validate ensures the options are valid
-func (cfg *Config) Validate(options ...Option) error {
+func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 	merged := mergeOptions(options)
 	if len(merged.gvks) > 0 {
 		err := cfg.validateReconcileConfigResources(merged.gvks)
@@ -317,7 +320,7 @@ func (cfg *Config) Validate(options ...Option) error {
 		}
 	}
 
-	if err := cfg.SetAWSAccountID(); err != nil {
+	if err := cfg.SetAWSAccountID(ctx); err != nil {
 		return fmt.Errorf("unable to determine account ID: %v", err)
 	}
 

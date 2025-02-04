@@ -300,7 +300,6 @@ func (c *serviceController) GetMetadata() acktypes.ServiceControllerMetadata {
 func NewServiceController(
 	svcAlias string,
 	svcAPIGroup string,
-	svcEndpointsID string,
 	versionInfo acktypes.VersionInfo,
 ) acktypes.ServiceController {
 	return &serviceController{
@@ -308,7 +307,6 @@ func NewServiceController(
 			VersionInfo:        versionInfo,
 			ServiceAlias:       svcAlias,
 			ServiceAPIGroup:    svcAPIGroup,
-			ServiceEndpointsID: svcEndpointsID,
 		},
 		metrics: ackmetrics.NewMetrics(svcAlias),
 	}
