@@ -16,20 +16,30 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 )
 
 const appName = "aws-controllers-k8s"
+
+type clientWithUserAgent struct {
+	client    *http.Client
+	userAgent string
+}
+
+func (c *clientWithUserAgent) Do(r *http.Request) (*http.Response, error) {
+	newUserAgent := c.userAgent + " " + strings.Join(r.Header["User-Agent"], " ")
+	r.Header.Set("User-Agent", newUserAgent)
+	return c.client.Do(r)
+}
 
 func (c *serviceController) NewAWSConfig(
 	ctx context.Context,
@@ -48,27 +58,15 @@ func (c *serviceController) NewAWSConfig(
 		"CRDVersion/"+groupVersionKind.Version,
 	)
 
-	userAgentAppender := func(stack *middleware.Stack) error {
-		return stack.Build.Add(middleware.BuildMiddlewareFunc(fmt.Sprintf("%s/user-agent", appName), func(
-			ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler,
-		) (
-			middleware.BuildOutput, middleware.Metadata, error,
-		) {
-			switch v := in.Request.(type) {
-			case *smithyhttp.Request:
-				v.Header.Add(appName, val)
-			}
-			return next.HandleBuild(ctx, in)
-
-		}), middleware.Before)
+	client := &clientWithUserAgent{
+		client:    &http.Client{},
+		userAgent: val,
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(
 		ctx,
 		config.WithRegion(string(region)),
-		config.WithAPIOptions([]func(*middleware.Stack) error{
-			userAgentAppender,
-		}),
+		config.WithHTTPClient(client),
 	)
 	if err != nil {
 		return awsCfg, err
