@@ -159,7 +159,7 @@ func TestServiceController(t *testing.T) {
 		BuildDate:  "now",
 	}
 
-	sc := ackrt.NewServiceController("bookstore", "bookstore.services.k8s.aws", "bookstore", vi)
+	sc := ackrt.NewServiceController("bookstore", "bookstore.services.k8s.aws", vi)
 	require.NotNil(sc)
 	zapOptions := ctrlrtzap.Options{
 		Development: true,

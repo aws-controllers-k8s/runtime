@@ -3,7 +3,11 @@
 package mocks
 
 import (
+	context "context"
+
 	config "github.com/aws-controllers-k8s/runtime/pkg/config"
+	aws "github.com/aws/aws-sdk-go-v2/aws"
+
 	logr "github.com/go-logr/logr"
 
 	manager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -13,8 +17,6 @@ import (
 	prometheus "github.com/prometheus/client_golang/prometheus"
 
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
-
-	session "github.com/aws/aws-sdk-go/aws/session"
 
 	types "github.com/aws-controllers-k8s/runtime/pkg/types"
 
@@ -86,25 +88,23 @@ func (_m *ServiceController) GetResourceManagerFactories() map[string]types.AWSR
 	return r0
 }
 
-// NewSession provides a mock function with given fields: _a0, _a1, _a2, _a3
-func (_m *ServiceController) NewSession(_a0 v1alpha1.AWSRegion, _a1 *string, _a2 v1alpha1.AWSResourceName, _a3 schema.GroupVersionKind) (*session.Session, error) {
-	ret := _m.Called(_a0, _a1, _a2, _a3)
+// NewAWSConfig provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
+func (_m *ServiceController) NewAWSConfig(_a0 context.Context, _a1 v1alpha1.AWSRegion, _a2 *string, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind) (aws.Config, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4)
 
-	var r0 *session.Session
+	var r0 aws.Config
 	var r1 error
-	if rf, ok := ret.Get(0).(func(v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) (*session.Session, error)); ok {
-		return rf(_a0, _a1, _a2, _a3)
+	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) (aws.Config, error)); ok {
+		return rf(_a0, _a1, _a2, _a3, _a4)
 	}
-	if rf, ok := ret.Get(0).(func(v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) *session.Session); ok {
-		r0 = rf(_a0, _a1, _a2, _a3)
+	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) aws.Config); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4)
 	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*session.Session)
-		}
+		r0 = ret.Get(0).(aws.Config)
 	}
 
-	if rf, ok := ret.Get(1).(func(v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) error); ok {
-		r1 = rf(_a0, _a1, _a2, _a3)
+	if rf, ok := ret.Get(1).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4)
 	} else {
 		r1 = ret.Error(1)
 	}
