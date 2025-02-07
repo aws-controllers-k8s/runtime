@@ -28,7 +28,7 @@ import (
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
-	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -54,7 +54,7 @@ const (
 	flagLogLevel                        = "log-level"
 	flagResourceTags                    = "resource-tags"
 	flagWatchNamespace                  = "watch-namespace"
-	flagFieldObjectSelector             = "field-object-selector"
+	flagLabelObjectSelector             = "label-object-selector"
 	flagEnableWebhookServer             = "enable-webhook-server"
 	flagWebhookServerAddr               = "webhook-server-addr"
 	flagDeletionPolicy                  = "deletion-policy"
@@ -95,7 +95,7 @@ type Config struct {
 	LogLevel                        string
 	ResourceTags                    []string
 	WatchNamespace                  string
-	FieldObjectSelector             string
+	LabelObjectSelector             string
 	EnableWebhookServer             bool
 	WebhookServerAddr               string
 	DeletionPolicy                  ackv1alpha1.DeletionPolicy
@@ -205,11 +205,11 @@ func (cfg *Config) BindFlags() {
 			"If unspecified, the controller watches for events in all namespaces.",
 	)
 	flag.StringVar(
-		&cfg.FieldObjectSelector, flagFieldObjectSelector,
+		&cfg.LabelObjectSelector, flagLabelObjectSelector,
 		"",
-		"A comma-separated list of valid RFC-1123 field object selectors to filter the objects."+
-			" For example, you can use a field selector similar to 'metadata.namespace=ns-ack-test' "+
-			" to only watch objects that have the 'metadata.namespace' set to 'ns-ack-test'. "+
+		"A comma-separated list of valid label (object) selectors to filter the objects."+
+			" For example, you can use the label selectors similar to 'app=foo,env=sbx' "+
+			" to only watch objects that have the 'app' label set to 'foo' and the 'env' label set to 'sbx'. "+
 			" If unspecified, the controller will not filter the objects.",
 	)
 	flag.Var(
@@ -465,31 +465,48 @@ func parseReconcileFlagArgument(flagArgument string) (string, int, error) {
 	return elements[0], value, nil
 }
 
-// TODO(itaiatu): Add description
-func (cfg *Config) ParseFieldObjectSelectors() (fields.Selector, error) {
-	selectors := []fields.Selector{}
-	fieldPairs := strings.Split(cfg.FieldObjectSelector, ",")
+// ParseLabelObjectSelectors parses the LabelObjectSelector field from the configuration
+// into a valid label selector. It returns an error if the label format is incorrect.
+func (cfg *Config) ParseLabelObjectSelectors() (labels.Selector, error) {
+	// If LabelObjectSelector is empty, return a default selector that matches everything.
+	if cfg.LabelObjectSelector == "" {
+		return labels.Everything(), nil
+	}
 
-	for _, pair := range fieldPairs {
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) == 2 {
-			selectors = append(selectors, fields.OneTermEqualSelector(kv[0], kv[1]))
+	// Split the LabelObjectSelector string into individual label strings by commas
+	labelSelectors := strings.Split(cfg.LabelObjectSelector, ",")
+	var validSelectors []string
+
+	// Validate that each label is in the "key=value" format
+	for _, label := range labelSelectors {
+		if !isValidLabel(label) {
+			return nil, fmt.Errorf("invalid label format: %s", label)
 		}
+		validSelectors = append(validSelectors, label)
 	}
 
-	// Combine all selectors using AND condition
-	if len(selectors) > 0 {
-		return fields.AndSelectors(selectors...), nil
+	// Join valid label selectors into a single string
+	labelSelectorString := strings.Join(validSelectors, ",")
+
+	// Parse the label selector string
+	selector, err := labels.Parse(labelSelectorString)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing label selector: %v", err)
 	}
 
-	// Default empty selector (matches everything)
-	return fields.Everything(), nil
+	// Return the parsed label selector
+	return selector, nil
+}
+
+// Helper function to check if a label is in the correct "key=value" format
+func isValidLabel(label string) bool {
+	parts := strings.Split(label, "=")
+	return len(parts) == 2
 }
 
 // GetWatchNamespaces returns a slice of namespaces to watch for custom resource events.
 // If the watchNamespace flag is empty, the function returns nil, which means that the
 // controller will watch for events in all namespaces.
-// TODO: Add info about LabelSelectorNamespace flag
 func (c *Config) GetWatchNamespaces() ([]string, error) {
 	return parseWatchNamespaceString(c.WatchNamespace)
 }
