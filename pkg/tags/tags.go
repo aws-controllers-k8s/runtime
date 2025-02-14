@@ -13,10 +13,6 @@
 
 package tags
 
-import (
-	"strings"
-)
-
 // Tags represents the AWS tags which will be added to the AWS resource.
 // Inside aws-sdk-go, Tags are represented using multiple types, Ex: map of
 // string, list of structs etc...
@@ -50,31 +46,4 @@ func Merge(a Tags, b Tags) Tags {
 		}
 	}
 	return result
-}
-
-// SyncAWSTags ensures AWS-managed tags (prefixed with "aws:") from the latest resource state
-// are preserved in the desired state. This prevents the controller from attempting to
-// modify AWS-managed tags, which would result in an error.
-//
-// AWS-managed tags are automatically added by AWS services (e.g., CloudFormation, Service Catalog)
-// and cannot be modified or deleted through normal tag operations. Common examples include:
-// - aws:cloudformation:stack-name
-// - aws:servicecatalog:productArn
-//
-// Parameters:
-//   - a: The target Tags map to be updated (typically desired state)
-//   - b: The source Tags map containing AWS-managed tags (typically latest state)
-//
-// Example:
-//
-//	latest := Tags{"aws:cloudformation:stack-name": "my-stack", "environment": "prod"}
-//	desired := Tags{"environment": "dev"}
-//	SyncAWSTags(desired, latest)
-//	desired now contains {"aws:cloudformation:stack-name": "my-stack", "environment": "dev"}
-func SyncAWSTags(a Tags, b Tags) {
-	for k := range b {
-		if strings.HasPrefix(k, "aws:") {
-			a[k] = b[k]
-		}
-	}
 }

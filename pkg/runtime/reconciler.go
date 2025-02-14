@@ -333,6 +333,7 @@ func (r *resourceReconciler) handleAdoption(
 	rlog.Enter("rm.ReadOne")
 	latest, err := rm.ReadOne(ctx, resolved)
 	rlog.Exit("rm.ReadOne", err)
+	rm.FilterSystemTags(latest)
 	if err != nil {
 		return latest, err
 	}
