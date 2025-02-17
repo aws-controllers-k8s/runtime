@@ -330,14 +330,10 @@ func (r *resourceReconciler) handleAdoption(
 		return nil, err
 	}
 
-	rlog.Enter("rm.EnsureTags")
-	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
-	rlog.Exit("rm.EnsureTags", err)
-	if err != nil {
-		return resolved, err
-	}
 	rlog.Enter("rm.ReadOne")
 	latest, err := rm.ReadOne(ctx, resolved)
+	rlog.Exit("rm.ReadOne", err)
+	rm.FilterSystemTags(latest)
 	if err != nil {
 		return latest, err
 	}
@@ -346,16 +342,6 @@ func (r *resourceReconciler) handleAdoption(
 		return latest, err
 	}
 
-	// Ensure tags again after adding the finalizer and patching the
-	// resource. Patching desired resource omits the controller tags
-	// because they are not persisted in etcd. So we again ensure
-	// that tags are present before performing the create operation.
-	rlog.Enter("rm.EnsureTags")
-	err = rm.EnsureTags(ctx, latest, r.sc.GetMetadata())
-	rlog.Exit("rm.EnsureTags", err)
-	if err != nil {
-		return latest, err
-	}
 	r.rd.MarkAdopted(latest)
 	rlog.WithValues("is_adopted", "true")
 	latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)

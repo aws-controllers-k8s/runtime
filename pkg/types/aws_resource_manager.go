@@ -85,6 +85,12 @@ type AWSResourceManager interface {
 	// If the AWSResource does not support tags, only then the controller tags
 	// will not be added to the AWSResource.
 	EnsureTags(context.Context, AWSResource, ServiceControllerMetadata) error
+	// FilterSystemTags ignores tags that are either injected by the controller
+	// or by AWS. These tags have keys that start with "aws:" or "services.k8s.aws/"
+	// and this function will remove them before adoption.
+	// Eg. resources created with cloudformation have tags that cannot be
+	//removed by an ACK controller
+	FilterSystemTags(AWSResource)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
