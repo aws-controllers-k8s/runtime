@@ -12,7 +12,7 @@ BIN_DIR="$ROOT_DIR/bin"
 
 OS=$(uname -s)
 ARCH=$(uname -m)
-VERSION=2.33.2
+VERSION=2.53.0
 MOCKERY_RELEASE_URL="https://github.com/vektra/mockery/releases/download/v${VERSION}/mockery_${VERSION}_${OS}_${ARCH}.tar.gz"
 
 if [[ ! -f $BIN_DIR/mockery ]]; then

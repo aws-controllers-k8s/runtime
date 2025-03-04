@@ -171,6 +171,8 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -234,6 +236,8 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	).Once()
@@ -295,6 +299,8 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -378,6 +384,8 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	).Once()
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, ackerr.NotFound,
 	).Once()
@@ -461,6 +469,8 @@ func TestReconcilerUpdate(t *testing.T) {
 	).Once()
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -546,6 +556,8 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -629,6 +641,8 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -707,6 +721,8 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -789,6 +805,8 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -873,6 +891,8 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -952,6 +972,8 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1095,6 +1117,8 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1214,6 +1238,8 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1281,6 +1307,8 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
@@ -1366,6 +1394,8 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("FilterSystemTags", desired).Return()
+	rm.On("FilterSystemTags", latest).Return()
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
