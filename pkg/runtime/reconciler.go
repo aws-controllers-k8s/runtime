@@ -892,6 +892,9 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	desiredCleaned := rm.ClearResolvedReferences(desired)
 	latestCleaned := rm.ClearResolvedReferences(latest)
 
+	rm.FilterSystemTags(desiredCleaned)
+	rm.FilterSystemTags(latestCleaned)
+
 	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desiredCleaned.MetaObject(), latestCleaned.MetaObject())
 	if err != nil {
 		return latest, err
