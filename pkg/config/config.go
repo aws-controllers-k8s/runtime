@@ -29,6 +29,7 @@ import (
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -54,6 +55,7 @@ const (
 	flagLogLevel                        = "log-level"
 	flagResourceTags                    = "resource-tags"
 	flagWatchNamespace                  = "watch-namespace"
+	flagWatchSelectors                  = "watch-selectors"
 	flagEnableWebhookServer             = "enable-webhook-server"
 	flagWebhookServerAddr               = "webhook-server-addr"
 	flagDeletionPolicy                  = "deletion-policy"
@@ -94,6 +96,7 @@ type Config struct {
 	LogLevel                        string
 	ResourceTags                    []string
 	WatchNamespace                  string
+	WatchSelectors                  string
 	EnableWebhookServer             bool
 	WebhookServerAddr               string
 	DeletionPolicy                  ackv1alpha1.DeletionPolicy
@@ -201,6 +204,14 @@ func (cfg *Config) BindFlags() {
 		"",
 		"A comma-separated list of valid RFC-1123 namespace names to watch for custom resource events. "+
 			"If unspecified, the controller watches for events in all namespaces.",
+	)
+	flag.StringVar(
+		&cfg.WatchSelectors, flagWatchSelectors,
+		"",
+		"A comma-separated list of valid label (object) selectors to filter the objects."+
+			" For example, you can use the label selectors similar to 'app=foo,env=sbx' "+
+			" to only watch objects that have the 'app' label set to 'foo' and the 'env' label set to 'sbx'. "+
+			" If unspecified, the controller will not filter the objects.",
 	)
 	flag.Var(
 		&cfg.DeletionPolicy, flagDeletionPolicy,
@@ -455,6 +466,25 @@ func parseReconcileFlagArgument(flagArgument string) (string, int, error) {
 		return "", 0, fmt.Errorf("invalid value in flag argument: value must be greater than 0")
 	}
 	return elements[0], value, nil
+}
+
+// ParseWatchSelectors parses the --watch-selectors flag and returns a label selector
+// that can be used to filter the objects that the controller watches. If the flag is
+// not set, the function returns nil, which means that the controller will watch all
+// objects.
+func (cfg *Config) ParseWatchSelectors() (labels.Selector, error) {
+	// If the WatchSelectors isn't set, return nil. controller-runtime will be in charge
+	// of defaulting to watching all objects.
+	if cfg.WatchSelectors == "" {
+		return nil, nil
+	}
+
+	labelSelector, err := labels.Parse(cfg.WatchSelectors)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for flag '%s': %v", flagWatchSelectors, err)
+	}
+
+	return labelSelector, nil
 }
 
 // GetWatchNamespaces returns a slice of namespaces to watch for custom resource events.
