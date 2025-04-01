@@ -64,6 +64,7 @@ const (
 	flagReconcileDefaultMaxConcurrency  = "reconcile-default-max-concurrent-syncs"
 	flagReconcileResourceMaxConcurrency = "reconcile-resource-max-concurrent-syncs"
 	flagFeatureGates                    = "feature-gates"
+	flagReconcileResources              = "reconcile-resources"
 	envVarAWSRegion                     = "AWS_REGION"
 )
 
@@ -104,6 +105,7 @@ type Config struct {
 	ReconcileResourceResyncSeconds  []string
 	ReconcileDefaultMaxConcurrency  int
 	ReconcileResourceMaxConcurrency []string
+	ReconcileResources              string
 	// TODO(a-hilaly): migrate to k8s.io/component-base and implement a proper parser for feature gates.
 	FeatureGates    featuregate.FeatureGates
 	featureGatesRaw string
@@ -250,6 +252,11 @@ func (cfg *Config) BindFlags() {
 			"Valid keys are feature names and valid values are 'true' or 'false'."+
 			"Available features: "+strings.Join(featuregate.GetDefaultFeatureGates().GetFeatureNames(), ", "),
 	)
+	flag.StringVar(
+		&cfg.ReconcileResources, flagReconcileResources,
+		"",
+		"A comma-separated list of resource kinds to reconcile. If unspecified, all resources will be reconciled.",
+	)
 }
 
 // SetupLogger initializes the logger used in the service controller
@@ -389,6 +396,12 @@ func (cfg *Config) validateReconcileConfigResources(supportedGVKs []schema.Group
 			return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResourceMaxConcurrency, err)
 		}
 	}
+
+	// Also validate the resource filter settings
+	if err := cfg.validateReconcileResources(supportedGVKs); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -563,4 +576,62 @@ func parseFeatureGates(featureGatesRaw string) (map[string]bool, error) {
 	}
 
 	return featureGatesMap, nil
+}
+
+// GetReconcileResources returns a slice of resource kinds that should be reconciled.
+func (cfg *Config) GetReconcileResources() ([]string, error) {
+	return parseReconcileResourcesString(cfg.ReconcileResources)
+}
+
+// parseReconcileResourcesString parses the reconcileResources flag and returns a slice
+// of resource kinds to reconcile.
+func parseReconcileResourcesString(resources string) ([]string, error) {
+	resources = strings.TrimSpace(resources)
+	if resources == "" {
+		return nil, nil
+	}
+
+	visited := make(map[string]bool)
+	resourceKinds := []string{}
+
+	for _, kind := range strings.Split(resources, ",") {
+		kind = strings.TrimSpace(kind)
+		if kind == "" {
+			return nil, fmt.Errorf("invalid resource kind: empty kind")
+		}
+		if _, ok := visited[kind]; ok {
+			return nil, fmt.Errorf("duplicate resource kind '%s'", kind)
+		}
+		visited[kind] = true
+		resourceKinds = append(resourceKinds, kind)
+	}
+	return resourceKinds, nil
+}
+
+// validateReconcileResources validates that the specified resource kinds are supported by the controller.
+func (cfg *Config) validateReconcileResources(supportedGVKs []schema.GroupVersionKind) error {
+	resources, err := cfg.GetReconcileResources()
+	if err != nil {
+		return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResources, err)
+	}
+	if len(resources) == 0 {
+		return nil
+	}
+
+	validResourceKinds := make([]string, 0, len(supportedGVKs))
+	for _, gvk := range supportedGVKs {
+		validResourceKinds = append(validResourceKinds, gvk.Kind)
+	}
+
+	for _, resource := range resources {
+		if !ackutil.InStrings(resource, validResourceKinds) {
+			return fmt.Errorf(
+				"invalid value for flag '%s': resource kind '%s' is not supported by this controller. Valid resource kinds are: %s",
+				flagReconcileResources,
+				resource,
+				strings.Join(validResourceKinds, ", "),
+			)
+		}
+	}
+	return nil
 }

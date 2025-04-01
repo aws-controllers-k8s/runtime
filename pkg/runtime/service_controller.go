@@ -34,6 +34,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+	ackutil "github.com/aws-controllers-k8s/runtime/pkg/util"
 )
 
 const (
@@ -271,7 +272,31 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		c.fieldExportReconciler = rec
 	}
 
-	for _, rmf := range c.rmFactories {
+	// Get the list of resources to reconcile from the config
+	reconcileResources, err := cfg.GetReconcileResources()
+	if err != nil {
+		return fmt.Errorf("error parsing reconcile resources: %v", err)
+	}
+
+	// Filter the resource manager factories
+	filteredRMFs := c.rmFactories
+	if len(reconcileResources) > 0 {
+
+		filteredRMFs = make(map[string]acktypes.AWSResourceManagerFactory)
+		for key, rmf := range c.rmFactories {
+			rd := rmf.ResourceDescriptor()
+			resourceKind := rd.GroupVersionKind().Kind
+
+			if ackutil.InStrings(resourceKind, reconcileResources) {
+				filteredRMFs[key] = rmf
+				c.log.Info("including reconciler for resource kind", "kind", resourceKind)
+			} else {
+				c.log.Info("excluding reconciler for resource kind", "kind", resourceKind, "reason", "not in reconcile-resources flag")
+			}
+		}
+	}
+
+	for _, rmf := range filteredRMFs {
 		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
