@@ -272,6 +272,15 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	}
 
 	for _, rmf := range c.rmFactories {
+		isInstalled, err := c.getResourceInstalled(mgr, rmf.ResourceDescriptor().GroupVersionResource().Resource)
+		if err != nil {
+			c.log.Error(err, "unable to determine if the resource is installed in the cluster")
+			return err
+		}
+		if !isInstalled {
+			c.log.Info("resource not installed. The reconciler will not be started", "resource", rmf.ResourceDescriptor().GroupVersionKind().Kind, )
+			continue
+		}
 		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
