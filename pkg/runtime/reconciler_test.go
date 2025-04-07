@@ -464,11 +464,13 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
+	rm.On("FilterSystemTags", latest)
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -555,6 +557,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	rm.On("IsSynced", ctx, latest).Return(false, nil)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -635,6 +638,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	rm.On("IsSynced", ctx, latest).Return(false, nil)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(delta)
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
@@ -713,6 +717,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(delta)
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
@@ -799,6 +804,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 		true, syncedError)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -862,6 +868,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	latestMetaObj.SetAnnotations(map[string]string{"a": "b"})
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -942,6 +949,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	// Note no change to metadata...
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	)
@@ -1103,6 +1111,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
 	rd.On("Delta", desired, latest).Return(
 		delta,
 	).Once()
@@ -1209,6 +1218,12 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
+	rmf, rd := managerFactoryMocks(desired, latest, false)
+
+	r, _, scmd := reconcilerMocks(rmf)
+	rd.On("IsManaged", desired).Return(false)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
 		desired, false, nil,
 	)
@@ -1218,11 +1233,6 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
-
-	rmf, rd := managerFactoryMocks(desired, latest, false)
-
-	r, _, scmd := reconcilerMocks(rmf)
-	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)

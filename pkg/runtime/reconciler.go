@@ -311,8 +311,12 @@ func (r *resourceReconciler) handlePopulation(
 	// the required field passed by annotation and attempt a read.
 
 	rlog.Info("Adopting Resource")
+	adoptionPolicy := GetAdoptionPolicy(desired)
 	adoptionFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
+		if adoptionPolicy == "adopt-or-create" {
+			return desired, nil
+		}
 		return desired, ackerr.NewTerminalError(err)
 	}
 
@@ -321,7 +325,7 @@ func (r *resourceReconciler) handlePopulation(
 	// maybe don't return errors when it's adopt-or-create?
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && GetAdoptionPolicy(desired) != "adopt-or-create" {
+	if err != nil && adoptionPolicy != "adopt-or-create" {
 		return nil, err
 	}
 
