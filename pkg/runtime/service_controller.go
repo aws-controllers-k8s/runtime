@@ -278,10 +278,12 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		return fmt.Errorf("error parsing reconcile resources: %v", err)
 	}
 
+	if len(reconcileResources) == 0 {
+		c.log.Info("No resources? Did they all go on vacation? Defaulting to reconciling all resources.")
+	}
 	// Filter the resource manager factories
 	filteredRMFs := c.rmFactories
 	if len(reconcileResources) > 0 {
-
 		filteredRMFs = make(map[string]acktypes.AWSResourceManagerFactory)
 		for key, rmf := range c.rmFactories {
 			rd := rmf.ResourceDescriptor()

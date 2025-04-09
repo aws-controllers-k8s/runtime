@@ -398,7 +398,7 @@ func (cfg *Config) validateReconcileConfigResources(supportedGVKs []schema.Group
 	}
 
 	// Also validate the resource filter settings
-	if err := cfg.validateReconcileResources(supportedGVKs); err != nil {
+	if err := cfg.validateReconcileResources(validResourceNames); err != nil {
 		return err
 	}
 
@@ -609,7 +609,7 @@ func parseReconcileResourcesString(resources string) ([]string, error) {
 }
 
 // validateReconcileResources validates that the specified resource kinds are supported by the controller.
-func (cfg *Config) validateReconcileResources(supportedGVKs []schema.GroupVersionKind) error {
+func (cfg *Config) validateReconcileResources(validResourceNames []string) error {
 	resources, err := cfg.GetReconcileResources()
 	if err != nil {
 		return fmt.Errorf("invalid value for flag '%s': %v", flagReconcileResources, err)
@@ -618,18 +618,13 @@ func (cfg *Config) validateReconcileResources(supportedGVKs []schema.GroupVersio
 		return nil
 	}
 
-	validResourceKinds := make([]string, 0, len(supportedGVKs))
-	for _, gvk := range supportedGVKs {
-		validResourceKinds = append(validResourceKinds, gvk.Kind)
-	}
-
 	for _, resource := range resources {
-		if !ackutil.InStrings(resource, validResourceKinds) {
+		if !ackutil.InStrings(resource, validResourceNames) {
 			return fmt.Errorf(
 				"invalid value for flag '%s': resource kind '%s' is not supported by this controller. Valid resource kinds are: %s",
 				flagReconcileResources,
 				resource,
-				strings.Join(validResourceKinds, ", "),
+				strings.Join(validResourceNames, ", "),
 			)
 		}
 	}
