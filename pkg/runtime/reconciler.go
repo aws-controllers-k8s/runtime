@@ -306,15 +306,15 @@ func (r *resourceReconciler) handleCacheError(
 func (r *resourceReconciler) handlePopulation(
 	rlog acktypes.Logger,
 	desired acktypes.AWSResource,
+	adoptionPolicy AdoptionPolicy,
 ) (acktypes.AWSResource, error) {
 	// If the resource is being adopted by force, we need to access
 	// the required field passed by annotation and attempt a read.
 
 	rlog.Info("Adopting Resource")
-	adoptionPolicy := GetAdoptionPolicy(desired)
 	adoptionFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
-		if adoptionPolicy == "adopt-or-create" {
+		if adoptionPolicy == Magic {
 			return desired, nil
 		}
 		return desired, ackerr.NewTerminalError(err)
@@ -325,7 +325,7 @@ func (r *resourceReconciler) handlePopulation(
 	// maybe don't return errors when it's adopt-or-create?
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && adoptionPolicy != "adopt-or-create" {
+	if err != nil && adoptionPolicy != Magic {
 		return nil, err
 	}
 
@@ -396,40 +396,45 @@ func (r *resourceReconciler) Sync(
 	}()
 
 	isAdopted := IsAdopted(desired)
-	rlog.WithValues("is_adopted", isAdopted)	
-	
-	var populated acktypes.AWSResource
+	rlog.WithValues("is_adopted", isAdopted)
+
+	// find out if we need to adopt early on
 	needAdoption := NeedAdoption(desired) && !r.rd.IsManaged(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption)
-	if needAdoption{
-		populated, err = r.handlePopulation(rlog, desired)
-		if err != nil {
-			return nil, err
-		}
+	adoptionPolicy, err := GetAdoptionPolicy(desired)
+	if err != nil {
+		return nil, err
 	}
-	
+	if !needAdoption {
+		adoptionPolicy = ""
+	}
+
+	// find out if this is read only
 	isReadOnly := IsReadOnly(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources)
 	if isReadOnly {
 		rlog.WithValues("is_read_only", isReadOnly)
 	}
 
-	adoptionPolicy := GetAdoptionPolicy(desired)
-	if !needAdoption {
-		adoptionPolicy = ""
-	}
-	
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
+	// TODO (michaelhtm): should we fail here for `adopt-or-create` adoption policy?
 	if err != nil && !needAdoption && !isReadOnly {
 		return ackcondition.WithReferencesResolvedCondition(desired, err), err
 	}
 	if hasReferences {
 		resolved = ackcondition.WithReferencesResolvedCondition(resolved, err)
 	}
-	if adoptionPolicy == "adopt-or-create" {
-		resolved.SetStatus(populated)
-	} else if adoptionPolicy == "adopt" {
-		resolved = populated
+
+	if needAdoption {
+		populated, err := r.handlePopulation(rlog, desired, adoptionPolicy)
+		if err != nil {
+			return nil, err
+		}
+		if adoptionPolicy == Magic {
+			resolved.SetStatus(populated)
+		} else {
+			resolved = populated
+		}
 	}
 
 	if !isReadOnly {
@@ -448,7 +453,7 @@ func (r *resourceReconciler) Sync(
 		if err != ackerr.NotFound {
 			return latest, err
 		}
-		if needAdoption && adoptionPolicy == "adopt" || isAdopted {
+		if adoptionPolicy == PolicyAdopt || isAdopted {
 			return nil, ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
@@ -457,7 +462,7 @@ func (r *resourceReconciler) Sync(
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
 		}
-	} else if adoptionPolicy == "adopt" && !r.rd.IsManaged(desired) {
+	} else if adoptionPolicy == PolicyAdopt {
 		rm.FilterSystemTags(latest)
 		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 			return latest, err
@@ -467,7 +472,7 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if !isReadOnly {
-		if !r.rd.IsManaged(desired) && adoptionPolicy == "adopt-or-create" {
+		if adoptionPolicy == Magic {
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}
