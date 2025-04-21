@@ -314,7 +314,7 @@ func (r *resourceReconciler) handlePopulation(
 	rlog.Info("Adopting Resource")
 	adoptionFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
-		if adoptionPolicy == Magic {
+		if adoptionPolicy == AdoptOrCreatePolicy {
 			return desired, nil
 		}
 		return desired, ackerr.NewTerminalError(err)
@@ -325,7 +325,7 @@ func (r *resourceReconciler) handlePopulation(
 	// maybe don't return errors when it's adopt-or-create?
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && adoptionPolicy != Magic {
+	if err != nil && adoptionPolicy != AdoptOrCreatePolicy {
 		return nil, err
 	}
 
@@ -430,7 +430,8 @@ func (r *resourceReconciler) Sync(
 		if err != nil {
 			return nil, err
 		}
-		if adoptionPolicy == Magic {
+		if adoptionPolicy == AdoptOrCreatePolicy {
+			// here we assume the spec fields are provided in the spec.
 			resolved.SetStatus(populated)
 		} else {
 			resolved = populated
@@ -453,7 +454,7 @@ func (r *resourceReconciler) Sync(
 		if err != ackerr.NotFound {
 			return latest, err
 		}
-		if adoptionPolicy == PolicyAdopt || isAdopted {
+		if adoptionPolicy == AdoptPolicy || isAdopted {
 			return nil, ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
@@ -462,7 +463,7 @@ func (r *resourceReconciler) Sync(
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
 		}
-	} else if adoptionPolicy == PolicyAdopt {
+	} else if adoptionPolicy == AdoptPolicy {
 		rm.FilterSystemTags(latest)
 		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 			return latest, err
@@ -472,7 +473,7 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if !isReadOnly {
-		if adoptionPolicy == Magic {
+		if adoptionPolicy == AdoptOrCreatePolicy {
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}
