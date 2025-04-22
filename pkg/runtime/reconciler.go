@@ -303,18 +303,30 @@ func (r *resourceReconciler) handleCacheError(
 	return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
 }
 
+// Handles the population of ACK Resource fields from annotation.
 func (r *resourceReconciler) handlePopulation(
-	rlog acktypes.Logger,
+	ctx context.Context,
 	desired acktypes.AWSResource,
-	adoptionPolicy AdoptionPolicy,
 ) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.handlePopulation")
+	defer func() {
+		exit(err)
+	}()
 	// If the resource is being adopted by force, we need to access
 	// the required field passed by annotation and attempt a read.
-
-	rlog.Info("Adopting Resource")
+	rlog.Debug("Populating Resource")
+	adoptionPolicy, err := GetAdoptionPolicy(desired)
+	if err != nil {
+		return nil, err
+	}
 	adoptionFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
-		if adoptionPolicy == AdoptOrCreatePolicy {
+		// if the user does not provide adoption fields and the policy
+		// is adopt-or-create, we will assume the adoption fields are passed
+		// in Spec
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			return desired, nil
 		}
 		return desired, ackerr.NewTerminalError(err)
@@ -323,9 +335,10 @@ func (r *resourceReconciler) handlePopulation(
 	populated := desired.DeepCopy()
 	err = populated.PopulateResourceFromAnnotation(adoptionFields)
 	// maybe don't return errors when it's adopt-or-create?
+	//
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && adoptionPolicy != AdoptOrCreatePolicy {
+	if err != nil && adoptionPolicy != AdoptionPolicy_AdoptOrCreate {
 		return nil, err
 	}
 
@@ -398,7 +411,8 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
-	// find out if we need to adopt early on
+	// If AdoptionAnnotation feature gate is enabled, and the resource has an adoption
+	// annotation and doesn't hold an ACK finalizer, trigger the adoption path.
 	needAdoption := NeedAdoption(desired) && !r.rd.IsManaged(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption)
 	adoptionPolicy, err := GetAdoptionPolicy(desired)
 	if err != nil {
@@ -426,11 +440,11 @@ func (r *resourceReconciler) Sync(
 	}
 
 	if needAdoption {
-		populated, err := r.handlePopulation(rlog, desired, adoptionPolicy)
+		populated, err := r.handlePopulation(ctx, desired)
 		if err != nil {
 			return nil, err
 		}
-		if adoptionPolicy == AdoptOrCreatePolicy {
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// here we assume the spec fields are provided in the spec.
 			resolved.SetStatus(populated)
 		} else {
@@ -454,7 +468,7 @@ func (r *resourceReconciler) Sync(
 		if err != ackerr.NotFound {
 			return latest, err
 		}
-		if adoptionPolicy == AdoptPolicy || isAdopted {
+		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
 			return nil, ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
@@ -463,7 +477,7 @@ func (r *resourceReconciler) Sync(
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
 		}
-	} else if adoptionPolicy == AdoptPolicy {
+	} else if adoptionPolicy == AdoptionPolicy_Adopt {
 		rm.FilterSystemTags(latest)
 		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 			return latest, err
@@ -473,7 +487,9 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if !isReadOnly {
-		if adoptionPolicy == AdoptOrCreatePolicy {
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+			// set adopt-or-create resource as managed before attempting
+			// update
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}

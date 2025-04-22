@@ -29,15 +29,16 @@ import (
 
 // AdoptionPolicy stores adoptionPolicy values we expect users to
 // provide in the resources `adoption-policy` annotation
+//
 // TODO(michaelhtm) Maybe we need a different place for this...
 // next refactor maybe? 🤷‍♂️
 type AdoptionPolicy string
 
 const (
-	AdoptPolicy AdoptionPolicy = "adopt"
-	// calling this policy constant `AdoptOrCreatePolicy`
-	//  and see if we need to rename it!!!
-	AdoptOrCreatePolicy AdoptionPolicy = "adopt-or-create"
+	// AdoptPolicy is ...
+	AdoptionPolicy_Adopt AdoptionPolicy = "adopt"
+	// AdoptPolicy is ...
+	AdoptionPolicy_AdoptOrCreate AdoptionPolicy = "adopt-or-create"
 )
 
 // IsAdopted returns true if the supplied AWSResource was created with a
@@ -100,7 +101,7 @@ func GetAdoptionPolicy(res acktypes.AWSResource) (AdoptionPolicy, error) {
 		return "", nil
 	}
 
-	if policy != string(AdoptPolicy) && policy != string(AdoptOrCreatePolicy) {
+	if policy != string(AdoptionPolicy_Adopt) && policy != string(AdoptionPolicy_AdoptOrCreate) {
 		return "", fmt.Errorf("unrecognized adoption policy")
 	}
 

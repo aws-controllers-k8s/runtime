@@ -324,7 +324,6 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.TODO()
-	// arn := ackv1alpha1.AWSResourceName("my-adopt-book-arn")
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
@@ -334,7 +333,6 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
-	// ids.On("ARN").Return(&arn)
 
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
@@ -394,7 +392,6 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.TODO()
-	// arn := ackv1alpha1.AWSResourceName("my-adopt-book-arn")
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
@@ -404,7 +401,6 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
-	// ids.On("ARN").Return(&arn)
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.A", "val1", "val2")
 
