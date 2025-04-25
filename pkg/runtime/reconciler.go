@@ -303,54 +303,46 @@ func (r *resourceReconciler) handleCacheError(
 	return r.HandleReconcileError(ctx, desired, latest, requeue.NeededAfter(err, roleARNNotAvailableRequeueDelay))
 }
 
-func (r *resourceReconciler) handleAdoption(
+// Handles the population of ACK Resource fields from annotation.
+func (r *resourceReconciler) handlePopulation(
 	ctx context.Context,
-	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-	rlog acktypes.Logger,
 ) (acktypes.AWSResource, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.handlePopulation")
+	defer func() {
+		exit(err)
+	}()
 	// If the resource is being adopted by force, we need to access
 	// the required field passed by annotation and attempt a read.
-
-	rlog.Info("Adopting Resource")
-	extractedFields, err := ExtractAdoptionFields(desired)
-	if err != nil {
-		return desired, ackerr.NewTerminalError(err)
-	}
-	if len(extractedFields) == 0 {
-		// TODO(michaelhtm) Here we need to figure out if we want to have an
-		// error or not. should we consider accepting values from Spec?
-		// And then we can let the ReadOne figure out if we have missing
-		// required fields for a Read
-		return nil, fmt.Errorf("failed extracting fields from annotation")
-	}
-	resolved := desired.DeepCopy()
-	err = resolved.PopulateResourceFromAnnotation(extractedFields)
+	rlog.Debug("Populating Resource")
+	adoptionPolicy, err := GetAdoptionPolicy(desired)
 	if err != nil {
 		return nil, err
 	}
-
-	rlog.Enter("rm.ReadOne")
-	latest, err := rm.ReadOne(ctx, resolved)
-	rlog.Exit("rm.ReadOne", err)
-	rm.FilterSystemTags(latest)
+	adoptionFields, err := ExtractAdoptionFields(desired)
 	if err != nil {
-		return latest, err
+		// if the user does not provide adoption fields and the policy
+		// is adopt-or-create, we will assume the adoption fields are passed
+		// in Spec
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+			return desired, nil
+		}
+		return desired, ackerr.NewTerminalError(err)
 	}
 
-	if err = r.setResourceManaged(ctx, rm, latest); err != nil {
-		return latest, err
+	populated := desired.DeepCopy()
+	err = populated.PopulateResourceFromAnnotation(adoptionFields)
+	// maybe don't return errors when it's adopt-or-create?
+	//
+	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
+	// adopt-or-create, and validate Spec fields are not nil...
+	if err != nil && adoptionPolicy != AdoptionPolicy_AdoptOrCreate {
+		return nil, err
 	}
 
-	r.rd.MarkAdopted(latest)
-	rlog.WithValues("is_adopted", "true")
-	latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
-	if err != nil {
-		return latest, err
-	}
-
-	rlog.Info("Resource Adopted")
-	return latest, nil
+	return populated, nil
 }
 
 // reconcile either cleans up a deleted resource or ensures that the supplied
@@ -419,92 +411,54 @@ func (r *resourceReconciler) Sync(
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
-	if r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption) {
-		if NeedAdoption(desired) && !r.rd.IsManaged(desired) {
-			latest, err := r.handleAdoption(ctx, rm, desired, rlog)
-
-			if err != nil {
-				// If we get an error, we want to return here
-				// TODO(michaelhtm): Change the handling of
-				// the error to allow Adopt or Create here
-				// when supported
-				return latest, err
-			}
-			return latest, nil
-		}
+	// If AdoptionAnnotation feature gate is enabled, and the resource has an adoption
+	// annotation and doesn't hold an ACK finalizer, trigger the adoption path.
+	needAdoption := NeedAdoption(desired) && !r.rd.IsManaged(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption)
+	adoptionPolicy, err := GetAdoptionPolicy(desired)
+	if err != nil {
+		return nil, err
+	}
+	if !needAdoption {
+		adoptionPolicy = ""
 	}
 
-	if r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) {
-		isReadOnly := IsReadOnly(desired)
+	// find out if this is read only
+	isReadOnly := IsReadOnly(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources)
+	if isReadOnly {
 		rlog.WithValues("is_read_only", isReadOnly)
-
-		// NOTE(a-hilaly): When the time comes to support adopting resources
-		// using annotations, we will need to think a little bit more about
-		// the case where a user, wants to adopt a resource as read-only.
-		//
-		// NOTE(michaelhtm): Done, tnx :)
-
-		// If the resource is read-only, we enter a different code path where we
-		// only read the resource and patch the metadata and spec.
-		if isReadOnly {
-			rlog.Enter("rm.ResolveReferences")
-			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, desired)
-			// NOTE(a-hilaly): One might be wondering why are we ignoring the
-			// error here. The reason is that the current implementation of
-			// ResolveReference doesn't take into consideration the read-only
-			// resources (and their fields).
-			//
-			// In a nutshell, `ResolveReferences` implementation was designed to
-			// be used for the create/update operations, and not for the read-only
-			// resources. This means that the implementation of `ResolveReferences`
-			// returns an error when any of the required references (for create)
-			// are not resolved. This is not helpful for read-only resources.
-			//
-			// We need to refactor the `ResolveReferences` implementation to
-			// be able to resolve read-only required fields. For example, EKS
-			// NodeGroups, only require the `ClusterName` field to be resolved.
-			// This is not the case for create/update operations where we need to
-			// resolve all the references (e.g. `ClusterName`, `NodeRoleArn`, etc.).
-			// See https://github.com/aws-controllers-k8s/eks-controller/blob/main/pkg/resource/nodegroup/references.go#L72-L114
-			//
-			// What's the worst that can happen? If we don't resolve the references
-			// for read-only resources, ReadOne call will fail with an error, causing
-			// the resource to be requeued.
-			//
-			// TODO(a-hilaly): Implement resolve references for read-only resources,
-			// maybe part of the DynamicReferences work.
-			rlog.Exit("rm.ResolveReferences", err)
-
-			rlog.Enter("rm.ReadOne")
-			latest, err = rm.ReadOne(ctx, resolved)
-			rlog.Exit("rm.ReadOne", err)
-			if err != nil {
-				if err == ackerr.NotFound {
-					return nil, ackerr.ReadOnlyResourceNotFound
-				}
-				return latest, err
-			}
-
-			err = r.patchResourceStatus(ctx, desired, latest)
-			return latest, err
-		}
 	}
 
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
-	if err != nil {
+	// TODO (michaelhtm): should we fail here for `adopt-or-create` adoption policy?
+	if err != nil && !needAdoption && !isReadOnly {
 		return ackcondition.WithReferencesResolvedCondition(desired, err), err
 	}
 	if hasReferences {
 		resolved = ackcondition.WithReferencesResolvedCondition(resolved, err)
 	}
 
-	rlog.Enter("rm.EnsureTags")
-	err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
-	rlog.Exit("rm.EnsureTags", err)
-	if err != nil {
-		return resolved, err
+	if needAdoption {
+		populated, err := r.handlePopulation(ctx, desired)
+		if err != nil {
+			return nil, err
+		}
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+			// here we assume the spec fields are provided in the spec.
+			resolved.SetStatus(populated)
+		} else {
+			resolved = populated
+		}
+	}
+
+	if !isReadOnly {
+		rlog.Enter("rm.EnsureTags")
+		err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
+		rlog.Exit("rm.EnsureTags", err)
+		if err != nil {
+			return resolved, err
+		}
 	}
 
 	rlog.Enter("rm.ReadOne")
@@ -514,13 +468,32 @@ func (r *resourceReconciler) Sync(
 		if err != ackerr.NotFound {
 			return latest, err
 		}
-		if isAdopted {
+		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
 			return nil, ackerr.AdoptedResourceNotFound
+		}
+		if isReadOnly {
+			return nil, ackerr.ReadOnlyResourceNotFound
 		}
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
 		}
-	} else {
+	} else if adoptionPolicy == AdoptionPolicy_Adopt {
+		rm.FilterSystemTags(latest)
+		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+			return latest, err
+		}
+		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+		if err != nil {
+			return latest, err
+		}
+	} else if !isReadOnly {
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+			// set adopt-or-create resource as managed before attempting
+			// update
+			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+				return latest, err
+			}
+		}
 		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
 		}

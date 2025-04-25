@@ -74,7 +74,7 @@ func TestIsForcedAdoption(t *testing.T) {
 	res := &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
 			ackv1alpha1.AnnotationAdopted:        "false",
 		},
 	})
@@ -83,7 +83,7 @@ func TestIsForcedAdoption(t *testing.T) {
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "true",
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
 			ackv1alpha1.AnnotationAdopted:        "true",
 		},
 	})
@@ -92,7 +92,6 @@ func TestIsForcedAdoption(t *testing.T) {
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "false",
 			ackv1alpha1.AnnotationAdopted:        "true",
 		},
 	})

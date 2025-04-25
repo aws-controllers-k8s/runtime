@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +25,21 @@ import (
 )
 
 // TODO(jaypipes): Place this code somewhere separate
+//     (michaelhtm)             ^ +1
+
+// AdoptionPolicy stores adoptionPolicy values we expect users to
+// provide in the resources `adoption-policy` annotation
+//
+// TODO(michaelhtm) Maybe we need a different place for this...
+// next refactor maybe? 🤷‍♂️
+type AdoptionPolicy string
+
+const (
+	// AdoptPolicy is ...
+	AdoptionPolicy_Adopt AdoptionPolicy = "adopt"
+	// AdoptPolicy is ...
+	AdoptionPolicy_AdoptOrCreate AdoptionPolicy = "adopt-or-create"
+)
 
 // IsAdopted returns true if the supplied AWSResource was created with a
 // non-nil ARN annotation, which indicates that the Kubernetes user who created
@@ -71,28 +87,32 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 }
 
 // GetAdoptionPolicy returns the Adoption Policy of the resource
-// defined by the user in annotation. Possible values are: 
+// defined by the user in annotation. Possible values are:
 // adopt-only | adopt-or-create
 // adopt-only keeps requing until the resource is found
 // adopt-or-create creates the resource if does not exist
-func GetAdoptionPolicy(res acktypes.AWSResource) string {
+func GetAdoptionPolicy(res acktypes.AWSResource) (AdoptionPolicy, error) {
 	mo := res.MetaObject()
 	if mo == nil {
 		panic("getAdoptionPolicy received resource with nil RuntimeObject")
 	}
-	for k, v := range mo.GetAnnotations() {
-		if k == ackv1alpha1.AnnotationAdoptionPolicy {
-			return v
-		}
+	policy, ok := mo.GetAnnotations()[ackv1alpha1.AnnotationAdoptionPolicy]
+	if !ok {
+		return "", nil
 	}
 
-	return ""
+	if policy != string(AdoptionPolicy_Adopt) && policy != string(AdoptionPolicy_AdoptOrCreate) {
+		return "", fmt.Errorf("unrecognized adoption policy")
+	}
+
+	return AdoptionPolicy(policy), nil
 }
 
 // NeedAdoption returns true when the resource has
 // adopt annotation but is not yet adopted
 func NeedAdoption(res acktypes.AWSResource) bool {
-	return GetAdoptionPolicy(res) != "" && !IsAdopted(res) 
+	adoptionPolicy, _ := GetAdoptionPolicy(res)
+	return adoptionPolicy != "" && !IsAdopted(res)
 }
 
 func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {
