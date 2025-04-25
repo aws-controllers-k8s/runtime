@@ -466,6 +466,12 @@ func (r *resourceReconciler) Sync(
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
+			if adoptionPolicy == AdoptionPolicy_Adopt && latest != nil {
+				latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+				if err != nil {
+					return latest, err
+				}
+			}
 			return latest, err
 		}
 		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
