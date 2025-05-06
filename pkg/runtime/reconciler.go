@@ -446,6 +446,7 @@ func (r *resourceReconciler) Sync(
 		}
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// here we assume the spec fields are provided in the spec.
+			resolved = resolved.DeepCopy()
 			resolved.SetStatus(populated)
 		} else {
 			resolved = populated
