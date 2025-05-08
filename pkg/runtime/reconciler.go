@@ -483,6 +483,7 @@ func (r *resourceReconciler) Sync(
 		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 			return latest, err
 		}
+		r.rd.MarkAdopted(latest)
 		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 		if err != nil {
 			return latest, err
@@ -494,6 +495,7 @@ func (r *resourceReconciler) Sync(
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}
+			r.rd.MarkAdopted(latest)
 		}
 		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
