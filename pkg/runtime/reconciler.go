@@ -333,13 +333,26 @@ func (r *resourceReconciler) handlePopulation(
 	}
 
 	populated := desired.DeepCopy()
-	err = populated.PopulateResourceFromAnnotation(adoptionFields)
-	// maybe don't return errors when it's adopt-or-create?
+	
+	// For adopt-or-create, we want to use the adoption fields as upsert fields
+	// rather than exact match fields
 	//
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && adoptionPolicy != AdoptionPolicy_AdoptOrCreate {
-		return nil, err
+
+	if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+		// For adopt-or-create, we want to be lenient about adoption field errors
+		// since they are used for upsert rather than exact matching
+		err = populated.PopulateResourceFromAnnotation(adoptionFields)
+		if err != nil {
+			rlog.Debug("Ignoring adoption field population error for adopt-or-create", "error", err)
+		}
+	} else {
+		// For regular adoption, maintain existing behavior
+		err = populated.PopulateResourceFromAnnotation(adoptionFields)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return populated, nil
@@ -490,8 +503,11 @@ func (r *resourceReconciler) Sync(
 		}
 	} else if !isReadOnly {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
-			// set adopt-or-create resource as managed before attempting
-			// update
+			// For adopt-or-create, we want to:
+			// 1. Mark the resource as managed and adopted
+			// 2. Update the resource with the desired state
+			// 3. Not require exact matching of adoption fields
+			rm.FilterSystemTags(latest)
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}
