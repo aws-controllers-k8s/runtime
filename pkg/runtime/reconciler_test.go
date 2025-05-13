@@ -463,22 +463,34 @@ func TestReconcilerAdoptOrCreateResource_Upsert(t *testing.T) {
 	ctx := context.TODO()
 
 	desired, _, metaObj := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return()
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 		ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
 	})
+	// Initialize the spec field in the desired object
+	metaObj.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"A": "val1",
+		},
+	}
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.A", "val1", "val2")
 
-	latest, latestRTObj, _ := resourceMocks()
+	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// Initialize the spec field in the latest object
+	latestMetaObj.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"A": "val2",
+		},
+	}
 	latest.On("MetaObject").Return(metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
 		},
 	})
@@ -525,6 +537,10 @@ func TestReconcilerAdoptOrCreateResource_Upsert(t *testing.T) {
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertNumberOfCalls(t, "Create", 0)
+	
+	rm.AssertCalled(t, "Update", ctx, desired, latest, mock.MatchedBy(func(d *ackcompare.Delta) bool {
+		return d.DifferentAt("Spec.A")
+	}))
 }
 
 func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testing.T) {
