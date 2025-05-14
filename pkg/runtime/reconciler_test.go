@@ -457,6 +457,92 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	rm.AssertNumberOfCalls(t, "Create", 0)
 }
 
+func TestReconcilerAdoptOrCreateResource_Upsert(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return()
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+		ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+	})
+	// Initialize the spec field in the desired object
+	metaObj.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"A": "val1",
+		},
+	}
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	latest, latestRTObj, latestMetaObj := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// Initialize the spec field in the latest object
+	latestMetaObj.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"A": "val2",
+		},
+	}
+	latest.On("MetaObject").Return(metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+		},
+	})
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, nil,
+	).Once()
+	rm.On("Update", ctx, desired, latest, delta).Return(
+		latest, nil,
+	).Once()
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+
+	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, latest).Return(
+		delta,
+	).Once()
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	// Test that we can update the resource even with non-matching adoption fields
+	_, err := r.Sync(ctx, rm, desired)
+	require.Nil(err)
+	rm.AssertNumberOfCalls(t, "ReadOne", 1)
+	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
+	rd.AssertCalled(t, "Delta", desired, latest)
+	rm.AssertNumberOfCalls(t, "Create", 0)
+	
+	rm.AssertCalled(t, "Update", ctx, desired, latest, mock.MatchedBy(func(d *ackcompare.Delta) bool {
+		return d.DifferentAt("Spec.A")
+	}))
+}
+
 func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testing.T) {
 	require := require.New(t)
 
@@ -1331,6 +1417,8 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	// No difference in desired, latest metadata and spec
 	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
+	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "EnsureTags", ctx, desired, scmd)
 }

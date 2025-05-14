@@ -333,13 +333,22 @@ func (r *resourceReconciler) handlePopulation(
 	}
 
 	populated := desired.DeepCopy()
-	err = populated.PopulateResourceFromAnnotation(adoptionFields)
-	// maybe don't return errors when it's adopt-or-create?
-	//
-	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
-	// adopt-or-create, and validate Spec fields are not nil...
-	if err != nil && adoptionPolicy != AdoptionPolicy_AdoptOrCreate {
-		return nil, err
+	
+	// For adopt-or-create, we want to:
+	// 1. Strictly parse and validate adoption fields
+	// 2. If found, adopt the resource
+	// 3. Use spec values for updates
+	if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+		err = populated.PopulateResourceFromAnnotation(adoptionFields)
+		if err != nil {
+			rlog.Debug("Ignoring adoption field population error for adopt-or-create", "error", err)
+		}
+	} else {
+		// For regular adoption, maintain existing behavior
+		err = populated.PopulateResourceFromAnnotation(adoptionFields)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return populated, nil
