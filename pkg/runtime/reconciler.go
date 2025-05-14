@@ -499,17 +499,12 @@ func (r *resourceReconciler) Sync(
 		}
 	} else if !isReadOnly {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
-			// For adopt-or-create, we want to:
-			// 1. Mark the resource as managed and adopted
-			// 2. Update the resource with the desired state from spec
-			// 3. Not require exact matching of adoption fields
-			rm.FilterSystemTags(latest)
+			// set adopt-or-create resource as managed before attempting
+			// update
 			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
 				return latest, err
 			}
 			r.rd.MarkAdopted(latest)
-			// Use the desired state from spec for updates
-			latest = desired.DeepCopy()
 		}
 		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
