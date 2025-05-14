@@ -488,7 +488,9 @@ func (r *resourceReconciler) Sync(
 		if err != nil {
 			return latest, err
 		}
-	} else if !isReadOnly {
+	} else if isReadOnly {
+		return latest, nil
+	} else {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// set adopt-or-create resource as managed before attempting
 			// update
@@ -501,6 +503,7 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	}
+	fmt.Println(latest)
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
 	if latest, err = r.lateInitializeResource(ctx, rm, latest); err != nil {
@@ -732,13 +735,13 @@ func (r *resourceReconciler) updateResource(
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
-) (acktypes.AWSResource, error) {
-	var err error
+) (updated acktypes.AWSResource, err error) {
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.updateResource")
 	defer func() {
 		exit(err)
 	}()
+	updated = latest
 
 	// Ensure the resource is managed
 	if err = r.failOnResourceUnmanaged(ctx, latest); err != nil {
@@ -754,21 +757,24 @@ func (r *resourceReconciler) updateResource(
 			"diff", delta.Differences,
 		)
 		rlog.Enter("rm.Update")
-		latest, err = rm.Update(ctx, desired, latest, delta)
+		updated, err = rm.Update(ctx, desired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
 		if err != nil {
-			return latest, err
+			return updated, err
 		}
 		// Ensure that we are patching any changes to the annotations/metadata and
 		// the Spec that may have been set by the resource manager's successful
 		// Update call above.
-		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+		if IsAdopted(latest) {
+			r.rd.MarkAdopted(updated)
+		}
+		updated, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, updated)
 		if err != nil {
-			return latest, err
+			return updated, err
 		}
 		rlog.Info("updated resource")
 	}
-	return latest, nil
+	return updated, nil
 }
 
 // lateInitializeResource calls AWSResourceManager.LateInitialize() method and
