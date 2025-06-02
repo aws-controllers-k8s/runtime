@@ -285,8 +285,25 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
+
+	// Perform normal reconciliation with original context
 	latest, err := r.reconcile(ctx, rm, desired)
-	return r.HandleReconcileError(ctx, desired, latest, err)
+
+	// Use graceful context for final status patch only if original context is cancelled
+	finalCtx := ctx
+	if ctx.Err() != nil {
+		// Original context cancelled - create graceful context for final status patch
+		gracefulCtx := context.Background()
+
+		// Transfer important values from the original context to the graceful context
+		gracefulCtx = context.WithValue(gracefulCtx, ackrtlog.ContextKey, rlog)
+		gracefulCtx = context.WithValue(gracefulCtx, "resourceNamespace", req.Namespace)
+
+		finalCtx = gracefulCtx
+		rlog.Info("using graceful context for final status patch due to controller shutdown")
+	}
+
+	return r.HandleReconcileError(finalCtx, desired, latest, err)
 }
 
 func (r *resourceReconciler) handleCacheError(
