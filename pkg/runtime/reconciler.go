@@ -61,6 +61,10 @@ const (
 	// resource if it doesn't exist, or adopt the resource if it exists.
 	// value comes from getAdoptionPolicy
 	// adoptOrCreate = "adopt-or-create"
+	// patchContextTimeout is the default duration to patch the resource. This
+	// is used to ensure critical metadata/spec/status updates are saved even
+	// during controller shutdown
+	patchContextTimeout = 10 * time.Second
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -859,6 +863,21 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 ) (acktypes.AWSResource, error) {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
+
+	// Create fresh timeout context for the patch operation
+	// This is to ensure that the patch operation is not cancelled
+	// when the original context is cancelled
+	patchCtx, cancel := context.WithTimeout(context.Background(), patchContextTimeout)
+	defer cancel()
+
+	// Transfer important values from the original context to the patch context
+	patchCtx = context.WithValue(patchCtx, ackrtlog.ContextKey, rlog)
+	if ns := ctx.Value("resourceNamespace"); ns != nil {
+		patchCtx = context.WithValue(patchCtx, "resourceNamespace", ns)
+	}
+
+	rlog.Info("created patch context with timeout", "timeout_seconds", patchContextTimeout.Seconds())
+
 	exit := rlog.Trace("r.patchResourceMetadataAndSpec")
 	defer func() {
 		exit(err)
@@ -880,7 +899,10 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	rlog.Enter("kc.Patch (metadata + spec)")
 	lorig := latestCleaned.DeepCopy()
 	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
-	err = r.kc.Patch(ctx, latestCleaned.RuntimeObject(), patch)
+
+	// Use the fresh timeout context for the patch operation
+	err = r.kc.Patch(patchCtx, latestCleaned.RuntimeObject(), patch)
+
 	if err == nil {
 		if rlog.IsDebugEnabled() {
 			js := getPatchDocument(patch, lorig.RuntimeObject())
@@ -907,6 +929,21 @@ func (r *resourceReconciler) patchResourceStatus(
 ) error {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
+
+	// Create fresh timeout context for the patch operation
+	// This is to ensure that the patch operation is not cancelled
+	// when the original context is cancelled
+	patchCtx, cancel := context.WithTimeout(context.Background(), patchContextTimeout)
+	defer cancel()
+
+	// Transfer important values from the original context to the patch context
+	patchCtx = context.WithValue(patchCtx, ackrtlog.ContextKey, rlog)
+	if ns := ctx.Value("resourceNamespace"); ns != nil {
+		patchCtx = context.WithValue(patchCtx, "resourceNamespace", ns)
+	}
+
+	rlog.Info("created patch context with timeout", "timeout_seconds", patchContextTimeout.Seconds())
+
 	exit := rlog.Trace("r.patchResourceStatus")
 	defer func() {
 		exit(err)
@@ -916,7 +953,10 @@ func (r *resourceReconciler) patchResourceStatus(
 	dobj := desired.DeepCopy().RuntimeObject()
 	lobj := latest.DeepCopy().RuntimeObject()
 	patch := client.MergeFrom(dobj)
-	err = r.kc.Status().Patch(ctx, lobj, patch)
+
+	// Use the fresh timeout context for the patch operation
+	err = r.kc.Status().Patch(patchCtx, lobj, patch)
+
 	if err == nil {
 		if rlog.IsDebugEnabled() {
 			js := getPatchDocument(patch, lobj)
