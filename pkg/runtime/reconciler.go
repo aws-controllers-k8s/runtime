@@ -877,12 +877,7 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	lorig := latestCleaned.DeepCopy()
 	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
 
-	// NOTE (rushmash91): Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-	err = r.kc.Patch(patchCtx, latestCleaned.RuntimeObject(), patch)
+	err = patchWithoutCancel(ctx, r.kc, latestCleaned.RuntimeObject(), patch)
 
 	if err == nil {
 		if rlog.IsDebugEnabled() {
@@ -920,12 +915,7 @@ func (r *resourceReconciler) patchResourceStatus(
 	lobj := latest.DeepCopy().RuntimeObject()
 	patch := client.MergeFrom(dobj)
 
-	// NOTE (rushmash91): Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-	err = r.kc.Status().Patch(patchCtx, lobj, patch)
+	err = patchStatusWithoutCancel(ctx, r.kc, lobj, patch)
 
 	if err == nil {
 		if rlog.IsDebugEnabled() {

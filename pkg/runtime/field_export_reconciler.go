@@ -324,12 +324,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm.Data[key] = sourceValue
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target config map")
-	// Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-	err = r.kc.Patch(patchCtx, cm, patch)
+	err = patchWithoutCancel(ctx, r.kc, cm, patch)
 	if err != nil {
 		return err
 	}
@@ -376,12 +371,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	secret.Data[key] = []byte(sourceValue)
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
-	// Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-	err = r.kc.Patch(patchCtx, secret, patch)
+	err = patchWithoutCancel(ctx, r.kc, secret, patch)
 	if err != nil {
 		return err
 	}
@@ -538,17 +528,7 @@ func (r *fieldExportReconciler) patchStatus(
 	res *ackv1alpha1.FieldExport,
 	base *ackv1alpha1.FieldExport,
 ) error {
-	// Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-
-	return r.kc.Status().Patch(
-		patchCtx,
-		res,
-		client.MergeFrom(base),
-	)
+	return patchStatusWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 }
 
 // markManaged places the supplied resource under the management of ACK.
@@ -596,17 +576,7 @@ func (r *fieldExportReconciler) patchMetadataAndSpec(
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
 
-	// Always use WithoutCancel to prevent patch operations from being
-	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
-	// the effective timeout - no additional timeout needed to avoid interfering with
-	// normal Kubernetes client timeout/retry strategy.
-	patchCtx := context.WithoutCancel(ctx)
-
-	err := r.kc.Patch(
-		patchCtx,
-		res,
-		client.MergeFrom(base),
-	)
+	err := patchWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }

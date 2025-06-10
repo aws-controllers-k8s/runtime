@@ -14,11 +14,13 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
@@ -140,4 +142,36 @@ func getAdoptionFields(res acktypes.AWSResource) string {
 		}
 	}
 	return ""
+}
+
+// patchWithoutCancel performs a patch operation using context.WithoutCancel to prevent
+// patch operations from being cancelled while preserving context values.
+//
+// NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
+// no additional timeout needed to avoid interfering with normal Kubernetes client
+// timeout/retry strategy.
+func patchWithoutCancel(
+	ctx context.Context,
+	kc client.Client,
+	obj client.Object,
+	patch client.Patch,
+) error {
+	patchCtx := context.WithoutCancel(ctx)
+	return kc.Patch(patchCtx, obj, patch)
+}
+
+// patchStatusWithoutCancel performs a status patch operation using context.WithoutCancel
+// to prevent patch operations from being cancelled while preserving context values.
+//
+// NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
+// no additional timeout needed to avoid interfering with normal Kubernetes client
+// timeout/retry strategy.
+func patchStatusWithoutCancel(
+	ctx context.Context,
+	kc client.Client,
+	obj client.Object,
+	patch client.Patch,
+) error {
+	patchCtx := context.WithoutCancel(ctx)
+	return kc.Status().Patch(patchCtx, obj, patch)
 }
