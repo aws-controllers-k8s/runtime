@@ -575,8 +575,15 @@ func (r *adoptionReconciler) patchMetadataAndSpec(
 	// content returned from apiserver.
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
+
+	// Always use WithoutCancel to prevent patch operations from being
+	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
+	// the effective timeout - no additional timeout needed to avoid interfering with
+	// normal Kubernetes client timeout/retry strategy.
+	patchCtx := context.WithoutCancel(ctx)
+
 	err := r.kc.Patch(
-		ctx,
+		patchCtx,
 		res,
 		client.MergeFrom(base),
 	)
@@ -593,8 +600,14 @@ func (r *adoptionReconciler) patchStatus(
 	res *ackv1alpha1.AdoptedResource,
 	base *ackv1alpha1.AdoptedResource,
 ) error {
+	// Always use WithoutCancel to prevent patch operations from being
+	// cancelled while preserving context values. The 30s SIGTERM grace period acts as
+	// the effective timeout - no additional timeout needed to avoid interfering with
+	// normal Kubernetes client timeout/retry strategy.
+	patchCtx := context.WithoutCancel(ctx)
+
 	return r.kc.Status().Patch(
-		ctx,
+		patchCtx,
 		res,
 		client.MergeFrom(base),
 	)

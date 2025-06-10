@@ -88,8 +88,8 @@ func mockManager() *ackmocks.AWSResourceManager {
 
 func setupMockClientForAdoptedResource(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.SubResourceWriter, ctx context.Context, adoptedRes *ackv1alpha1.AdoptedResource) {
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
 func setupMockAwsResource(
@@ -403,7 +403,7 @@ func assertAdoptedCondition(
 	adoptedRes *ackv1alpha1.AdoptedResource,
 ) {
 	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, adoptedRes, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only one kind of condition present
 	require.Equal(1, len(adoptedRes.Status.Conditions))
 	require.Equal(ackv1alpha1.ConditionTypeAdopted, adoptedRes.Status.Conditions[0].Type)
@@ -421,9 +421,9 @@ func assertAdoptedResourceManaged(
 	object *ackv1alpha1.AdoptedResource,
 ) {
 	if expectedManaged {
-		kc.AssertCalled(t, "Patch", ctx, object, mock.AnythingOfType("*client.mergeFromPatch"))
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, object, mock.AnythingOfType("*client.mergeFromPatch"))
 	} else {
-		kc.AssertNotCalled(t, "Patch", ctx, object, mock.AnythingOfType("*client.mergeFromPatch"))
+		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, object, mock.AnythingOfType("*client.mergeFromPatch"))
 	}
 }
 
