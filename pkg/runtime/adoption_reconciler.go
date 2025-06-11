@@ -575,11 +575,8 @@ func (r *adoptionReconciler) patchMetadataAndSpec(
 	// content returned from apiserver.
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
-	err := r.kc.Patch(
-		ctx,
-		res,
-		client.MergeFrom(base),
-	)
+
+	err := patchWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }
@@ -593,11 +590,7 @@ func (r *adoptionReconciler) patchStatus(
 	res *ackv1alpha1.AdoptedResource,
 	base *ackv1alpha1.AdoptedResource,
 ) error {
-	return r.kc.Status().Patch(
-		ctx,
-		res,
-		client.MergeFrom(base),
-	)
+	return patchStatusWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 }
 
 // NewAdoptionReconciler returns a new adoptionReconciler object

@@ -57,10 +57,6 @@ const (
 	// resource if the CARM cache is not synced yet, or if the roleARN is not
 	// available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
-	// adoptOrCreate is an annotation field that decides whether to create the
-	// resource if it doesn't exist, or adopt the resource if it exists.
-	// value comes from getAdoptionPolicy
-	// adoptOrCreate = "adopt-or-create"
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -880,7 +876,9 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	rlog.Enter("kc.Patch (metadata + spec)")
 	lorig := latestCleaned.DeepCopy()
 	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
-	err = r.kc.Patch(ctx, latestCleaned.RuntimeObject(), patch)
+
+	err = patchWithoutCancel(ctx, r.kc, latestCleaned.RuntimeObject(), patch)
+
 	if err == nil {
 		if rlog.IsDebugEnabled() {
 			js := getPatchDocument(patch, lorig.RuntimeObject())
@@ -916,7 +914,9 @@ func (r *resourceReconciler) patchResourceStatus(
 	dobj := desired.DeepCopy().RuntimeObject()
 	lobj := latest.DeepCopy().RuntimeObject()
 	patch := client.MergeFrom(dobj)
-	err = r.kc.Status().Patch(ctx, lobj, patch)
+
+	err = patchStatusWithoutCancel(ctx, r.kc, lobj, patch)
+
 	if err == nil {
 		if rlog.IsDebugEnabled() {
 			js := getPatchDocument(patch, lobj)

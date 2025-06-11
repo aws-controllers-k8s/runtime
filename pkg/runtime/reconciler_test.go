@@ -16,6 +16,8 @@ package runtime_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +47,22 @@ import (
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
+
+// isWithoutCancelContext checks if the context is a WithoutCancel context
+// This provides more specific matching than mock.Anything
+func isWithoutCancelContext(ctx interface{}) bool {
+	ctxVal, ok := ctx.(context.Context)
+	if !ok {
+		return false
+	}
+
+	// Check the type name for WithoutCancel context
+	typeName := fmt.Sprintf("%T", ctxVal)
+	return strings.Contains(typeName, "withoutCancelCtx")
+}
+
+// withoutCancelContextMatcher returns a matcher for WithoutCancel contexts
+var withoutCancelContextMatcher = mock.MatchedBy(isWithoutCancelContext)
 
 func resourceMocks() (
 	*ackmocks.AWSResource, // mocked resource
@@ -193,7 +211,8 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	// Use specific matcher for WithoutCancel context instead of mock.Anything
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 6)
@@ -252,7 +271,7 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 1)
@@ -308,9 +327,9 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 1)
@@ -377,8 +396,8 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 2)
@@ -446,8 +465,8 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 1)
@@ -515,7 +534,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// NotFound error return from `AWSResourceManager.ReadOne()` that we end
@@ -531,7 +550,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rm.AssertCalled(t, "Create", ctx, desired)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -596,7 +615,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// NotFound error return from `AWSResourceManager.ReadOne()` that we end
@@ -611,7 +630,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rm.AssertCalled(t, "Create", ctx, desired)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -680,7 +699,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -696,7 +715,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -767,7 +786,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -781,7 +800,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -845,7 +864,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -860,7 +879,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	// Update is not called because there is no delta
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -924,7 +943,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -939,7 +958,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	// Update is not called because there is no delta
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -1014,7 +1033,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
 	// hence we use mock.AnythingOfType parameter to assert patch call
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -1028,7 +1047,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -1088,7 +1107,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -1096,7 +1115,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
-	kc.AssertCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -1168,7 +1187,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
@@ -1176,7 +1195,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
-	kc.AssertCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
@@ -1213,12 +1232,12 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.HandleReconcileError(ctx, desired, latest, nil)
 	require.Nil(err)
-	statusWriter.AssertCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// The HandleReconcilerError function never updates spec or metadata, so
 	// even though there is a change to the annotations we expect no call to
 	// patch the spec/metadata...
@@ -1319,7 +1338,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	// Assert the error from late initialization
@@ -1330,7 +1349,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
 	// No difference in desired, latest metadata and spec
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "EnsureTags", ctx, desired, scmd)
 }
@@ -1506,7 +1525,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -1520,7 +1539,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
@@ -1593,7 +1612,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 		ensureControllerTagsError,
 	)
 
-	kc.On("Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	// With the above mocks and below assertions, we check that if we got a
 	// non-error return from `AWSResourceManager.ReadOne()` and the
@@ -1607,7 +1626,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
-	kc.AssertNotCalled(t, "Patch", ctx, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only the HandleReconcilerError wrapper function ever calls patchResourceStatus
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)

@@ -108,8 +108,8 @@ func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
 
 func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ctrlrtclientmock.SubResourceWriter, ctx context.Context, fieldExport *ackv1alpha1.FieldExport) {
 	kc.On("Status").Return(statusWriter)
-	statusWriter.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", ctx, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
 func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *mocks.AWSResource) {
@@ -336,7 +336,7 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 
 	//Mock behavior setup
-	kc.On("Patch", ctx, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
+	kc.On("Patch", withoutCancelContextMatcher, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
 
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
 	setupMockApiReaderForFieldExport(apiReader, ctx, res)
@@ -557,9 +557,9 @@ func assertPatchedConfigMap(expected bool, t *testing.T, ctx context.Context, kc
 		return val == "test-book-name"
 	})
 	if expected {
-		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
-		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}
 }
 
@@ -576,9 +576,9 @@ func assertPatchedSecret(expected bool, t *testing.T, ctx context.Context, kc *c
 		return bytes.Equal(val, []byte("test-book-name"))
 	})
 	if expected {
-		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
-		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}
 }
 
@@ -594,9 +594,9 @@ func assertPatchedSecretWithKey(expected bool, t *testing.T, ctx context.Context
 		return bytes.Equal(val, []byte("test-book-name"))
 	})
 	if expected {
-		kc.AssertCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+			kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
-		kc.AssertNotCalled(t, "Patch", ctx, dataMatcher, mock.Anything)
+		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}
 }
 
@@ -614,7 +614,7 @@ func assertRecoverableCondition(
 	latest *ackv1alpha1.FieldExport,
 ) {
 	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only one kind of condition present
 	require.Equal(1, len(latest.Status.Conditions))
 	require.Equal(ackv1alpha1.ConditionTypeRecoverable, latest.Status.Conditions[0].Type)
@@ -636,7 +636,7 @@ func assertTerminalCondition(
 	latest *ackv1alpha1.FieldExport,
 ) {
 	kc.AssertCalled(t, "Status")
-	statusWriter.AssertCalled(t, "Patch", ctx, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, mock.AnythingOfType("*v1alpha1.FieldExport"), mock.AnythingOfType("*client.mergeFromPatch"))
 	// Only one kind of condition present
 	require.Equal(1, len(latest.Status.Conditions))
 	require.Equal(ackv1alpha1.ConditionTypeTerminal, latest.Status.Conditions[0].Type)

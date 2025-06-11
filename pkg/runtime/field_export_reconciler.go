@@ -324,7 +324,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm.Data[key] = sourceValue
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target config map")
-	err = r.kc.Patch(ctx, cm, patch)
+	err = patchWithoutCancel(ctx, r.kc, cm, patch)
 	if err != nil {
 		return err
 	}
@@ -371,7 +371,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	secret.Data[key] = []byte(sourceValue)
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
-	err = r.kc.Patch(ctx, secret, patch)
+	err = patchWithoutCancel(ctx, r.kc, secret, patch)
 	if err != nil {
 		return err
 	}
@@ -528,11 +528,7 @@ func (r *fieldExportReconciler) patchStatus(
 	res *ackv1alpha1.FieldExport,
 	base *ackv1alpha1.FieldExport,
 ) error {
-	return r.kc.Status().Patch(
-		ctx,
-		res,
-		client.MergeFrom(base),
-	)
+	return patchStatusWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 }
 
 // markManaged places the supplied resource under the management of ACK.
@@ -579,11 +575,8 @@ func (r *fieldExportReconciler) patchMetadataAndSpec(
 	// content returned from apiserver.
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
-	err := r.kc.Patch(
-		ctx,
-		res,
-		client.MergeFrom(base),
-	)
+
+	err := patchWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }
