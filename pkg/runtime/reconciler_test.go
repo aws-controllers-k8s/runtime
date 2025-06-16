@@ -37,6 +37,7 @@ import (
 	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
@@ -110,7 +111,12 @@ func reconcilerMocks(
 		Level:       zapcore.InfoLevel,
 	}
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
-	cfg := ackcfg.Config{}
+	cfg := ackcfg.Config{
+		FeatureGates: featuregate.FeatureGates{
+			featuregate.ReadOnlyResources: {Enabled: true},
+			featuregate.ResourceAdoption:  {Enabled: true},
+		},
+	}
 	metrics := ackmetrics.NewMetrics("bookstore")
 
 	sc := &ackmocks.ServiceController{}
@@ -260,12 +266,7 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 		latest, nil,
 	)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
-	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
-
-	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
-	rd.On("IsManaged", desired).Return(true)
-	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
@@ -285,12 +286,16 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.TODO()
+	adoptionFieldsString := "{\"arn\": \"my-adopt-book-arn\"}"
+	adoptionFields := map[string]string{
+		"arn": "my-adopt-book-arn",
+	}
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
-		ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 	})
 
 	latest, latestRTObj, _ := resourceMocks()
@@ -298,7 +303,7 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	latest.On("MetaObject").Return(metav1.ObjectMeta{
 		Annotations: map[string]string{
 			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
-			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+			ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 		},
 	})
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
@@ -306,7 +311,7 @@ func TestReconcilerAdoptResource(t *testing.T) {
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return()
-
+	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
 		desired, false, nil,
@@ -321,10 +326,11 @@ func TestReconcilerAdoptResource(t *testing.T) {
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("IsManaged", desired).Return(false)
-	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("FilterSystemTags", latest).Return()
+	rd.On("MarkAdopted", latest).Return()
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -343,13 +349,18 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	require := require.New(t)
 
 	ctx := context.TODO()
+	adoptionFieldsString := "{\"arn\": \"my-adopt-book-arn\"}"
+	adoptionFields := map[string]string{
+		"arn": "my-adopt-book-arn",
+	}
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
-		ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 	})
+	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 
@@ -358,8 +369,8 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	latest.On("MetaObject").Return(metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
-			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+			ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 		},
 	})
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
@@ -385,6 +396,7 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	).Once()
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("MarkAdopted", latest).Return()
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
 	rd.On("IsManaged", desired).Return(false).Once()
@@ -428,7 +440,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	latest.On("MetaObject").Return(metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+			ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
 		},
 	})
