@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -222,6 +223,68 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 6)
+}
+
+type awsError struct {
+	smithy.APIError
+}
+
+func (err awsError) Error() string {
+	return "mock error"
+}
+
+func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, ackerr.NotFound,
+	).Once()
+	rm.On("Create", ctx, desired).Return(
+		latest, awsError{},
+	)
+	rm.On("IsSynced", ctx, latest).Return(false, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(false).Twice()
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkUnmanaged", desired)
+	rd.On("MarkManaged", desired)
+	rd.On("MarkUnmanaged", desired)
+	rd.On("ResourceFromRuntimeObject", desiredRTObj).Return(desired)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	// Use specific matcher for WithoutCancel context instead of mock.Anything
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rm.AssertNumberOfCalls(t, "ReadOne", 1)
+	rd.AssertCalled(t, "MarkUnmanaged", desired)
+	rd.AssertCalled(t, "MarkManaged", desired)
 }
 
 func TestReconcilerReadOnlyResource(t *testing.T) {
@@ -1249,7 +1312,7 @@ func TestReconcilerHandleReconcilerError_PatchStatus_Latest(t *testing.T) {
 
 	_, err := r.HandleReconcileError(ctx, desired, latest, nil)
 	require.Nil(err)
-		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	// The HandleReconcilerError function never updates spec or metadata, so
 	// even though there is a change to the annotations we expect no call to
 	// patch the spec/metadata...
