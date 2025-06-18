@@ -636,6 +636,16 @@ func (r *resourceReconciler) createResource(
 	latest, err = rm.Create(ctx, desired)
 	rlog.Exit("rm.Create", err)
 	if err != nil {
+		// Here we're deciding to set a resource as unmanaged
+		// if the error is an AWS API Error. This will ensure
+		// that we're only managing (put finalizer) the resources
+		// that actually exist in AWS.
+		if _, ok := ackerr.AWSError(err); ok {
+			mErr := r.setResourceUnmanaged(ctx, rm, desired)
+			if mErr != nil {
+				return latest, err
+			}
+		}
 		return latest, err
 	}
 
