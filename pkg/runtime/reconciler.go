@@ -215,7 +215,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 
-	// Check if the resource still matched the the watchSelectors.
+	// Check if the resource still matches the watchSelectors.
 	if !r.cfg.WatchSelectorsParsed.Matches(labels.Set(desired.MetaObject().GetLabels())) {
 		r.log.V(1).Info(
 			"Skipping reconcile for resource that does not match watch selectors",
