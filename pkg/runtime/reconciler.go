@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -212,6 +213,18 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			return ctrlrt.Result{}, nil
 		}
 		return ctrlrt.Result{}, err
+	}
+
+	// Check if the resource still matched the the watchSelectors.
+	if !r.cfg.WatchSelectorsParsed.Matches(labels.Set(desired.MetaObject().GetLabels())) {
+		r.log.V(1).Info(
+			"Skipping reconcile for resource that does not match watch selectors",
+			"resource", desired.MetaObject().GetName(),
+			"namespace", desired.MetaObject().GetNamespace(),
+			"kind", r.rd.GroupVersionKind().Kind,
+			"watchSelectors", r.cfg.WatchSelectors,
+		)
+		return ctrlrt.Result{}, nil
 	}
 
 	rlog := ackrtlog.NewResourceLogger(
