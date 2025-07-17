@@ -505,7 +505,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-		latest.On(
+	latest.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return().Run(func(args mock.Arguments) {

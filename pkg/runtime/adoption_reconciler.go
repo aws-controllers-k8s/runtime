@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -57,7 +58,7 @@ type adoptionReconciler struct {
 // of an upstream controller-runtime.Manager
 func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
-	r.apiReader = mgr.GetAPIReader()
+	r.ackResourceCache = mgr.GetCache()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -251,7 +252,7 @@ func (r *adoptionReconciler) Sync(
 
 	// Only create the described resource if it does not already exist
 	// in k8s cluster.
-	if err := r.apiReader.Get(ctx, types.NamespacedName{
+	if err := r.ackResourceCache.Get(ctx, types.NamespacedName{
 		Namespace: described.MetaObject().GetNamespace(),
 		Name:      described.MetaObject().GetName(),
 	}, described.RuntimeObject()); err != nil {
@@ -306,7 +307,7 @@ func (r *adoptionReconciler) getAdoptedResource(
 	req ctrlrt.Request,
 ) (*ackv1alpha1.AdoptedResource, error) {
 	ro := &ackv1alpha1.AdoptedResource{}
-	// Here we use k8s APIReader to read the k8s object by making the
+	// Here we use k8s ACKResourceCache to read the k8s object by making the
 	// direct call to k8s apiserver instead of using k8sClient.
 	// The reason is that k8sClient uses a cache and sometimes k8sClient can
 	// return stale copy of object.
@@ -314,7 +315,7 @@ func (r *adoptionReconciler) getAdoptedResource(
 	// making single read call for complete reconciler loop.
 	// See following issue for more details:
 	// https://github.com/aws-controllers-k8s/community/issues/894
-	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
+	if err := r.ackResourceCache.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return ro, nil
@@ -615,7 +616,7 @@ func NewAdoptionReconcilerWithClient(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 	kc client.Client,
-	apiReader client.Reader,
+	ackResourceCache cache.Cache,
 ) acktypes.AdoptedResourceReconciler {
 	return &adoptionReconciler{
 		reconciler: reconciler{
@@ -625,7 +626,7 @@ func NewAdoptionReconcilerWithClient(
 			metrics:   metrics,
 			cache:     cache,
 			kc:        kc,
-			apiReader: apiReader,
+			ackResourceCache: ackResourceCache,
 		},
 	}
 }
