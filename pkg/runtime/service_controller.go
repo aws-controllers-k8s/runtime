@@ -331,9 +331,9 @@ func NewServiceController(
 ) acktypes.ServiceController {
 	return &serviceController{
 		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
-			VersionInfo:        versionInfo,
-			ServiceAlias:       svcAlias,
-			ServiceAPIGroup:    svcAPIGroup,
+			VersionInfo:     versionInfo,
+			ServiceAlias:    svcAlias,
+			ServiceAPIGroup: svcAPIGroup,
 		},
 		metrics: ackmetrics.NewMetrics(svcAlias),
 	}

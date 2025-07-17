@@ -82,7 +82,7 @@ const (
 	// ACK service controller.
 	AnnotationReadOnly = AnnotationPrefix + "read-only"
 	// AnnotationAdoptionPolicy is an annotation whose value is the identifier for whether
-	// we will attempt adoption only (value = adopt-only) or attempt a create if resource 
+	// we will attempt adoption only (value = adopt-only) or attempt a create if resource
 	// is not found (value adopt-or-create).
 	//
 	// NOTE (michaelhtm): Currently create-or-adopt is not supported
