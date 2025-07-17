@@ -620,12 +620,12 @@ func NewAdoptionReconcilerWithClient(
 ) acktypes.AdoptedResourceReconciler {
 	return &adoptionReconciler{
 		reconciler: reconciler{
-			sc:        sc,
-			log:       log.WithName("adopted-reconciler"),
-			cfg:       cfg,
-			metrics:   metrics,
-			cache:     cache,
-			kc:        kc,
+			sc:               sc,
+			log:              log.WithName("adopted-reconciler"),
+			cfg:              cfg,
+			metrics:          metrics,
+			cache:            cache,
+			kc:               kc,
 			ackResourceCache: ackResourceCache,
 		},
 	}

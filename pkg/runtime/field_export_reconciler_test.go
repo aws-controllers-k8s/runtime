@@ -41,8 +41,8 @@ import (
 
 	apimachineryruntimemock "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime"
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
-	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ctrlrtcachemock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/cache"
+	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
@@ -595,7 +595,7 @@ func assertPatchedSecretWithKey(expected bool, t *testing.T, ctx context.Context
 		return bytes.Equal(val, []byte("test-book-name"))
 	})
 	if expected {
-			kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
 		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}
