@@ -258,18 +258,22 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}
 	}
 
-	exporterInstalled, err := c.GetFieldExportInstalled(mgr)
+	exporterInstalled := false
 	exporterLogger := c.log.WithName("exporter")
-	if err != nil {
-		exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
-	} else if !exporterInstalled {
-		exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
-	} else {
-		rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, cache)
-		if err := rec.BindControllerManager(mgr); err != nil {
-			return err
+	
+	if cfg.EnableFieldExportReconciler {
+		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
+		if err != nil {
+			exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
+		} else if !exporterInstalled {
+			exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
+		} else {
+			rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, cache)
+			if err := rec.BindControllerManager(mgr); err != nil {
+				return err
+			}
+			c.fieldExportReconciler = rec
 		}
-		c.fieldExportReconciler = rec
 	}
 
 	// Get the list of resources to reconcile from the config
@@ -305,7 +309,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}
 		c.reconcilers = append(c.reconcilers, rec)
 
-		if exporterInstalled {
+		if cfg.EnableFieldExportReconciler && exporterInstalled {
 			rd := rmf.ResourceDescriptor()
 			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
 			if err := feRec.BindControllerManager(mgr); err != nil {

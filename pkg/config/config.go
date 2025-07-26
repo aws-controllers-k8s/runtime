@@ -43,6 +43,7 @@ import (
 
 const (
 	flagEnableAdoptedResourceReconciler = "enable-adopted-resource-reconciler"
+	flagEnableFieldExportReconciler     = "enable-field-export-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
 	flagLeaderElectionNamespace         = "leader-election-namespace"
 	flagMetricAddr                      = "metrics-addr"
@@ -87,6 +88,7 @@ type Config struct {
 	HealthzAddr                     string
 	EnableLeaderElection            bool
 	EnableAdoptedResourceReconciler bool
+	EnableFieldExportReconciler     bool
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
 	AccountID                       string
@@ -143,6 +145,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.EnableAdoptedResourceReconciler, flagEnableAdoptedResourceReconciler,
 		true,
 		"Enable the AdoptedResource reconciler.",
+	)
+	flag.BoolVar(
+		&cfg.EnableFieldExportReconciler, flagEnableFieldExportReconciler,
+		true,
+		"Enable the FieldExport reconciler.",
 	)
 	flag.StringVar(
 		// In the context of the controller-runtime library, if the LeaderElectionNamespace parametere is not
