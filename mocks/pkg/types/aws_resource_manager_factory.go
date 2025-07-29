@@ -21,6 +21,26 @@ type AWSResourceManagerFactory struct {
 	mock.Mock
 }
 
+// GetCachedManager provides a mock function with given fields: _a0, _a1, _a2
+func (_m *AWSResourceManagerFactory) GetCachedManager(_a0 v1alpha1.AWSAccountID, _a1 v1alpha1.AWSRegion, _a2 v1alpha1.AWSResourceName) types.AWSResourceManager {
+	ret := _m.Called(_a0, _a1, _a2)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCachedManager")
+	}
+
+	var r0 types.AWSResourceManager
+	if rf, ok := ret.Get(0).(func(v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) types.AWSResourceManager); ok {
+		r0 = rf(_a0, _a1, _a2)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(types.AWSResourceManager)
+		}
+	}
+
+	return r0
+}
+
 // IsAdoptable provides a mock function with no fields
 func (_m *AWSResourceManagerFactory) IsAdoptable() bool {
 	ret := _m.Called()
@@ -39,9 +59,9 @@ func (_m *AWSResourceManagerFactory) IsAdoptable() bool {
 	return r0
 }
 
-// ManagerFor provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7
-func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 aws.Config, _a2 logr.Logger, _a3 *metrics.Metrics, _a4 types.Reconciler, _a5 v1alpha1.AWSAccountID, _a6 v1alpha1.AWSRegion, _a7 v1alpha1.AWSResourceName) (types.AWSResourceManager, error) {
-	ret := _m.Called(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
+// ManagerFor provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8
+func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 aws.Config, _a2 logr.Logger, _a3 *metrics.Metrics, _a4 types.Reconciler, _a5 v1alpha1.AWSAccountID, _a6 v1alpha1.AWSRegion, _a7 v1alpha1.AWSPartition, _a8 v1alpha1.AWSResourceName) (types.AWSResourceManager, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ManagerFor")
@@ -49,19 +69,19 @@ func (_m *AWSResourceManagerFactory) ManagerFor(_a0 config.Config, _a1 aws.Confi
 
 	var r0 types.AWSResourceManager
 	var r1 error
-	if rf, ok := ret.Get(0).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) (types.AWSResourceManager, error)); ok {
-		return rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
+	if rf, ok := ret.Get(0).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSPartition, v1alpha1.AWSResourceName) (types.AWSResourceManager, error)); ok {
+		return rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8)
 	}
-	if rf, ok := ret.Get(0).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) types.AWSResourceManager); ok {
-		r0 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
+	if rf, ok := ret.Get(0).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSPartition, v1alpha1.AWSResourceName) types.AWSResourceManager); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(types.AWSResourceManager)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSResourceName) error); ok {
-		r1 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7)
+	if rf, ok := ret.Get(1).(func(config.Config, aws.Config, logr.Logger, *metrics.Metrics, types.Reconciler, v1alpha1.AWSAccountID, v1alpha1.AWSRegion, v1alpha1.AWSPartition, v1alpha1.AWSResourceName) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8)
 	} else {
 		r1 = ret.Error(1)
 	}
