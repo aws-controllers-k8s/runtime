@@ -53,6 +53,26 @@ func (_m *AWSResourceIdentifiers) OwnerAccountID() *v1alpha1.AWSAccountID {
 	return r0
 }
 
+// Partition provides a mock function with no fields
+func (_m *AWSResourceIdentifiers) Partition() *v1alpha1.AWSPartition {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Partition")
+	}
+
+	var r0 *v1alpha1.AWSPartition
+	if rf, ok := ret.Get(0).(func() *v1alpha1.AWSPartition); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*v1alpha1.AWSPartition)
+		}
+	}
+
+	return r0
+}
+
 // Region provides a mock function with no fields
 func (_m *AWSResourceIdentifiers) Region() *v1alpha1.AWSRegion {
 	ret := _m.Called()
