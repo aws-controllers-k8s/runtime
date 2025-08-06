@@ -105,7 +105,7 @@ func AllOfType(
 // SetSynced sets the resource's Condition of type ConditionTypeResourceSynced
 // to the supplied status, optional message and reason.
 func SetSynced(
-	subject acktypes.ConditionManager,
+	subject acktypes.AWSResource,
 	status corev1.ConditionStatus,
 	message *string,
 	reason *string,
@@ -121,6 +121,7 @@ func SetSynced(
 	now := metav1.Now()
 	c.LastTransitionTime = &now
 	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
@@ -129,7 +130,7 @@ func SetSynced(
 // SetTerminal sets the resource's Condition of type ConditionTypeTerminal to
 // the supplied status, optional message and reason.
 func SetTerminal(
-	subject acktypes.ConditionManager,
+	subject acktypes.AWSResource,
 	status corev1.ConditionStatus,
 	message *string,
 	reason *string,
@@ -145,6 +146,7 @@ func SetTerminal(
 	now := metav1.Now()
 	c.LastTransitionTime = &now
 	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
@@ -153,7 +155,7 @@ func SetTerminal(
 // SetRecoverable sets the resource's Condition of type ConditionTypeRecoverable
 // to the supplied status, optional message and reason.
 func SetRecoverable(
-	subject acktypes.ConditionManager,
+	subject acktypes.AWSResource,
 	status corev1.ConditionStatus,
 	message *string,
 	reason *string,
@@ -169,6 +171,7 @@ func SetRecoverable(
 	now := metav1.Now()
 	c.LastTransitionTime = &now
 	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
@@ -177,7 +180,7 @@ func SetRecoverable(
 // SetLateInitialized sets the resource's Condition of type ConditionTypeLateInitialized to
 // the supplied status, optional message and reason.
 func SetLateInitialized(
-	subject acktypes.ConditionManager,
+	subject acktypes.AWSResource,
 	status corev1.ConditionStatus,
 	message *string,
 	reason *string,
@@ -193,6 +196,7 @@ func SetLateInitialized(
 	now := metav1.Now()
 	c.LastTransitionTime = &now
 	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
@@ -201,7 +205,7 @@ func SetLateInitialized(
 // SetReferencesResolved sets the resource's Condition of type ConditionTypeReferencesResolved
 // to the supplied status, optional message and reason.
 func SetReferencesResolved(
-	subject acktypes.ConditionManager,
+	subject acktypes.AWSResource,
 	status corev1.ConditionStatus,
 	message *string,
 	reason *string,
@@ -217,6 +221,7 @@ func SetReferencesResolved(
 	now := metav1.Now()
 	c.LastTransitionTime = &now
 	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
