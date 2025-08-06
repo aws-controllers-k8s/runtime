@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -58,7 +57,6 @@ type adoptionReconciler struct {
 // of an upstream controller-runtime.Manager
 func (r *adoptionReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
-	r.ackResourceCache = mgr.GetCache()
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -252,7 +250,7 @@ func (r *adoptionReconciler) Sync(
 
 	// Only create the described resource if it does not already exist
 	// in k8s cluster.
-	if err := r.ackResourceCache.Get(ctx, types.NamespacedName{
+	if err := r.kc.Get(ctx, types.NamespacedName{
 		Namespace: described.MetaObject().GetNamespace(),
 		Name:      described.MetaObject().GetName(),
 	}, described.RuntimeObject()); err != nil {
@@ -315,7 +313,7 @@ func (r *adoptionReconciler) getAdoptedResource(
 	// making single read call for complete reconciler loop.
 	// See following issue for more details:
 	// https://github.com/aws-controllers-k8s/community/issues/894
-	if err := r.ackResourceCache.Get(ctx, req.NamespacedName, ro); err != nil {
+	if err := r.kc.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return ro, nil
@@ -602,7 +600,7 @@ func NewAdoptionReconciler(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 ) acktypes.AdoptedResourceReconciler {
-	return NewAdoptionReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
+	return NewAdoptionReconcilerWithClient(sc, log, cfg, metrics, cache, nil)
 }
 
 // NewAdoptionReconcilerWithClient returns a new adoptionReconciler object with
@@ -616,7 +614,6 @@ func NewAdoptionReconcilerWithClient(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 	kc client.Client,
-	ackResourceCache cache.Cache,
 ) acktypes.AdoptedResourceReconciler {
 	return &adoptionReconciler{
 		reconciler: reconciler{
@@ -626,7 +623,6 @@ func NewAdoptionReconcilerWithClient(
 			metrics:          metrics,
 			cache:            cache,
 			kc:               kc,
-			ackResourceCache: ackResourceCache,
 		},
 	}
 }

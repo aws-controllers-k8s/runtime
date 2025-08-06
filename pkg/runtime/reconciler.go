@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlrt "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -62,13 +61,12 @@ const (
 
 // reconciler describes a generic reconciler within ACK.
 type reconciler struct {
-	sc               acktypes.ServiceController
-	kc               client.Client
-	log              logr.Logger
-	cfg              ackcfg.Config
-	cache            ackrtcache.Caches
-	metrics          *ackmetrics.Metrics
-	ackResourceCache cache.Cache
+	sc      acktypes.ServiceController
+	kc      client.Client
+	log     logr.Logger
+	cfg     ackcfg.Config
+	cache   ackrtcache.Caches
+	metrics *ackmetrics.Metrics
 }
 
 // resourceReconciler is responsible for reconciling the state of a SINGLE KIND of
@@ -102,7 +100,6 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		return ackerr.NilResourceManagerFactory
 	}
 	r.kc = mgr.GetClient()
-	r.ackResourceCache = mgr.GetCache()
 	rd := r.rmf.ResourceDescriptor()
 	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
 	return ctrlrt.NewControllerManagedBy(
@@ -149,7 +146,7 @@ func (r *reconciler) SecretValueFromReference(
 		Name:      ref.Name,
 	}
 	var secret corev1.Secret
-	if err := r.ackResourceCache.Get(ctx, nsn, &secret); err != nil {
+	if err := r.kc.Get(ctx, nsn, &secret); err != nil {
 		return "", ackerr.SecretNotFound
 	}
 
@@ -183,7 +180,7 @@ func (r *reconciler) WriteToSecret(
 	nsn.Namespace = namespace
 
 	secret := &corev1.Secret{}
-	err := r.ackResourceCache.Get(ctx, nsn, secret)
+	err := r.kc.Get(ctx, nsn, secret)
 	if err != nil {
 		return ackerr.SecretNotFound
 	}
@@ -364,7 +361,7 @@ func (r *resourceReconciler) reconcile(
 			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) && IsReadOnly(res)) {
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
-			resolved, _, _ := rm.ResolveReferences(ctx, r.ackResourceCache, res)
+			resolved, _, _ := rm.ResolveReferences(ctx, r.kc, res)
 			return r.deleteResource(ctx, rm, resolved)
 		}
 
@@ -426,7 +423,7 @@ func (r *resourceReconciler) Sync(
 	}
 
 	rlog.Enter("rm.ResolveReferences")
-	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.ackResourceCache, desired)
+	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.kc, desired)
 	rlog.Exit("rm.ResolveReferences", err)
 	// TODO (michaelhtm): should we fail here for `adopt-or-create` adoption policy?
 	if err != nil && !needAdoption && !isReadOnly {
@@ -1103,7 +1100,7 @@ func (r *resourceReconciler) getAWSResource(
 	// making single read call for complete reconciler loop.
 	// See following issue for more details:
 	// https://github.com/aws-controllers-k8s/community/issues/894
-	if err := r.ackResourceCache.Get(ctx, req.NamespacedName, ro); err != nil {
+	if err := r.kc.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return r.rd.ResourceFromRuntimeObject(ro), nil
