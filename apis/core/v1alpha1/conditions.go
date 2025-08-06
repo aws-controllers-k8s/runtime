@@ -72,6 +72,11 @@ type Condition struct {
 	Type ConditionType `json:"type"`
 	// Status of the condition, one of True, False, Unknown.
 	Status corev1.ConditionStatus `json:"status"`
+	// observedGeneration represents the .metadata.generation that the condition was set based upon.
+	// For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration 
+	// is 9, the condition is out of date with respect to the current state of the instance.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// Last time the condition transitioned from one status to another.
 	// +optional
 	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`

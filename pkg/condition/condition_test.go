@@ -25,6 +25,7 @@ import (
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 
+	metav1mocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/apis/meta/v1"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
@@ -111,7 +112,10 @@ func TestConditionGetters(t *testing.T) {
 func TestConditionSetters(t *testing.T) {
 	r := &ackmocks.AWSResource{}
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
-
+	metaObject := &metav1mocks.Object{}
+	var observedGeneration int64 = 1
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	// Ensure that if there is no synced condition, it gets added...
 	r.On(
 		"ReplaceConditions",
@@ -132,6 +136,8 @@ func TestConditionSetters(t *testing.T) {
 
 	// Ensure that SetSynced doesn't overwrite any other conditions...
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("Conditions").Return(
 		[]*ackv1alpha1.Condition{
 			&ackv1alpha1.Condition{
@@ -157,6 +163,8 @@ func TestConditionSetters(t *testing.T) {
 
 	// Ensure that SetSynced overwrites an existing synced condition...
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("Conditions").Return(
 		[]*ackv1alpha1.Condition{
 			&ackv1alpha1.Condition{
@@ -183,6 +191,8 @@ func TestConditionSetters(t *testing.T) {
 
 	// Ensure that if there is no terminal condition, it gets added...
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
 		"ReplaceConditions",
@@ -204,6 +214,8 @@ func TestConditionSetters(t *testing.T) {
 	// ReferencesResolved condition
 	// SetReferencesResolved
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
 		"ReplaceConditions",
@@ -219,6 +231,8 @@ func TestConditionSetters(t *testing.T) {
 
 	//RemoveReferencesResolved
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("Conditions").Return(
 		[]*ackv1alpha1.Condition{
 			&ackv1alpha1.Condition{
@@ -246,6 +260,8 @@ func TestConditionSetters(t *testing.T) {
 	//WithReferencesResolvedCondition
 	// Without Error
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
@@ -263,6 +279,8 @@ func TestConditionSetters(t *testing.T) {
 	errorMsg := "error message"
 	err := errors.New(errorMsg)
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
@@ -280,6 +298,8 @@ func TestConditionSetters(t *testing.T) {
 	// With Terminal Error
 	terminalError := ackerr.ResourceReferenceTerminal
 	r = &ackmocks.AWSResource{}
+	r.On("MetaObject").Return(metaObject)
+	metaObject.On("GetGeneration").Return(observedGeneration)
 	r.On("DeepCopy").Return(r)
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
