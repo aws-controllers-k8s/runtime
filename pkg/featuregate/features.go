@@ -36,8 +36,8 @@ const (
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ResourceAdoption:  {Stage: Alpha, Enabled: false},
-	ReadOnlyResources: {Stage: Alpha, Enabled: false},
+	ResourceAdoption:  {Stage: Beta, Enabled: true},
+	ReadOnlyResources: {Stage: Beta, Enabled: true},
 	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
 	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
 }
