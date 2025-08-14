@@ -148,8 +148,11 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	targetDescriptor := rmf.ResourceDescriptor()
 	endpointURL := r.getEndpointURL(res)
 	gvk := targetDescriptor.GroupVersionKind()
+	partition := ""
 
-	awsconfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
+	// The config pivot to the roleARN will happen if it is not empty.
+	// in the NewResourceManager
+	awsconfig, partition, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk, partition)
 	if err != nil {
 		return err
 	}
@@ -157,7 +160,7 @@ func (r *adoptionReconciler) reconcile(ctx context.Context, req ctrlrt.Request) 
 	ackrtlog.InfoAdoptedResource(r.log, res, "starting adoption reconciliation")
 
 	rm, err := rmf.ManagerFor(
-		r.cfg, awsconfig, r.log, r.metrics, r, acctID, region, roleARN,
+		r.cfg, awsconfig, r.log, r.metrics, r, acctID, region, ackv1alpha1.AWSPartition(partition), roleARN,
 	)
 	if err != nil {
 		return err

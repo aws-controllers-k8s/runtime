@@ -16,6 +16,9 @@ package v1alpha1
 // AWSRegion represents an AWS regional identifier
 type AWSRegion string
 
+// AWSPartition represents an AWS partition identifier
+type AWSPartition string
+
 // AWSAccountID represents an AWS account identifier
 type AWSAccountID string
 
