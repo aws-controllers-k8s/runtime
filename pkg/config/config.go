@@ -45,6 +45,7 @@ const (
 	flagEnableAdoptedResourceReconciler = "enable-adopted-resource-reconciler"
 	flagEnableFieldExportReconciler     = "enable-field-export-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
+	flagEnableCARM                      = "enable-carm"
 	flagLeaderElectionNamespace         = "leader-election-namespace"
 	flagMetricAddr                      = "metrics-addr"
 	flagHealthzAddr                     = "healthz-addr"
@@ -89,6 +90,7 @@ type Config struct {
 	EnableLeaderElection            bool
 	EnableAdoptedResourceReconciler bool
 	EnableFieldExportReconciler     bool
+	EnableCARM                      bool
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
 	AccountID                       string
@@ -150,6 +152,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.EnableFieldExportReconciler, flagEnableFieldExportReconciler,
 		true,
 		"Enable the FieldExport reconciler.",
+	)
+	flag.BoolVar(
+		&cfg.EnableCARM, flagEnableCARM,
+		true,
+		"Enable Cross Account Resource Management.",
 	)
 	flag.StringVar(
 		// In the context of the controller-runtime library, if the LeaderElectionNamespace parametere is not

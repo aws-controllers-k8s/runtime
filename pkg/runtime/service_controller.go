@@ -227,7 +227,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	// The caches are only used for cross account resource management. If the
 	// controller is not configured to watch multiple namespaces, then we don't
 	// need to run the caches.
-	if len(namespaces) == 0 || len(namespaces) >= 2 {
+	if cfg.EnableCARM {
 		clusterConfig := mgr.GetConfig()
 		clientSet, err := kubernetes.NewForConfig(clusterConfig)
 		if err != nil {
