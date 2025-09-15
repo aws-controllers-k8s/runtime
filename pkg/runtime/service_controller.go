@@ -220,14 +220,9 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}},
 		cfg.FeatureGates,
 	)
-	// We want to run the caches if the length of the namespaces slice is
-	// either 0 (watching all namespaces) or greater than 1 (watching multiple
-	// namespaces).
-	//
-	// The caches are only used for cross account resource management. If the
-	// controller is not configured to watch multiple namespaces, then we don't
-	// need to run the caches.
-	if len(namespaces) == 0 || len(namespaces) >= 2 {
+	// The caches are only used for cross account resource management. We
+	// want to run them only when --enable-carm is set to true.
+	if cfg.EnableCARM {
 		clusterConfig := mgr.GetConfig()
 		clientSet, err := kubernetes.NewForConfig(clusterConfig)
 		if err != nil {

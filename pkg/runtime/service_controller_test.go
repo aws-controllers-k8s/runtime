@@ -177,8 +177,8 @@ func TestServiceController(t *testing.T) {
 
 	mgr := &fakeManager{}
 	cfg := ackcfg.Config{
-		// Disable caches, by setting a mono-namespace watch mode
-		WatchNamespace: "default",
+		// Disable caches, by setting EnableCARM to false
+		EnableCARM: false,
 	}
 	err := sc.BindControllerManager(mgr, cfg)
 	require.Nil(err)
