@@ -402,6 +402,7 @@ func (r *resourceReconciler) Sync(
 	r.resetConditions(ctx, desired)
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
+		r.EnsureReadyCondition(ctx, latest)
 	}()
 
 	isAdopted := IsAdopted(desired)
@@ -582,6 +583,41 @@ func (r *resourceReconciler) ensureConditions(
 		}
 		ackcondition.SetSynced(res, condStatus, &condMessage, &condReason)
 	}
+}
+
+// Examines the supplied resource's collection of Condition objects, ensures
+// that an Ready condition is present, and removes all other conditions.
+// This function expects that ACK.ResourceSynced condition is present.
+func (r *resourceReconciler) EnsureReadyCondition(ctx context.Context,
+	res acktypes.AWSResource) {
+	if ackcompare.IsNil(res) {
+		return
+	}
+
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.ensureConditions")
+	defer func() {
+		exit(err)
+	}()
+
+	synced := ackcondition.Synced(res)
+	var status corev1.ConditionStatus
+	var message, reason *string
+
+	if synced == nil {
+		// fallback behavior incase synced condition is not set
+		// this should not happen so long as we invoke ensureConditions before
+		status = corev1.ConditionUnknown
+	} else {
+		status = synced.Status
+		message = synced.Message
+		reason = synced.Reason
+	}
+
+	ackcondition.Clear(res)
+	ackcondition.SetReady(res, status, message, reason)
+
 }
 
 // createResource marks the CR as managed by ACK, calls one or more AWS APIs to

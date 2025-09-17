@@ -23,6 +23,9 @@ import (
 type ConditionType string
 
 const (
+	// Ready condition means "ready to use" plus a minimal set of subconditions for specific states.
+	// Ready condition reason field with carry important information such as Creating, Updating, PermissionDenied, InvalidConfiguration etc...
+	ConditionTypeReady ConditionType = "Ready"
 	// ConditionTypeAdopted indicates that the adopted resource custom resource
 	// has been successfully reconciled and the target has been created
 	ConditionTypeAdopted ConditionType = "ACK.Adopted"

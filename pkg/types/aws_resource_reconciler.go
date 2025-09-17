@@ -64,4 +64,8 @@ type AWSResourceReconciler interface {
 		latest AWSResource,
 		err error,
 	) (ctrlrt.Result, error)
+	// NOTE: This is really only here for dependency injection
+	// purposes in unit testing in order to simplify test setups.
+	EnsureReadyCondition(ctx context.Context,
+		res AWSResource)
 }

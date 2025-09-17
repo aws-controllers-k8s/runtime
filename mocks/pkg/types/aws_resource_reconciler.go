@@ -40,6 +40,11 @@ func (_m *AWSResourceReconciler) BindControllerManager(_a0 manager.Manager) erro
 	return r0
 }
 
+// EnsureReadyCondition provides a mock function with given fields: ctx, res
+func (_m *AWSResourceReconciler) EnsureReadyCondition(ctx context.Context, res types.AWSResource) {
+	_m.Called(ctx, res)
+}
+
 // GroupVersionKind provides a mock function with no fields
 func (_m *AWSResourceReconciler) GroupVersionKind() *schema.GroupVersionKind {
 	ret := _m.Called()
