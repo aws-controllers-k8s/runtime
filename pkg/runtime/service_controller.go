@@ -260,7 +260,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 	exporterInstalled := false
 	exporterLogger := c.log.WithName("exporter")
-
+	
 	if cfg.EnableFieldExportReconciler {
 		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
 		if err != nil {
@@ -335,9 +335,9 @@ func NewServiceController(
 ) acktypes.ServiceController {
 	return &serviceController{
 		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
-			VersionInfo:     versionInfo,
-			ServiceAlias:    svcAlias,
-			ServiceAPIGroup: svcAPIGroup,
+			VersionInfo:        versionInfo,
+			ServiceAlias:       svcAlias,
+			ServiceAPIGroup:    svcAPIGroup,
 		},
 		metrics: ackmetrics.NewMetrics(svcAlias),
 	}
