@@ -240,12 +240,10 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			synced := cache.WaitForCachesToSync(ctx)
 			c.log.Info("Waited for the caches to sync", "synced", synced)
 		}
-	}
+	} 
 
-	// Setup adoption reconciler if enabled
-	var adoptionInstalled bool
 	if cfg.EnableAdoptedResourceReconciler {
-		adoptionInstalled, err = c.GetAdoptedResourceInstalled(mgr)
+		adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
 		adoptionLogger := c.log.WithName("adoption")
 		if err != nil {
 			adoptionLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
@@ -260,11 +258,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}
 	}
 
-	// Setup field export reconciler if enabled
-	var exporterInstalled bool
+	exporterInstalled := false
+	exporterLogger := c.log.WithName("exporter")
+
 	if cfg.EnableFieldExportReconciler {
-		exporterInstalled, err = c.GetFieldExportInstalled(mgr)
-		exporterLogger := c.log.WithName("exporter")
+		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
 		if err != nil {
 			exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
 		} else if !exporterInstalled {
@@ -313,7 +311,6 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 		if cfg.EnableFieldExportReconciler && exporterInstalled {
 			rd := rmf.ResourceDescriptor()
-			exporterLogger := c.log.WithName("exporter")
 			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
 			if err := feRec.BindControllerManager(mgr); err != nil {
 				return err
