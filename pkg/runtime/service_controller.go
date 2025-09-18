@@ -221,8 +221,12 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		cfg.FeatureGates,
 	)
 	// The caches are only used for cross account resource management. We
-	// want to run them only when --enable-carm is set to true.
-	if cfg.EnableCARM {
+	// want to run them only when --enable-carm is set to true and 
+	// --watch-namespace is set to zero or more than one namespaces.
+	if cfg.EnableCARM && len(namespaces) == 1 {
+		c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
+	}
+	if cfg.EnableCARM && (len(namespaces) == 0 || len(namespaces) > 1) {
 		clusterConfig := mgr.GetConfig()
 		clientSet, err := kubernetes.NewForConfig(clusterConfig)
 		if err != nil {
