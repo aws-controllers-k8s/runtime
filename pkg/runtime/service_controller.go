@@ -221,28 +221,31 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		cfg.FeatureGates,
 	)
 	// The caches are only used for cross account resource management. We
-	// want to run them only when --enable-carm is set to true and 
+	// want to run them only when --enable-carm is set to true and
 	// --watch-namespace is set to zero or more than one namespaces.
-	if cfg.EnableCARM && len(namespaces) == 1 {
-		c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
-	}
-	if cfg.EnableCARM && (len(namespaces) == 0 || len(namespaces) > 1) {
-		clusterConfig := mgr.GetConfig()
-		clientSet, err := kubernetes.NewForConfig(clusterConfig)
-		if err != nil {
-			return err
+	if cfg.EnableCARM {
+		if len(namespaces) == 1 {
+			c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
+		} else {
+			clusterConfig := mgr.GetConfig()
+			clientSet, err := kubernetes.NewForConfig(clusterConfig)
+			if err != nil {
+				return err
+			}
+			// Run the caches. This will not block as the caches are run in
+			// separate goroutines.
+			cache.Run(clientSet)
+			// Wait for the caches to sync
+			ctx := context.TODO()
+			synced := cache.WaitForCachesToSync(ctx)
+			c.log.Info("Waited for the caches to sync", "synced", synced)
 		}
-		// Run the caches. This will not block as the caches are run in
-		// separate goroutines.
-		cache.Run(clientSet)
-		// Wait for the caches to sync
-		ctx := context.TODO()
-		synced := cache.WaitForCachesToSync(ctx)
-		c.log.Info("Waited for the caches to sync", "synced", synced)
 	}
 
+	// Setup adoption reconciler if enabled
+	var adoptionInstalled bool
 	if cfg.EnableAdoptedResourceReconciler {
-		adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
+		adoptionInstalled, err = c.GetAdoptedResourceInstalled(mgr)
 		adoptionLogger := c.log.WithName("adoption")
 		if err != nil {
 			adoptionLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
@@ -257,11 +260,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}
 	}
 
-	exporterInstalled := false
-	exporterLogger := c.log.WithName("exporter")
-	
+	// Setup field export reconciler if enabled
+	var exporterInstalled bool
 	if cfg.EnableFieldExportReconciler {
-		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
+		exporterInstalled, err = c.GetFieldExportInstalled(mgr)
+		exporterLogger := c.log.WithName("exporter")
 		if err != nil {
 			exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
 		} else if !exporterInstalled {
@@ -310,6 +313,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 		if cfg.EnableFieldExportReconciler && exporterInstalled {
 			rd := rmf.ResourceDescriptor()
+			exporterLogger := c.log.WithName("exporter")
 			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
 			if err := feRec.BindControllerManager(mgr); err != nil {
 				return err
@@ -334,9 +338,9 @@ func NewServiceController(
 ) acktypes.ServiceController {
 	return &serviceController{
 		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
-			VersionInfo:        versionInfo,
-			ServiceAlias:       svcAlias,
-			ServiceAPIGroup:    svcAPIGroup,
+			VersionInfo:     versionInfo,
+			ServiceAlias:    svcAlias,
+			ServiceAPIGroup: svcAPIGroup,
 		},
 		metrics: ackmetrics.NewMetrics(svcAlias),
 	}
