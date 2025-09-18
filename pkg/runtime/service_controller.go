@@ -260,7 +260,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 	exporterInstalled := false
 	exporterLogger := c.log.WithName("exporter")
-
+	
 	if cfg.EnableFieldExportReconciler {
 		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
 		if err != nil {
