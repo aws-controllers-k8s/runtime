@@ -240,7 +240,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			synced := cache.WaitForCachesToSync(ctx)
 			c.log.Info("Waited for the caches to sync", "synced", synced)
 		}
-	} 
+	}
 
 	if cfg.EnableAdoptedResourceReconciler {
 		adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
@@ -260,7 +260,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 	exporterInstalled := false
 	exporterLogger := c.log.WithName("exporter")
-	
+
 	if cfg.EnableFieldExportReconciler {
 		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
 		if err != nil {
