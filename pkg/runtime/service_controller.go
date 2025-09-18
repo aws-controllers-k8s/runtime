@@ -221,20 +221,25 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		cfg.FeatureGates,
 	)
 	// The caches are only used for cross account resource management. We
-	// want to run them only when --enable-carm is set to true.
+	// want to run them only when --enable-carm is set to true and
+	// --watch-namespace is set to zero or more than one namespaces.
 	if cfg.EnableCARM {
-		clusterConfig := mgr.GetConfig()
-		clientSet, err := kubernetes.NewForConfig(clusterConfig)
-		if err != nil {
-			return err
+		if len(namespaces) == 1 {
+			c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
+		} else {
+			clusterConfig := mgr.GetConfig()
+			clientSet, err := kubernetes.NewForConfig(clusterConfig)
+			if err != nil {
+				return err
+			}
+			// Run the caches. This will not block as the caches are run in
+			// separate goroutines.
+			cache.Run(clientSet)
+			// Wait for the caches to sync
+			ctx := context.TODO()
+			synced := cache.WaitForCachesToSync(ctx)
+			c.log.Info("Waited for the caches to sync", "synced", synced)
 		}
-		// Run the caches. This will not block as the caches are run in
-		// separate goroutines.
-		cache.Run(clientSet)
-		// Wait for the caches to sync
-		ctx := context.TODO()
-		synced := cache.WaitForCachesToSync(ctx)
-		c.log.Info("Waited for the caches to sync", "synced", synced)
 	}
 
 	if cfg.EnableAdoptedResourceReconciler {
