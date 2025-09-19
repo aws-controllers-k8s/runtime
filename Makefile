@@ -35,6 +35,9 @@ mocks: install-mockery ## Build mocks
 	@echo -n "building mocks for sigs.k8s.io/controller-runtime/pkg/client ... "
 	@bin/mockery --quiet --name="(Object|Client|Status|Reader|SubResourceWriter)" --case=underscore --output=mocks/controller-runtime/pkg/client --dir="$(CONTROLLER_RUNTIME_DIR)/pkg/client"
 	@echo "ok."
+	@echo -n "building mocks for sigs.k8s.io/controller-runtime/pkg/cache ... "
+	@bin/mockery --quiet --name="(Cache)" --case=underscore --output=mocks/controller-runtime/pkg/cache --dir="$(CONTROLLER_RUNTIME_DIR)/pkg/cache"
+	@echo "ok."
 
 help:           ## Show this help.
 	@grep -F -h "##" $(MAKEFILE_LIST) | grep -F -v grep | sed -e 's/\\$$//' \

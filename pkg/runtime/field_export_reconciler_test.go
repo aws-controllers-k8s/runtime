@@ -61,11 +61,11 @@ var (
 
 // Helper functions for tests
 
-func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+func mockFieldExportReconciler() (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client) {
 	return mockFieldExportReconcilerWithResourceDescriptor(mockResourceDescriptor())
 }
 
-func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client, *ctrlrtclientmock.Reader) {
+func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescriptor) (acktypes.FieldExportReconciler, *ctrlrtclientmock.Client) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
@@ -80,7 +80,6 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 	rmFactoryMap["services.k8s.aws"] = &rmfactory
 	sc.On("GetResourceManagerFactories").Return(rmFactoryMap)
 	kc := &ctrlrtclientmock.Client{}
-	apiReader := &ctrlrtclientmock.Reader{}
 	return ackrt.NewFieldExportReconcilerWithClient(
 		sc,
 		fakeLogger,
@@ -88,8 +87,7 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 		metrics,
 		ackrtcache.Caches{},
 		kc,
-		apiReader,
-	), kc, apiReader
+	), kc
 }
 
 func mockResourceDescriptor() *mocks.AWSResourceDescriptor {
@@ -112,12 +110,12 @@ func setupMockClientForFieldExport(kc *ctrlrtclientmock.Client, statusWriter *ct
 	kc.On("Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 }
 
-func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx context.Context, res *mocks.AWSResource) {
-	apiReader.On("Get", ctx, types.NamespacedName{
+func setupMockACKResourceCacheForFieldExport(kc *ctrlrtclientmock.Client, ctx context.Context, res *mocks.AWSResource) {
+	kc.On("Get", ctx, types.NamespacedName{
 		Namespace: FieldExportNamespace,
 		Name:      "fake-export-output",
 	}, mock.AnythingOfType("*v1.ConfigMap")).Return(nil)
-	apiReader.On("Get", ctx, types.NamespacedName{
+	kc.On("Get", ctx, types.NamespacedName{
 		Namespace: FieldExportNamespace,
 		Name:      "fake-export-output",
 	}, mock.AnythingOfType("*v1.Secret")).Return(nil)
@@ -267,7 +265,7 @@ func TestSync_FailureInParsingQuery(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, "bad-query")
@@ -277,7 +275,7 @@ func TestSync_FailureInParsingQuery(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -297,7 +295,7 @@ func TestSync_FailureInGetField(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportWithPath(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeConfigMap, ".doesnt.exist")
@@ -307,7 +305,7 @@ func TestSync_FailureInGetField(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -327,7 +325,7 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
@@ -339,7 +337,7 @@ func TestSync_FailureInPatchConfigMap(t *testing.T) {
 	kc.On("Patch", withoutCancelContextMatcher, mock.AnythingOfType("*v1.ConfigMap"), mock.AnythingOfType("*client.mergeFromPatch")).Return(errors.New("patching denied"))
 
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -359,7 +357,7 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
@@ -369,7 +367,7 @@ func TestSync_HappyCaseConfigMap(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -389,7 +387,7 @@ func TestSync_HappyCaseSecret(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportSecret(FieldExportNamespace, FieldExportName)
@@ -399,7 +397,7 @@ func TestSync_HappyCaseSecret(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -419,10 +417,10 @@ func TestFilterAllExports_HappyCase(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, _, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	ctx := context.TODO()
 	mockExports := mockFieldExportList()
-	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
+	kc.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
 		Run(func(args mock.Arguments) {
 			// Replace the field export list argument pointer with our mocks
 			list := args.Get(1).(*ackv1alpha1.FieldExportList)
@@ -452,11 +450,11 @@ func TestSync_HappyCaseResourceNoExports(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, _, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	ctx := context.TODO()
 	mockExports := mockFieldExportList()
 
-	apiReader.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
+	kc.On("List", ctx, mock.AnythingOfType("*v1alpha1.FieldExportList"), mock.Anything).Return(nil).
 		Run(func(args mock.Arguments) {
 			// Replace the field export list argument pointer with our mocks
 			list := args.Get(1).(*ackv1alpha1.FieldExportList)
@@ -486,7 +484,7 @@ func TestSync_SetKeyNameExplicitly(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "new-key")
@@ -496,7 +494,7 @@ func TestSync_SetKeyNameExplicitly(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -516,7 +514,7 @@ func TestSync_SetKeyNameExplicitlyWithEmptyString(t *testing.T) {
 	// Setup
 	require := require.New(t)
 	// Mock resource creation
-	r, kc, apiReader := mockFieldExportReconciler()
+	r, kc := mockFieldExportReconciler()
 	descriptor, res, _ := mockDescriptorAndAWSResource()
 	manager := mockManager()
 	fieldExport := fieldExportWithKey(FieldExportNamespace, FieldExportName, ackv1alpha1.FieldExportOutputTypeSecret, "")
@@ -526,7 +524,7 @@ func TestSync_SetKeyNameExplicitlyWithEmptyString(t *testing.T) {
 
 	//Mock behavior setup
 	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
-	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockACKResourceCacheForFieldExport(kc, ctx, res)
 	setupMockManager(manager, ctx, res)
 	setupMockDescriptor(descriptor, res)
 	setupMockUnstructuredConverter()
@@ -594,7 +592,7 @@ func assertPatchedSecretWithKey(expected bool, t *testing.T, ctx context.Context
 		return bytes.Equal(val, []byte("test-book-name"))
 	})
 	if expected {
-			kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
 		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}

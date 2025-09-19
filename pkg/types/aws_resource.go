@@ -50,5 +50,5 @@ type AWSResource interface {
 	DeepCopy() AWSResource
 	// PopulateResourceFromAnnotation will set the Spec or Status field that user
 	// provided from annotations
-	PopulateResourceFromAnnotation(fields map[string]string) error 
+	PopulateResourceFromAnnotation(fields map[string]string) error
 }

@@ -63,7 +63,6 @@ type fieldExportReconciler struct {
 // CRs
 func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
-	r.apiReader = mgr.GetAPIReader()
 
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
@@ -197,7 +196,7 @@ func (r *fieldExportReconciler) getFieldExport(
 	req ctrlrt.Request,
 ) (*ackv1alpha1.FieldExport, error) {
 	ro := &ackv1alpha1.FieldExport{}
-	// Here we use k8s APIReader to read the k8s object by making the
+	// Here we use k8s ackResourceCache to read the k8s object by making the
 	// direct call to k8s apiserver instead of using k8sClient.
 	// The reason is that k8sClient uses a cache and sometimes k8sClient can
 	// return stale copy of object.
@@ -205,7 +204,7 @@ func (r *fieldExportReconciler) getFieldExport(
 	// making single read call for complete reconciler loop.
 	// See following issue for more details:
 	// https://github.com/aws-controllers-k8s/community/issues/894
-	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
+	if err := r.kc.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
 	return ro, nil
@@ -219,7 +218,7 @@ func (r *fieldExportReconciler) getSourceResource(
 	name types.NamespacedName,
 ) (acktypes.AWSResource, error) {
 	obj := rd.EmptyRuntimeObject()
-	if err := r.apiReader.Get(ctx, name, obj); err != nil {
+	if err := r.kc.Get(ctx, name, obj); err != nil {
 		return nil, err
 	}
 	res := rd.ResourceFromRuntimeObject(obj)
@@ -311,7 +310,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	}
 
 	cm := &corev1.ConfigMap{}
-	err := r.apiReader.Get(ctx, nsn, cm)
+	err := r.kc.Get(ctx, nsn, cm)
 	if err != nil {
 		return errors.Wrap(err, ackerr.FieldExportMissingConfigMap.Error())
 	}
@@ -358,7 +357,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	}
 
 	secret := &corev1.Secret{}
-	err := r.apiReader.Get(ctx, nsn, secret)
+	err := r.kc.Get(ctx, nsn, secret)
 	if err != nil {
 		return errors.Wrap(err, ackerr.FieldExportMissingSecret.Error())
 	}
@@ -389,7 +388,7 @@ func (r *fieldExportReconciler) GetFieldExportsForResource(
 	opts := []client.ListOption{
 		client.InNamespace(nsn.Namespace),
 	}
-	if err := r.apiReader.List(ctx, listed, opts...); err != nil {
+	if err := r.kc.List(ctx, listed, opts...); err != nil {
 		return []ackv1alpha1.FieldExport{}, err
 	}
 
@@ -638,7 +637,6 @@ type fieldExportResourceReconciler struct {
 // CRs
 func (r *fieldExportResourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.kc = mgr.GetClient()
-	r.apiReader = mgr.GetAPIReader()
 
 	if ackcompare.IsNil(r.rd) {
 		return errors.New("cannot bind to AWS resource. reconciler marked for reconciling field exports")
@@ -705,7 +703,7 @@ func NewFieldExportReconcilerForFieldExport(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 ) acktypes.FieldExportReconciler {
-	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil)
+	return NewFieldExportReconcilerWithClient(sc, log, cfg, metrics, cache, nil)
 }
 
 // NewFieldExportReconcilerForAWSResource returns a new FieldExportReconciler object
@@ -717,7 +715,7 @@ func NewFieldExportReconcilerForAWSResource(
 	cache ackrtcache.Caches,
 	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
-	return NewFieldExportResourceReconcilerWithClient(sc, log, cfg, metrics, cache, nil, nil, rd)
+	return NewFieldExportResourceReconcilerWithClient(sc, log, cfg, metrics, cache, nil, rd)
 }
 
 // NewFieldExportReconcilerWithClient returns a new FieldExportReconciler object with
@@ -731,17 +729,15 @@ func NewFieldExportReconcilerWithClient(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 	kc client.Client,
-	apiReader client.Reader,
 ) acktypes.FieldExportReconciler {
 	return &fieldExportReconciler{
 		reconciler: reconciler{
-			sc:        sc,
-			log:       log.WithName("field-export-reconciler"),
-			cfg:       cfg,
-			metrics:   metrics,
-			cache:     cache,
-			kc:        kc,
-			apiReader: apiReader,
+			sc:      sc,
+			log:     log.WithName("field-export-reconciler"),
+			cfg:     cfg,
+			metrics: metrics,
+			cache:   cache,
+			kc:      kc,
 		},
 	}
 }
@@ -758,19 +754,17 @@ func NewFieldExportResourceReconcilerWithClient(
 	metrics *ackmetrics.Metrics,
 	cache ackrtcache.Caches,
 	kc client.Client,
-	apiReader client.Reader,
 	rd acktypes.AWSResourceDescriptor,
 ) acktypes.FieldExportReconciler {
 	return &fieldExportResourceReconciler{
 		fieldExportReconciler: fieldExportReconciler{
 			reconciler: reconciler{
-				sc:        sc,
-				log:       log.WithName("field-export-reconciler"),
-				cfg:       cfg,
-				metrics:   metrics,
-				cache:     cache,
-				kc:        kc,
-				apiReader: apiReader,
+				sc:      sc,
+				log:     log.WithName("field-export-reconciler"),
+				cfg:     cfg,
+				metrics: metrics,
+				cache:   cache,
+				kc:      kc,
 			},
 		},
 		rd: rd,

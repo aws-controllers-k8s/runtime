@@ -92,7 +92,7 @@ func TestIsForcedAdoption(t *testing.T) {
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdopted:        "true",
+			ackv1alpha1.AnnotationAdopted: "true",
 		},
 	})
 	require.False(ackrt.NeedAdoption(res))

@@ -191,9 +191,6 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -220,6 +217,9 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	// Use specific matcher for WithoutCancel context instead of mock.Anything
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 6)
@@ -255,9 +255,6 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -277,6 +274,9 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	// Use specific matcher for WithoutCancel context instead of mock.Anything
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -317,9 +317,6 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -332,6 +329,9 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
@@ -376,9 +376,6 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	).Return()
 	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -392,6 +389,9 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("FilterSystemTags", latest).Return()
 	rd.On("MarkAdopted", latest).Return()
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
@@ -443,9 +443,6 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -467,6 +464,9 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
@@ -505,7 +505,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-		latest.On(
+	latest.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return().Run(func(args mock.Arguments) {
@@ -541,9 +541,6 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", updated).Return(updated)
@@ -576,6 +573,9 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	rd.On("MarkAdopted", updated).Return().Once()
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
@@ -620,9 +620,6 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Times(2)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -645,6 +642,9 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -662,7 +662,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	// Only before the ReadOne call do they need to be resolved, and then the
 	// referenced values are cleared when calling patch so they aren't persisted to etcd.
 	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rm.AssertCalled(t, "Create", ctx, desired)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
@@ -703,9 +703,6 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Once()
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -726,6 +723,9 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -742,7 +742,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	// Make sure references are resolved once for the resource creation when
 	// the resource is already managed
 	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rm.AssertCalled(t, "Create", ctx, desired)
 	// No changes to metadata or spec so Patch on the object shouldn't be done
@@ -786,9 +786,6 @@ func TestReconcilerUpdate(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	).Once()
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -810,6 +807,9 @@ func TestReconcilerUpdate(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	).Times(2)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -826,7 +826,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	require.Nil(err)
 	// Assert that References are resolved only once during resource update
 	rm.AssertNumberOfCalls(t, "ResolveReferences", 1)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -873,9 +873,6 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -897,6 +894,9 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -911,7 +911,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -957,9 +957,6 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -975,6 +972,9 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(delta)
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -989,7 +989,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	// Update is not called because there is no delta
@@ -1036,9 +1036,6 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1054,6 +1051,9 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(delta)
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -1068,7 +1068,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	// Update is not called because there is no delta
@@ -1119,9 +1119,6 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1144,6 +1141,9 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
@@ -1158,7 +1158,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -1205,9 +1205,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1221,13 +1218,16 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -1285,9 +1285,6 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	)
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1301,13 +1298,16 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -1428,9 +1428,6 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, false, nil,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1452,6 +1449,9 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, false, nil,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -1460,7 +1460,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 	// Assert the error from late initialization
 	require.NotNil(err)
 	assert.Equal(requeueError, err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertCalled(t, "Delta", desired, latest)
 	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
@@ -1550,11 +1550,11 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	rm := &ackmocks.AWSResourceManager{}
 	rmf, rd := managerFactoryMocks(desired, latest, false)
 
-	r, _, scmd := reconcilerMocks(rmf)
+	r, kc, scmd := reconcilerMocks(rmf)
 	rd.On("IsManaged", desired).Return(false)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
 		desired, false, nil,
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
@@ -1567,7 +1567,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	_, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)
 	assert.Equal(ackerr.Terminal, err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertCalled(t, "ReadOne", ctx, desired)
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
@@ -1616,9 +1616,6 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(
-		desired, true, resolveReferenceError,
-	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1639,6 +1636,9 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(
+		desired, true, resolveReferenceError,
+	)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -1650,7 +1650,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertNotCalled(t, "ReadOne", ctx, desired)
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
@@ -1703,7 +1703,6 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	})
 
 	rm := &ackmocks.AWSResourceManager{}
-	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
@@ -1724,6 +1723,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("ResolveReferences", ctx, kc, desired).Return(desired, false, nil)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(
 		ensureControllerTagsError,
 	)
@@ -1737,7 +1737,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	// method,
 	_, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)
-	rm.AssertCalled(t, "ResolveReferences", ctx, nil, desired)
+	rm.AssertCalled(t, "ResolveReferences", ctx, kc, desired)
 	rm.AssertNotCalled(t, "ReadOne", ctx, desired)
 	rd.AssertNotCalled(t, "Delta", desired, latest)
 	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
