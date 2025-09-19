@@ -102,6 +102,7 @@ type Config struct {
 	ResourceTags                    []string
 	WatchNamespace                  string
 	WatchSelectors                  string
+	WatchSelectorsParsed            labels.Selector
 	EnableWebhookServer             bool
 	WebhookServerAddr               string
 	DeletionPolicy                  ackv1alpha1.DeletionPolicy
@@ -503,7 +504,8 @@ func (cfg *Config) ParseWatchSelectors() (labels.Selector, error) {
 	// If the WatchSelectors isn't set, return nil. controller-runtime will be in charge
 	// of defaulting to watching all objects.
 	if cfg.WatchSelectors == "" {
-		return nil, nil
+		cfg.WatchSelectorsParsed = labels.Everything()
+		return labels.Everything(), nil
 	}
 
 	labelSelector, err := labels.Parse(cfg.WatchSelectors)
@@ -511,6 +513,8 @@ func (cfg *Config) ParseWatchSelectors() (labels.Selector, error) {
 		return nil, fmt.Errorf("invalid value for flag '%s': %v", flagWatchSelectors, err)
 	}
 
+	// Set the parsed label selector in the Config struct for later use
+	cfg.WatchSelectorsParsed = labelSelector
 	return labelSelector, nil
 }
 
