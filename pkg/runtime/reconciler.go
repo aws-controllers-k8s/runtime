@@ -258,11 +258,49 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		if err != nil {
 			return r.handleCacheError(ctx, err, desired)
 		}
+		parsedARN, err := arn.Parse(string(roleARN))
+		if err != nil {
+			return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from %q configmap: %v", roleARN, ackrtcache.ACKRoleTeamMap, err)
+		}
+		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
 	}
 
 	region := r.getRegion(desired)
 	endpointURL := r.getEndpointURL(desired)
 	gvk := r.rd.GroupVersionKind()
+
+	// If the user has specified a region that is different from the
+	// region the resource currently exists in, we need to fail the
+	// reconciliation with a terminal error.
+	if r.regionDrifted(desired) {
+		msg := fmt.Sprintf(
+			"Resource already exists in region %s, but the desired state specifies region %s. ",
+			region, desired.MetaObject().GetAnnotations()[ackv1alpha1.AnnotationRegion],
+		)
+		rlog.Info(
+			msg,
+			"current_region", region,
+			"desired_region", desired.Identifiers().Region(),
+		)
+		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+	}
+
+	// Similarly, if the user has specified an account ID that is different
+	// from the account ID the resource currently exists in, we need to
+	// fail the reconciliation with a terminal error.
+	if desired.Identifiers() != nil && desired.Identifiers().OwnerAccountID() != nil && *desired.Identifiers().OwnerAccountID() != acctID {
+		msg := fmt.Sprintf(
+			"Resource already exists in account %s, but the role used for reconciliation is in account %s. ",
+			*desired.Identifiers().OwnerAccountID(), acctID,
+		)
+		rlog.Info(
+			msg,
+			"current_account", *desired.Identifiers().OwnerAccountID(),
+			"desired_account", acctID,
+		)
+		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+	}
+
 	// The config pivot to the roleARN will happen if it is not empty.
 	// in the NewResourceManager
 	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
@@ -284,6 +322,36 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	}
 	latest, err := r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
+}
+
+// regionDrifted return true if the desired resource region is different
+// from the target region. Target region can be derived from the two places
+// in the following order:
+// 1) the region annotation on the resource
+// 2) from the namespace annotation
+func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
+	if desired.Identifiers() == nil || desired.Identifiers().Region() == nil {
+		return false
+	}
+
+	currentRegion := desired.Identifiers().Region()
+
+	// look for region in CR metadata annotations
+	resAnnotations := desired.MetaObject().GetAnnotations()
+	region, ok := resAnnotations[ackv1alpha1.AnnotationRegion]
+	if ok {
+		return ackv1alpha1.AWSRegion(region) != *currentRegion
+	}
+
+	// look for default region in namespace metadata annotations
+	ns := desired.MetaObject().GetNamespace()
+	nsRegion, ok := r.cache.Namespaces.GetDefaultRegion(ns)
+	if ok {
+		return ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
+	}
+
+	// use controller configuration region
+	return ackv1alpha1.AWSRegion(r.cfg.Region) != *currentRegion
 }
 
 func (r *resourceReconciler) handleCacheError(
