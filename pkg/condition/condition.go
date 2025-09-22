@@ -36,6 +36,8 @@ var (
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
 	UnavailableIAMRoleMessage        = "IAM Role is not available"
+	TerminalReason                   = "Terminal error, the custom resource Spec needs to be updated before any further sync can occur"
+	RecoverableReason                = "Recoverable error, may be resolved without updating the custom resource spec"
 )
 
 // Synced returns the Condition in the resource's Conditions collection that is

@@ -1918,3 +1918,83 @@ func TestEnsureReadyCondition_EnsureReadyConditionExist(t *testing.T) {
 
 	r.EnsureReadyCondition(ctx, latest)
 }
+
+func TestEnsureReadyCondition_TerminalReason(t *testing.T) {
+
+	ctx := context.TODO()
+	desired, _, _ := resourceMocks()
+
+	latest, _, _ := resourceMocks()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionFalse}, {Type: ackv1alpha1.ConditionTypeTerminal, Status: corev1.ConditionTrue}}).Times(3)
+	latest.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return().Once()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeReady, cond.Type)
+		assert.Equal(t, corev1.ConditionFalse, cond.Status)
+		assert.Contains(t, *cond.Reason, ackcondition.TerminalReason)
+	})
+
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
+	r, _, _ := reconcilerMocks(rmf)
+
+	r.EnsureReadyCondition(ctx, latest)
+}
+
+func TestEnsureReadyCondition_RecoverableReason(t *testing.T) {
+
+	ctx := context.TODO()
+	desired, _, _ := resourceMocks()
+
+	latest, _, _ := resourceMocks()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionUnknown}, {Type: ackv1alpha1.ConditionTypeRecoverable, Status: corev1.ConditionTrue}}).Times(3)
+	latest.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return().Once()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeReady, cond.Type)
+		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+		assert.Contains(t, *cond.Reason, ackcondition.RecoverableReason)
+	})
+
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
+	r, _, _ := reconcilerMocks(rmf)
+
+	r.EnsureReadyCondition(ctx, latest)
+}
+
+func TestEnsureReadyCondition_SyncedUnknown(t *testing.T) {
+
+	ctx := context.TODO()
+	desired, _, _ := resourceMocks()
+
+	latest, _, _ := resourceMocks()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{}).Times(3)
+	latest.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return().Once()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeReady, cond.Type)
+		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+	})
+
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
+	r, _, _ := reconcilerMocks(rmf)
+
+	r.EnsureReadyCondition(ctx, latest)
+}

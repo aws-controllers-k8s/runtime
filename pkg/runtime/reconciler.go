@@ -615,6 +615,15 @@ func (r *resourceReconciler) EnsureReadyCondition(ctx context.Context,
 		reason = synced.Reason
 	}
 
+	terminal := ackcondition.Terminal(res)
+	recoverable := ackcondition.Recoverable(res)
+
+	if terminal != nil && terminal.Status == corev1.ConditionTrue {
+		reason = &ackcondition.TerminalReason
+	} else if recoverable != nil && recoverable.Status == corev1.ConditionTrue {
+		reason = &ackcondition.RecoverableReason
+	}
+
 	ackcondition.Clear(res)
 	ackcondition.SetReady(res, status, message, reason)
 
