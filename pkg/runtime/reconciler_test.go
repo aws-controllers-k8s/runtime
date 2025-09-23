@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"context"
@@ -29,7 +29,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -41,7 +40,6 @@ import (
 	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
-	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 
@@ -125,7 +123,7 @@ func reconcilerMocks(
 	sc.On("GetMetadata").Return(scmd)
 	kc := &ctrlrtclientmock.Client{}
 
-	return ackrt.NewReconcilerWithClient(
+	return NewReconcilerWithClient(
 		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
 	), kc, scmd
 }
@@ -150,7 +148,7 @@ func managerFactoryMocks(
 ) {
 	rd := &ackmocks.AWSResourceDescriptor{}
 	rd.On("GroupVersionKind").Return(
-		schema.GroupVersionKind{
+		k8srtschema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "fakeBook",
 		},
@@ -164,7 +162,7 @@ func managerFactoryMocks(
 	rmf.On("ResourceDescriptor").Return(rd)
 	rmf.On("RequeueOnSuccessSeconds").Return(0)
 
-	reg := ackrt.NewRegistry()
+	reg := NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 	return rmf, rd
 }
