@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"bytes"
@@ -35,7 +35,6 @@ import (
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
-	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 
@@ -81,7 +80,7 @@ func mockFieldExportReconcilerWithResourceDescriptor(rd *mocks.AWSResourceDescri
 	sc.On("GetResourceManagerFactories").Return(rmFactoryMap)
 	kc := &ctrlrtclientmock.Client{}
 	apiReader := &ctrlrtclientmock.Reader{}
-	return ackrt.NewFieldExportReconcilerWithClient(
+	return NewFieldExportReconcilerWithClient(
 		sc,
 		fakeLogger,
 		cfg,
@@ -253,7 +252,7 @@ func setupMockUnstructuredConverter() {
 		}, nil,
 	)
 	// Update the package variable
-	ackrt.UnstructuredConverter = conv
+	UnstructuredConverter = conv
 }
 
 func mockSourceResource() (

@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"testing"
@@ -21,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
-	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
@@ -35,11 +34,11 @@ func TestIsAdopted(t *testing.T) {
 			ackv1alpha1.AnnotationAdopted: "true",
 		},
 	})
-	require.True(ackrt.IsAdopted(res))
+	require.True(IsAdopted(res))
 
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{})
-	require.False(ackrt.IsAdopted(res))
+	require.False(IsAdopted(res))
 }
 
 func TestIsSynced(t *testing.T) {
@@ -52,7 +51,7 @@ func TestIsSynced(t *testing.T) {
 			Status: corev1.ConditionTrue,
 		},
 	})
-	require.True(ackrt.IsSynced(res))
+	require.True(IsSynced(res))
 
 	res = &mocks.AWSResource{}
 	res.On("Conditions").Return([]*ackv1alpha1.Condition{
@@ -65,7 +64,7 @@ func TestIsSynced(t *testing.T) {
 			Status: corev1.ConditionFalse,
 		},
 	})
-	require.False(ackrt.IsSynced(res))
+	require.False(IsSynced(res))
 }
 
 func TestIsForcedAdoption(t *testing.T) {
@@ -78,7 +77,7 @@ func TestIsForcedAdoption(t *testing.T) {
 			ackv1alpha1.AnnotationAdopted:        "false",
 		},
 	})
-	require.True(ackrt.NeedAdoption(res))
+	require.True(NeedAdoption(res))
 
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
@@ -87,15 +86,15 @@ func TestIsForcedAdoption(t *testing.T) {
 			ackv1alpha1.AnnotationAdopted:        "true",
 		},
 	})
-	require.False(ackrt.NeedAdoption(res))
+	require.False(NeedAdoption(res))
 
 	res = &mocks.AWSResource{}
 	res.On("MetaObject").Return(&metav1.ObjectMeta{
 		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdopted:        "true",
+			ackv1alpha1.AnnotationAdopted: "true",
 		},
 	})
-	require.False(ackrt.NeedAdoption(res))
+	require.False(NeedAdoption(res))
 }
 
 func TestExtractAdoptionFields(t *testing.T) {
@@ -115,7 +114,7 @@ func TestExtractAdoptionFields(t *testing.T) {
 		"clusterName": "my-cluster",
 		"name":        "ng-1234",
 	}
-	actual, err := ackrt.ExtractAdoptionFields(res)
+	actual, err := ExtractAdoptionFields(res)
 	require.NoError(err)
 	require.Equal(expected, actual)
 }
