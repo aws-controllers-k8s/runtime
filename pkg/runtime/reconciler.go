@@ -44,6 +44,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	"github.com/aws-controllers-k8s/runtime/pkg/runtime/iamroleselector"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
@@ -67,7 +68,8 @@ type reconciler struct {
 	apiReader client.Reader
 	log       logr.Logger
 	cfg       ackcfg.Config
-	cache     ackrtcache.Caches
+	carmCache ackrtcache.Caches
+	irsCache  *iamroleselector.Cache
 	metrics   *ackmetrics.Metrics
 }
 
@@ -251,7 +253,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from %q configmap: %v", roleARN, ackrtcache.ACKRoleTeamMap, err)
 		}
 		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
-	} else if needCARMLookup {
+	} else if needCARMLookup && r.cfg.EnableCARM {
 		// The user is specifying a namespace that is annotated with an owner account ID.
 		// Requeue if the corresponding roleARN is not available in the Accounts configmap.
 		roleARN, err = r.getRoleARN(string(acctID), ackrtcache.ACKRoleAccountMap)
@@ -263,6 +265,34 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from %q configmap: %v", roleARN, ackrtcache.ACKRoleTeamMap, err)
 		}
 		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
+	}
+
+	if r.cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) {
+		// If the IAMRoleSelector feature gate is enabled, we need to check if there
+		// are any matching IAMRoleSelectors for this resource. If there are, we
+		// override the roleARN from CARM (if any) with the one from the selector.
+		selectors, err := r.irsCache.GetMatchingSelectors(
+			req.Namespace,
+			nil,
+			r.rd.GroupVersionKind(),
+		)
+		if err != nil {
+			return ctrlrt.Result{}, fmt.Errorf("checking for matching IAMRoleSelectors: %w", err)
+		}
+		if len(selectors) > 1 {
+			// We do not support multiple matching selectors for now.
+			return ctrlrt.Result{}, fmt.Errorf("multiple (%d) matching IAMRoleSelectors found", len(selectors))
+		}
+		if len(selectors) == 1 {
+			rlog.WithValues("iam_role_selector", selectors[0].Name)
+			roleARN = ackv1alpha1.AWSResourceName(selectors[0].Spec.ARN)
+			rlog.Info("using role ARN from IAMRoleSelector")
+			parsedARN, err := arn.Parse(string(roleARN))
+			if err != nil {
+				return ctrlrt.Result{}, fmt.Errorf("parsing role ARN %q from IAMRoleSelector %q: %v", roleARN, selectors[0].Name, err)
+			}
+			acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
+		}
 	}
 
 	region := r.getRegion(desired)
@@ -1311,7 +1341,7 @@ func (r *resourceReconciler) getOwnerAccountID(
 ) (ackv1alpha1.AWSAccountID, bool) {
 	// look for owner account id in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
-	accID, ok := r.cache.Namespaces.GetOwnerAccountID(namespace)
+	accID, ok := r.carmCache.Namespaces.GetOwnerAccountID(namespace)
 	if ok {
 		return ackv1alpha1.AWSAccountID(accID), true
 	}
@@ -1333,7 +1363,7 @@ func (r *resourceReconciler) getTeamID(
 ) ackv1alpha1.TeamID {
 	// look for team ID in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
-	namespacedTeamID, ok := r.cache.Namespaces.GetTeamID(namespace)
+	namespacedTeamID, ok := r.carmCache.Namespaces.GetTeamID(namespace)
 	if ok {
 		return ackv1alpha1.TeamID(namespacedTeamID)
 	}
@@ -1346,9 +1376,9 @@ func (r *resourceReconciler) getRoleARN(id string, cacheName string) (ackv1alpha
 	var cache *ackrtcache.CARMMap
 	switch cacheName {
 	case ackrtcache.ACKRoleTeamMap:
-		cache = r.cache.Teams
+		cache = r.carmCache.Teams
 	case ackrtcache.ACKRoleAccountMap:
-		cache = r.cache.Accounts
+		cache = r.carmCache.Accounts
 	default:
 		return "", fmt.Errorf("invalid cache name: %s", cacheName)
 	}
@@ -1395,7 +1425,7 @@ func (r *resourceReconciler) getRegion(
 
 	// look for default region in namespace metadata annotations
 	ns := res.MetaObject().GetNamespace()
-	defaultRegion, ok := r.cache.Namespaces.GetDefaultRegion(ns)
+	defaultRegion, ok := r.carmCache.Namespaces.GetDefaultRegion(ns)
 	if ok {
 		return ackv1alpha1.AWSRegion(defaultRegion)
 	}
@@ -1424,7 +1454,7 @@ func (r *resourceReconciler) getDeletionPolicy(
 
 	// look for default deletion policy in namespace metadata annotations
 	ns := res.MetaObject().GetNamespace()
-	deletionPolicy, ok = r.cache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
+	deletionPolicy, ok = r.carmCache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
 	if ok {
 		return ackv1alpha1.DeletionPolicy(deletionPolicy)
 	}
@@ -1443,7 +1473,7 @@ func (r *resourceReconciler) getEndpointURL(
 
 	// look for endpoint url in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
-	endpointURL, ok := r.cache.Namespaces.GetEndpointURL(namespace)
+	endpointURL, ok := r.carmCache.Namespaces.GetEndpointURL(namespace)
 	if ok {
 		return endpointURL
 	}
@@ -1509,9 +1539,10 @@ func NewReconciler(
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
-	cache ackrtcache.Caches,
+	carmCache ackrtcache.Caches,
+	irsCache *iamroleselector.Cache,
 ) acktypes.AWSResourceReconciler {
-	return NewReconcilerWithClient(sc, nil, rmf, log, cfg, metrics, cache)
+	return NewReconcilerWithClient(sc, nil, rmf, log, cfg, metrics, carmCache, irsCache)
 }
 
 // NewReconcilerWithClient returns a new reconciler object
@@ -1523,7 +1554,8 @@ func NewReconcilerWithClient(
 	log logr.Logger,
 	cfg ackcfg.Config,
 	metrics *ackmetrics.Metrics,
-	cache ackrtcache.Caches,
+	carmCache ackrtcache.Caches,
+	irsCache *iamroleselector.Cache,
 ) acktypes.AWSResourceReconciler {
 	rtLog := log.WithName("ackrt")
 	resyncPeriod := getResyncPeriod(rmf, cfg)
@@ -1533,12 +1565,13 @@ func NewReconcilerWithClient(
 	)
 	return &resourceReconciler{
 		reconciler: reconciler{
-			sc:      sc,
-			kc:      kc,
-			log:     rtLog,
-			cfg:     cfg,
-			metrics: metrics,
-			cache:   cache,
+			sc:        sc,
+			kc:        kc,
+			log:       rtLog,
+			cfg:       cfg,
+			metrics:   metrics,
+			carmCache: carmCache,
+			irsCache:  irsCache,
 		},
 		rmf:          rmf,
 		rd:           rmf.ResourceDescriptor(),

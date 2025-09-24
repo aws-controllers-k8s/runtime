@@ -373,6 +373,11 @@ func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 		return fmt.Errorf("error overriding feature gates: %v", err)
 	}
 
+	// IAMRolerSelector cannotbe used with enable-carm=true
+	if cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) && cfg.EnableCARM {
+		return fmt.Errorf("cannot enable feature gate '%s' when flag '%s' is set to true", featuregate.IAMRoleSelector, flagEnableCARM)
+	}
+
 	return nil
 }
 

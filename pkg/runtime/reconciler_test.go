@@ -49,6 +49,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	"github.com/aws-controllers-k8s/runtime/pkg/runtime/iamroleselector"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -128,7 +129,7 @@ func reconcilerMocks(
 	kc := &ctrlrtclientmock.Client{}
 
 	return NewReconcilerWithClient(
-		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
+		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{}, &iamroleselector.Cache{},
 	), kc, scmd
 }
 

@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	kubernetes "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	ctrlrt "sigs.k8s.io/controller-runtime"
@@ -31,8 +32,10 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	"github.com/aws-controllers-k8s/runtime/pkg/runtime/iamroleselector"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 	ackutil "github.com/aws-controllers-k8s/runtime/pkg/util"
 )
@@ -197,7 +200,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		return fmt.Errorf("unable to get watch namespaces: %v", err)
 	}
 
-	cache := ackrtcache.New(c.log, ackrtcache.Config{
+	carmCache := ackrtcache.New(c.log, ackrtcache.Config{
 		WatchScope: namespaces,
 		// Default to ignoring the kube-system, kube-public, and
 		// kube-node-lease namespaces.
@@ -224,10 +227,10 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			}
 			// Run the caches. This will not block as the caches are run in
 			// separate goroutines.
-			cache.Run(clientSet)
+			carmCache.Run(clientSet)
 			// Wait for the caches to sync
 			ctx := context.TODO()
-			synced := cache.WaitForCachesToSync(ctx)
+			synced := carmCache.WaitForCachesToSync(ctx)
 			c.log.Info("Waited for the caches to sync", "synced", synced)
 		}
 	}
@@ -242,7 +245,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		} else if !exporterInstalled {
 			exporterLogger.Info("FieldExport CRD not installed. The field export reconciler will not be started")
 		} else {
-			rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, cache)
+			rec := NewFieldExportReconcilerForFieldExport(c, exporterLogger, cfg, c.metrics, carmCache)
 			if err := rec.BindControllerManager(mgr); err != nil {
 				return err
 			}
@@ -259,6 +262,19 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	if len(reconcileResources) == 0 {
 		c.log.Info("No resources? Did they all go on vacation? Defaulting to reconciling all resources.")
 	}
+
+	irsCache := iamroleselector.NewCache(c.log)
+	// only run the IAMRoleSelector cache if the feature gate is enabled
+	if cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) {
+		// init dynamic client
+		clusterConfig := mgr.GetConfig()
+		clientSet, err := dynamic.NewForConfig(clusterConfig)
+		if err != nil {
+			return err
+		}
+		irsCache.Run(clientSet, context.TODO().Done())
+	}
+
 	// Filter the resource manager factories
 	filteredRMFs := c.rmFactories
 	if len(reconcileResources) > 0 {
@@ -277,7 +293,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	}
 
 	for _, rmf := range filteredRMFs {
-		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, cache)
+		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, carmCache, irsCache)
 		if err := rec.BindControllerManager(mgr); err != nil {
 			return err
 		}
@@ -285,7 +301,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 
 		if cfg.EnableFieldExportReconciler && exporterInstalled {
 			rd := rmf.ResourceDescriptor()
-			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, cache, rd)
+			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, carmCache, rd)
 			if err := feRec.BindControllerManager(mgr); err != nil {
 				return err
 			}
