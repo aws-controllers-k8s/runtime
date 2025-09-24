@@ -466,7 +466,7 @@ func (r *adoptionReconciler) getOwnerAccountID(
 ) (ackv1alpha1.AWSAccountID, bool) {
 	// look for owner account id in the namespace annotations
 	namespace := res.GetNamespace()
-	accID, ok := r.cache.Namespaces.GetOwnerAccountID(namespace)
+	accID, ok := r.carmCache.Namespaces.GetOwnerAccountID(namespace)
 	if ok {
 		return ackv1alpha1.AWSAccountID(accID), true
 	}
@@ -481,7 +481,7 @@ func (r *adoptionReconciler) getTeamID(
 ) ackv1alpha1.TeamID {
 	// look for team id in the namespace annotations
 	namespace := res.GetNamespace()
-	teamID, ok := r.cache.Namespaces.GetTeamID(namespace)
+	teamID, ok := r.carmCache.Namespaces.GetTeamID(namespace)
 	if ok {
 		return ackv1alpha1.TeamID(teamID)
 	}
@@ -497,7 +497,7 @@ func (r *adoptionReconciler) getEndpointURL(
 ) string {
 	// look for endpoint url in the namespace annotations
 	namespace := res.GetNamespace()
-	endpointURL, ok := r.cache.Namespaces.GetEndpointURL(namespace)
+	endpointURL, ok := r.carmCache.Namespaces.GetEndpointURL(namespace)
 	if ok {
 		return endpointURL
 	}
@@ -512,9 +512,9 @@ func (r *adoptionReconciler) getRoleARN(id string, cacheName string) (ackv1alpha
 	var cache *ackrtcache.CARMMap
 	switch cacheName {
 	case ackrtcache.ACKRoleTeamMap:
-		cache = r.cache.Teams
+		cache = r.carmCache.Teams
 	case ackrtcache.ACKRoleAccountMap:
-		cache = r.cache.Accounts
+		cache = r.carmCache.Accounts
 	default:
 		return "", fmt.Errorf("invalid cache name: %s", cacheName)
 	}
@@ -552,7 +552,7 @@ func (r *adoptionReconciler) getRegion(
 
 	// look for default region in namespace metadata annotations
 	ns := res.GetNamespace()
-	defaultRegion, ok := r.cache.Namespaces.GetDefaultRegion(ns)
+	defaultRegion, ok := r.carmCache.Namespaces.GetDefaultRegion(ns)
 	if ok {
 		return ackv1alpha1.AWSRegion(defaultRegion)
 	}
@@ -623,7 +623,7 @@ func NewAdoptionReconcilerWithClient(
 			log:       log.WithName("adopted-reconciler"),
 			cfg:       cfg,
 			metrics:   metrics,
-			cache:     cache,
+			carmCache: cache,
 			kc:        kc,
 			apiReader: apiReader,
 		},

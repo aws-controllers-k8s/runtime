@@ -31,6 +31,9 @@ const (
 
 	// ServiceLevelCARM is a feature gate for enabling CARM for service-level resources.
 	ServiceLevelCARM = "ServiceLevelCARM"
+
+	// IAMRoleSelector is a feature gate for enabling the IAMRoleSelector feature and reconciler.
+	IAMRoleSelector = "IAMRoleSelector"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
@@ -40,6 +43,7 @@ var defaultACKFeatureGates = FeatureGates{
 	ReadOnlyResources: {Stage: Beta, Enabled: true},
 	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
 	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
+	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

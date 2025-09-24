@@ -43,6 +43,7 @@ import (
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	"github.com/aws-controllers-k8s/runtime/pkg/runtime/iamroleselector"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 
 	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
@@ -126,7 +127,7 @@ func reconcilerMocks(
 	kc := &ctrlrtclientmock.Client{}
 
 	return ackrt.NewReconcilerWithClient(
-		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
+		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{}, &iamroleselector.Cache{},
 	), kc, scmd
 }
 
@@ -505,7 +506,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	latest, latestRTObj, latestMetaObj := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-		latest.On(
+	latest.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return().Run(func(args mock.Arguments) {
