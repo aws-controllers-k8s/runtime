@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"context"
@@ -33,7 +33,6 @@ import (
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
-	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
@@ -61,7 +60,7 @@ func mockAdoptionReconciler() (acktypes.AdoptedResourceReconciler, *ctrlrtclient
 	sc.On("GetResourceManagerFactories").Return(rmFactoryMap)
 	kc := &ctrlrtclientmock.Client{}
 	apiReader := &ctrlrtclientmock.Reader{}
-	return ackrt.NewAdoptionReconcilerWithClient(
+	return NewAdoptionReconcilerWithClient(
 		sc,
 		fakeLogger,
 		cfg,

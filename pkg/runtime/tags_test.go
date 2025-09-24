@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"fmt"
@@ -21,7 +21,6 @@ import (
 
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	"github.com/aws-controllers-k8s/runtime/pkg/config"
-	"github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
@@ -42,27 +41,27 @@ func TestGetDefaultTags(t *testing.T) {
 	}
 
 	// nil config
-	assert.Empty(runtime.GetDefaultTags(nil, &obj, md))
+	assert.Empty(GetDefaultTags(nil, &obj, md))
 
 	// nil object
-	assert.Empty(runtime.GetDefaultTags(&cfg, nil, md))
+	assert.Empty(GetDefaultTags(&cfg, nil, md))
 
 	// no resource tags
-	assert.Empty(runtime.GetDefaultTags(&cfg, &obj, md))
+	assert.Empty(GetDefaultTags(&cfg, &obj, md))
 
 	// ill formed tags
 	cfg.ResourceTags = []string{"foobar"}
-	expandedTags := runtime.GetDefaultTags(&cfg, &obj, md)
+	expandedTags := GetDefaultTags(&cfg, &obj, md)
 	assert.Empty(expandedTags)
 
 	// ill formed tags
 	cfg.ResourceTags = []string{"foo=bar=baz"}
-	expandedTags = runtime.GetDefaultTags(&cfg, &obj, md)
+	expandedTags = GetDefaultTags(&cfg, &obj, md)
 	assert.Empty(expandedTags)
 
 	// tags without any ack resource tag format
 	cfg.ResourceTags = []string{"foo=bar"}
-	expandedTags = runtime.GetDefaultTags(&cfg, &obj, md)
+	expandedTags = GetDefaultTags(&cfg, &obj, md)
 	assert.Equal(1, len(expandedTags))
 	assert.Equal("bar", expandedTags["foo"])
 
@@ -80,7 +79,7 @@ func TestGetDefaultTags(t *testing.T) {
 			acktags.ResourceNameTagFormat,
 		),
 	}
-	expandedTags = runtime.GetDefaultTags(&cfg, &obj, md)
+	expandedTags = GetDefaultTags(&cfg, &obj, md)
 	assert.Equal(4, len(expandedTags))
 	assert.Equal("bar", expandedTags["foo"])
 	assert.Equal("s3-v0.0.10", expandedTags["services.k8s.aws/controller-version"])
