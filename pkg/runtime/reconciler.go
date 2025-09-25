@@ -262,12 +262,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	region := r.getRegion(desired)
 	endpointURL := r.getEndpointURL(desired)
 	gvk := r.rd.GroupVersionKind()
-	// The config pivot to the roleARN will happen if it is not empty.
-	// in the NewResourceManager
-	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
-	if err != nil {
-		return ctrlrt.Result{}, err
-	}
+	partition := r.getPartition(desired)
 
 	rlog.WithValues(
 		"account", acctID,
@@ -275,12 +270,22 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		"region", region,
 	)
 
-	rm, err := r.rmf.ManagerFor(
-		r.cfg, clientConfig, r.log, r.metrics, r, acctID, region, roleARN,
-	)
-	if err != nil {
-		return ctrlrt.Result{}, err
+	rm := r.rmf.GetCachedManager(acctID, region, roleARN)
+	if rm == nil {
+		// The config pivot to the roleARN will happen if it is not empty.
+		// in the NewResourceManager
+		clientConfig, partition, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk, partition)
+		if err != nil {
+			return ctrlrt.Result{}, err
+		}
+		rm, err = r.rmf.ManagerFor(
+			r.cfg, clientConfig, r.log, r.metrics, r, acctID, region, ackv1alpha1.AWSPartition(partition), roleARN,
+		)
+		if err != nil {
+			return ctrlrt.Result{}, err
+		}
 	}
+
 	latest, err := r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
@@ -1311,6 +1316,20 @@ func (r *resourceReconciler) getRegion(
 
 	// use controller configuration region
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
+}
+
+// getPartition attempts getting the partition from the resource status
+// if it exists
+func (r *resourceReconciler) getPartition(
+	res acktypes.AWSResource,
+) string {
+	// first try to get the region from the status.resourceMetadata
+	metadataRegion := res.Identifiers().Partition()
+	if metadataRegion != nil {
+		return string(*metadataRegion)
+	}
+
+	return ""
 }
 
 // getDeletionPolicy returns the resource's deletion policy based on the default

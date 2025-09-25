@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -47,7 +48,8 @@ func (c *serviceController) NewAWSConfig(
 	endpointURL *string,
 	roleARN ackv1alpha1.AWSResourceName,
 	groupVersionKind schema.GroupVersionKind,
-) (aws.Config, error) {
+	partition string,
+) (aws.Config, string, error) {
 
 	val := formatUserAgent(
 		appName,
@@ -69,19 +71,25 @@ func (c *serviceController) NewAWSConfig(
 		config.WithHTTPClient(client),
 	)
 	if err != nil {
-		return awsCfg, err
+		return awsCfg, partition, err
 	}
 
 	if endpointURL != nil && *endpointURL != "" {
 		awsCfg.BaseEndpoint = endpointURL
 	}
 
+	stsclient := sts.NewFromConfig(awsCfg)
 	if roleARN != "" {
-		client := sts.NewFromConfig(awsCfg)
-		creds := stscreds.NewAssumeRoleProvider(client, string(roleARN))
+		creds := stscreds.NewAssumeRoleProvider(stsclient, string(roleARN))
 		awsCfg.Credentials = aws.NewCredentialsCache(creds)
 	}
-	return awsCfg, nil
+	if partition == "" {
+		partition, err = c.getPartition(ctx, stsclient)
+		if err != nil {
+			return awsCfg, partition, nil
+		}
+	}
+	return awsCfg, partition, nil
 }
 
 func formatUserAgent(name, version string, extra ...string) string {
@@ -90,4 +98,19 @@ func formatUserAgent(name, version string, extra ...string) string {
 		ua += fmt.Sprintf(" (%s)", strings.Join(extra, "; "))
 	}
 	return ua
+}
+
+// getPartition gets the partition of the caller identity
+func (c *serviceController) getPartition(ctx context.Context, client *sts.Client) (string, error) {
+	identity, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	// what od we do if ARN is nil?
+	if err != nil || identity.Arn == nil {
+		return "", err
+	}
+	clientArn, err := arn.Parse(*identity.Arn)
+	if err != nil {
+		return "", err
+	}
+
+	return clientArn.Partition, nil
 }

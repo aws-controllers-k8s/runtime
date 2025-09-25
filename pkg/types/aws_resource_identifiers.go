@@ -29,4 +29,6 @@ type AWSResourceIdentifiers interface {
 	ARN() *ackv1alpha1.AWSResourceName
 	// Region is the AWS region in which the resource exists or will exist.
 	Region() *ackv1alpha1.AWSRegion
+	// Partition is the AWS partition in which the resource exists or will exist.
+	Partition() *ackv1alpha1.AWSPartition
 }

@@ -32,4 +32,6 @@ type ResourceMetadata struct {
 	OwnerAccountID *AWSAccountID `json:"ownerAccountID"`
 	// Region is the AWS region in which the resource exists or will exist.
 	Region *AWSRegion `json:"region"`
+	// Partition is the AWS partition in which the resource exists or will exist
+	Partition *AWSPartition `json:"partition"`
 }

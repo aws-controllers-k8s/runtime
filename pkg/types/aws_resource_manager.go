@@ -112,8 +112,16 @@ type AWSResourceManagerFactory interface {
 		Reconciler,
 		ackv1alpha1.AWSAccountID,
 		ackv1alpha1.AWSRegion,
+		ackv1alpha1.AWSPartition,
 		ackv1alpha1.AWSResourceName,
 	) (AWSResourceManager, error)
+	// GetCachedManager returns an AWSResourceManager if it has previously been created
+	// and cahced, or returns nil if not
+	GetCachedManager(
+		ackv1alpha1.AWSAccountID,
+		ackv1alpha1.AWSRegion,
+		ackv1alpha1.AWSResourceName,
+	) AWSResourceManager
 	// IsAdoptable returns true if the resource is able to be adopted
 	IsAdoptable() bool
 	// RequeueOnSuccessSeconds returns true if the resource should be requeued after specified seconds
