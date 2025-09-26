@@ -892,7 +892,7 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	lorig := latestCleaned.DeepCopy()
 	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
 
-	err = patchWithoutCancel(ctx, r.kc, latestCleaned.RuntimeObject(), patch)
+	err = patchMetadataAndSpec(ctx, r.kc, r.apiReader, latestCleaned.RuntimeObject(), patch, rlog)
 
 	if err == nil {
 		if rlog.IsDebugEnabled() {
@@ -930,7 +930,7 @@ func (r *resourceReconciler) patchResourceStatus(
 	lobj := latest.DeepCopy().RuntimeObject()
 	patch := client.MergeFrom(dobj)
 
-	err = patchStatusWithoutCancel(ctx, r.kc, lobj, patch)
+	err = patchStatus(ctx, r.kc, r.apiReader, lobj, patch, rlog)
 
 	if err == nil {
 		if rlog.IsDebugEnabled() {

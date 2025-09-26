@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -41,6 +42,10 @@ const (
 	AdoptionPolicy_Adopt AdoptionPolicy = "adopt"
 	// AdoptPolicy is ...
 	AdoptionPolicy_AdoptOrCreate AdoptionPolicy = "adopt-or-create"
+
+	// Operation types for patch operations
+	OperationType_MetadataSpec = "metadata+spec"
+	OperationType_Status       = "status"
 )
 
 // IsAdopted returns true if the supplied AWSResource was created with a
@@ -144,34 +149,104 @@ func getAdoptionFields(res acktypes.AWSResource) string {
 	return ""
 }
 
-// patchWithoutCancel performs a patch operation using context.WithoutCancel to prevent
+// patchObject performs a patch operation using context.WithoutCancel to prevent
 // patch operations from being cancelled while preserving context values.
+// It automatically determines whether to patch spec/metadata or status based on operationType.
 //
 // NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
 // no additional timeout needed to avoid interfering with normal Kubernetes client
 // timeout/retry strategy.
-func patchWithoutCancel(
+func patchObject(
 	ctx context.Context,
 	kc client.Client,
 	obj client.Object,
 	patch client.Patch,
+	operationType string,
 ) error {
 	patchCtx := context.WithoutCancel(ctx)
+	if operationType == OperationType_Status {
+		return kc.Status().Patch(patchCtx, obj, patch)
+	}
 	return kc.Patch(patchCtx, obj, patch)
 }
 
-// patchStatusWithoutCancel performs a status patch operation using context.WithoutCancel
-// to prevent patch operations from being cancelled while preserving context values.
+// patchWithRetry performs a patch operation with retry on conflicts using client-go's standard retry mechanism.
+// This helps handle race conditions where multiple controllers try to update the same resource.
 //
-// NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
-// no additional timeout needed to avoid interfering with normal Kubernetes client
-// timeout/retry strategy.
-func patchStatusWithoutCancel(
+// When a conflict occurs (HTTP 409), it refreshes the resource version and retries the patch operation.
+func patchWithRetry(
 	ctx context.Context,
 	kc client.Client,
+	apiReader client.Reader,
 	obj client.Object,
 	patch client.Patch,
+	logger acktypes.Logger,
+	operationType string,
 ) error {
-	patchCtx := context.WithoutCancel(ctx)
-	return kc.Status().Patch(patchCtx, obj, patch)
+	attempt := 0
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		attempt++
+
+		// For retry attempts (after first attempt), refresh the object from the API server
+		if attempt > 1 {
+			logger.Debug(fmt.Sprintf("%s patch conflict detected, refreshing resource version", operationType),
+				"attempt", attempt,
+				"object", client.ObjectKeyFromObject(obj))
+
+			key := client.ObjectKeyFromObject(obj)
+			freshObject := obj.DeepCopyObject().(client.Object)
+
+			err := apiReader.Get(ctx, key, freshObject) 
+			if err != nil {
+				logger.Info(fmt.Sprintf("failed to refresh resource version during %s patch retry", operationType),
+					"attempt", attempt,
+					"object", key,
+					"error", err.Error())
+				return err
+			}
+
+			// Update the resource version on our object
+			obj.SetResourceVersion(freshObject.GetResourceVersion())
+		}
+
+		err := patchObject(ctx, kc, obj, patch, operationType)
+		if err == nil && attempt > 1 {
+			logger.Debug(fmt.Sprintf("%s patch succeeded after retry", operationType),
+				"attempts", attempt,
+				"object", client.ObjectKeyFromObject(obj))
+		}
+
+		if err != nil && attempt == 1 {
+			logger.Debug(fmt.Sprintf("%s patch failed on first attempt", operationType),
+				"object", client.ObjectKeyFromObject(obj),
+				"error", err.Error())
+		}
+
+		return err
+	})
+}
+
+// patchMetadataAndSpec performs a patch operation using client-go's standard retry mechanism on conflicts.
+func patchMetadataAndSpec(
+	ctx context.Context,
+	kc client.Client,
+	apiReader client.Reader,
+	obj client.Object,
+	patch client.Patch,
+	logger acktypes.Logger,
+) error {
+	return patchWithRetry(ctx, kc, apiReader, obj, patch, logger, OperationType_MetadataSpec)
+}
+
+// patchStatus performs a status patch operation using client-go's standard retry mechanism on conflicts.
+func patchStatus(
+	ctx context.Context,
+	kc client.Client,
+	apiReader client.Reader,
+	obj client.Object,
+	patch client.Patch,
+	logger acktypes.Logger,
+) error {
+	return patchWithRetry(ctx, kc, apiReader, obj, patch, logger, OperationType_Status)
 }
