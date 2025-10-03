@@ -231,12 +231,10 @@ func patchWithRetry(
 func patchMetadataAndSpec(
 	ctx context.Context,
 	kc client.Client,
-	apiReader client.Reader,
 	obj client.Object,
 	patch client.Patch,
-	logger acktypes.Logger,
 ) error {
-	return patchWithRetry(ctx, kc, apiReader, obj, patch, logger, OperationType_MetadataSpec)
+	return patchObject(ctx, kc, obj, patch, OperationType_MetadataSpec)
 }
 
 // patchStatus performs a status patch operation using client-go's standard retry mechanism on conflicts.

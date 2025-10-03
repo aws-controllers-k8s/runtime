@@ -324,8 +324,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm.Data[key] = sourceValue
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target config map")
-	rlog := ackrtlog.FromContext(ctx)
-	err = patchMetadataAndSpec(ctx, r.kc, r.apiReader, cm, patch, rlog)
+	err = patchMetadataAndSpec(ctx, r.kc, cm, patch)
 	if err != nil {
 		return err
 	}
@@ -372,8 +371,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	secret.Data[key] = []byte(sourceValue)
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
-	rlog := ackrtlog.FromContext(ctx)
-	err = patchMetadataAndSpec(ctx, r.kc, r.apiReader, secret, patch, rlog)
+	err = patchMetadataAndSpec(ctx, r.kc, secret, patch)
 	if err != nil {
 		return err
 	}
@@ -579,8 +577,7 @@ func (r *fieldExportReconciler) patchResourceMetadataAndSpec(
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
 
-	rlog := ackrtlog.FromContext(ctx)
-	err := patchMetadataAndSpec(ctx, r.kc, r.apiReader, res, client.MergeFrom(base), rlog)
+	err := patchMetadataAndSpec(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }

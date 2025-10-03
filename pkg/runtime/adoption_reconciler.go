@@ -576,8 +576,7 @@ func (r *adoptionReconciler) patchResourceMetadataAndSpec(
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
 
-	rlog := ackrtlog.FromContext(ctx)
-	err := patchMetadataAndSpec(ctx, r.kc, r.apiReader, res, client.MergeFrom(base), rlog)
+	err := patchMetadataAndSpec(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }

@@ -892,7 +892,7 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	lorig := latestCleaned.DeepCopy()
 	patch := client.MergeFrom(desiredCleaned.RuntimeObject())
 
-	err = patchMetadataAndSpec(ctx, r.kc, r.apiReader, latestCleaned.RuntimeObject(), patch, rlog)
+	err = patchMetadataAndSpec(ctx, r.kc, latestCleaned.RuntimeObject(), patch)
 
 	if err == nil {
 		if rlog.IsDebugEnabled() {
