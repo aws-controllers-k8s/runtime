@@ -375,7 +375,7 @@ func (r *adoptionReconciler) patchAdoptedCondition(
 		adoptedCondition.Status = corev1.ConditionTrue
 	}
 
-	return r.patchStatus(ctx, res, base)
+	return r.patchResourceStatus(ctx, res, base)
 }
 
 // isAdopted returns true if the AdoptedResource is in a terminal adoption state
@@ -411,7 +411,7 @@ func (r *adoptionReconciler) markManaged(
 ) error {
 	base := res.DeepCopy()
 	k8sctrlutil.AddFinalizer(res, adoptionFinalizerString)
-	return r.patchMetadataAndSpec(ctx, res, base)
+	return r.patchResourceMetadataAndSpec(ctx, res, base)
 }
 
 // markUnmanaged removes the supplied resource from management by ACK.
@@ -423,7 +423,7 @@ func (r *adoptionReconciler) markUnmanaged(
 ) error {
 	base := res.DeepCopy()
 	k8sctrlutil.RemoveFinalizer(res, adoptionFinalizerString)
-	return r.patchMetadataAndSpec(ctx, res, base)
+	return r.patchResourceMetadataAndSpec(ctx, res, base)
 }
 
 // handleReconcileError will handle errors from reconcile handlers, which
@@ -561,12 +561,12 @@ func (r *adoptionReconciler) getRegion(
 	return ackv1alpha1.AWSRegion(r.cfg.Region)
 }
 
-// patchMetadataAndSpec patches the Metadata and Spec for AdoptedResource into
+// patchResourceMetadataAndSpec patches the Metadata and Spec for AdoptedResource into
 // k8s. The adopted resource 'res' also gets updated with content returned from
 // apiserver.
-// TODO(vijtrip2@): Refactor this and use single 'patchMetadataAndSpec' method
+// TODO(vijtrip2@): Refactor this and use single 'patchResourceMetadataAndSpec' method
 // for reconciler and adoptionReconciler
-func (r *adoptionReconciler) patchMetadataAndSpec(
+func (r *adoptionReconciler) patchResourceMetadataAndSpec(
 	ctx context.Context,
 	res *ackv1alpha1.AdoptedResource,
 	base *ackv1alpha1.AdoptedResource,
@@ -576,21 +576,22 @@ func (r *adoptionReconciler) patchMetadataAndSpec(
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
 
-	err := patchWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
+	err := patchMetadataAndSpec(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }
 
-// patchStatus patches the Status for AdoptedResource into k8s. The adopted
+// patchResourceStatus patches the Status for AdoptedResource into k8s. The adopted
 // resource 'res' also gets updated with the content returned from apiserver.
-// TODO(vijtrip2): Refactor this and use single 'patchStatus' method
+// TODO(vijtrip2): Refactor this and use single 'patchResourceStatus' method
 // for reconciler and adoptionReconciler
-func (r *adoptionReconciler) patchStatus(
+func (r *adoptionReconciler) patchResourceStatus(
 	ctx context.Context,
 	res *ackv1alpha1.AdoptedResource,
 	base *ackv1alpha1.AdoptedResource,
 ) error {
-	return patchStatusWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
+	rlog := ackrtlog.FromContext(ctx)
+	return patchStatus(ctx, r.kc, r.apiReader, res, client.MergeFrom(base), rlog)
 }
 
 // NewAdoptionReconciler returns a new adoptionReconciler object

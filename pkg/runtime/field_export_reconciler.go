@@ -150,7 +150,7 @@ func (r *fieldExportReconciler) Sync(
 
 	r.resetConditions(ctx, &desired)
 	defer func() {
-		r.patchStatus(ctx, &desired, latest)
+		r.patchResourceStatus(ctx, &desired, latest)
 	}()
 
 	// Get the field from the resource
@@ -324,7 +324,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	cm.Data[key] = sourceValue
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target config map")
-	err = patchWithoutCancel(ctx, r.kc, cm, patch)
+	err = patchMetadataAndSpec(ctx, r.kc, cm, patch)
 	if err != nil {
 		return err
 	}
@@ -371,7 +371,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	secret.Data[key] = []byte(sourceValue)
 
 	ackrtlog.DebugFieldExport(r.log, desired, "patching target secret")
-	err = patchWithoutCancel(ctx, r.kc, secret, patch)
+	err = patchMetadataAndSpec(ctx, r.kc, secret, patch)
 	if err != nil {
 		return err
 	}
@@ -519,16 +519,17 @@ func (r *fieldExportReconciler) patchTerminalCondition(
 	return nil
 }
 
-// patchStatus patches the Status for FieldExport into k8s. The field export
+// patchResourceStatus patches the Status for FieldExport into k8s. The field export
 // 'res' also gets updated with the content returned from apiserver.
-// TODO(vijtrip2): Refactor this and use single 'patchStatus' method
+// TODO(vijtrip2): Refactor this and use single 'patchResourceStatus' method
 // for all reconcilers
-func (r *fieldExportReconciler) patchStatus(
+func (r *fieldExportReconciler) patchResourceStatus(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 	base *ackv1alpha1.FieldExport,
 ) error {
-	return patchStatusWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
+	rlog := ackrtlog.FromContext(ctx)
+	return patchStatus(ctx, r.kc, r.apiReader, res, client.MergeFrom(base), rlog)
 }
 
 // markManaged places the supplied resource under the management of ACK.
@@ -541,7 +542,7 @@ func (r *fieldExportReconciler) markManaged(
 	if !k8sctrlutil.ContainsFinalizer(res, fieldExportFinalizerString) {
 		base := res.DeepCopy()
 		k8sctrlutil.AddFinalizer(res, fieldExportFinalizerString)
-		return r.patchMetadataAndSpec(ctx, res, base)
+		return r.patchResourceMetadataAndSpec(ctx, res, base)
 	}
 	return nil
 }
@@ -556,17 +557,17 @@ func (r *fieldExportReconciler) markUnmanaged(
 	if k8sctrlutil.ContainsFinalizer(res, fieldExportFinalizerString) {
 		base := res.DeepCopy()
 		k8sctrlutil.RemoveFinalizer(res, fieldExportFinalizerString)
-		return r.patchMetadataAndSpec(ctx, res, base)
+		return r.patchResourceMetadataAndSpec(ctx, res, base)
 	}
 	return nil
 }
 
-// patchMetadataAndSpec patches the Metadata and Spec for FieldExport into
+// patchResourceMetadataAndSpec patches the Metadata and Spec for FieldExport into
 // k8s. The field export 'res' also gets updated with content returned from
 // apiserver.
-// TODO(vijtrip2@): Refactor this and use single 'patchMetadataAndSpec' method
+// TODO(vijtrip2@): Refactor this and use single 'patchResourceMetadataAndSpec' method
 // for all reconcilers
-func (r *fieldExportReconciler) patchMetadataAndSpec(
+func (r *fieldExportReconciler) patchResourceMetadataAndSpec(
 	ctx context.Context,
 	res *ackv1alpha1.FieldExport,
 	base *ackv1alpha1.FieldExport,
@@ -576,7 +577,7 @@ func (r *fieldExportReconciler) patchMetadataAndSpec(
 	// Keep a copy of status field to reset the status of 'res' after patch call
 	resStatusCopy := res.DeepCopy().Status
 
-	err := patchWithoutCancel(ctx, r.kc, res, client.MergeFrom(base))
+	err := patchMetadataAndSpec(ctx, r.kc, res, client.MergeFrom(base))
 	res.Status = resStatusCopy
 	return err
 }
