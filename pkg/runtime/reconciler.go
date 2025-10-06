@@ -427,8 +427,8 @@ func (r *resourceReconciler) Sync(
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
-	// TODO (michaelhtm): should we fail here for `adopt-or-create` adoption policy?
-	if err != nil && !needAdoption && !isReadOnly {
+	// TODO (michaelhtm): ignore error only for `adopt` or `read-only`
+	if err != nil && (adoptionPolicy == "" || adoptionPolicy == AdoptionPolicy_AdoptOrCreate) && !isReadOnly {
 		return ackcondition.WithReferencesResolvedCondition(desired, err), err
 	}
 	if hasReferences {
