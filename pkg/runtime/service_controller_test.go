@@ -11,7 +11,7 @@
 // express or implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-package runtime_test
+package runtime
 
 import (
 	"context"
@@ -42,7 +42,6 @@ import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
-	ackrt "github.com/aws-controllers-k8s/runtime/pkg/runtime"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -150,7 +149,7 @@ func TestServiceController(t *testing.T) {
 	rmf.On("ResourceDescriptor").Return(rd)
 	rmf.On("RequeueOnSuccessSeconds").Return(0)
 
-	reg := ackrt.NewRegistry()
+	reg := NewRegistry()
 	reg.RegisterResourceManagerFactory(rmf)
 
 	vi := acktypes.VersionInfo{
@@ -159,7 +158,7 @@ func TestServiceController(t *testing.T) {
 		BuildDate:  "now",
 	}
 
-	sc := ackrt.NewServiceController("bookstore", "bookstore.services.k8s.aws", vi)
+	sc := NewServiceController("bookstore", "bookstore.services.k8s.aws", vi)
 	require.NotNil(sc)
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
