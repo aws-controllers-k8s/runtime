@@ -174,63 +174,6 @@ func expandResourceFields(
 	return vals
 }
 
-// AdaptAdoptedResource returns a logger with log values set for the adopted
-// resource's kind, namespace, name, etc
-func AdaptAdoptedResource(
-	log logr.Logger,
-	res *v1alpha1.AdoptedResource,
-	additionalValues ...interface{},
-) logr.Logger {
-	vals := expandAdoptedResourceFields(res, additionalValues...)
-	return log.WithValues(vals...)
-}
-
-// DebugAdoptedResource writes a supplied log message about a adopted resource that
-// includes a set of standard log values for the resource's kind, namespace, name, etc
-func DebugAdoptedResource(
-	log logr.Logger,
-	res *v1alpha1.AdoptedResource,
-	msg string,
-	additionalValues ...interface{},
-) {
-	AdaptAdoptedResource(log, res, additionalValues...).V(1).Info(msg)
-}
-
-// InfoAdoptedResource writes a supplied log message about a adopted resource that
-// includes a set of standard log values for the resource's kind, namespace, name, etc
-func InfoAdoptedResource(
-	log logr.Logger,
-	res *v1alpha1.AdoptedResource,
-	msg string,
-	additionalValues ...interface{},
-) {
-	AdaptAdoptedResource(log, res, additionalValues...).V(0).Info(msg)
-}
-
-// expandAdoptedResourceFields returns the key/value pairs for an adopted
-// resource that should be used as structured data in log messages about the
-// adopted resource
-func expandAdoptedResourceFields(
-	res *v1alpha1.AdoptedResource,
-	additionalValues ...interface{},
-) []interface{} {
-	ns := res.Namespace
-	resName := res.Name
-	generation := res.Generation
-	group := res.Spec.Kubernetes.Group
-	kind := res.Spec.Kubernetes.Kind
-	vals := []interface{}{
-		"target_group", group,
-		"target_kind", kind,
-		"namespace", ns,
-		"name", resName,
-		"generation", generation,
-	}
-	if len(additionalValues) > 0 {
-		vals = append(vals, additionalValues...)
-	}
-	return vals
-}
 
 // AdaptFieldExport returns a logger with log values set for the adopted
 // resource's kind, namespace, name, etc

@@ -42,7 +42,6 @@ import (
 )
 
 const (
-	flagEnableAdoptedResourceReconciler = "enable-adopted-resource-reconciler"
 	flagEnableFieldExportReconciler     = "enable-field-export-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
 	flagEnableCARM                      = "enable-carm"
@@ -88,7 +87,6 @@ type Config struct {
 	MetricsAddr                     string
 	HealthzAddr                     string
 	EnableLeaderElection            bool
-	EnableAdoptedResourceReconciler bool
 	EnableFieldExportReconciler     bool
 	EnableCARM                      bool
 	LeaderElectionNamespace         string
@@ -142,11 +140,6 @@ func (cfg *Config) BindFlags() {
 		false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.",
-	)
-	flag.BoolVar(
-		&cfg.EnableAdoptedResourceReconciler, flagEnableAdoptedResourceReconciler,
-		true,
-		"Enable the AdoptedResource reconciler.",
 	)
 	flag.BoolVar(
 		&cfg.EnableFieldExportReconciler, flagEnableFieldExportReconciler,

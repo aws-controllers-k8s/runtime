@@ -61,10 +61,6 @@ type serviceController struct {
 	// reconcilers is a map containing AWSResourceReconciler objects that are
 	// bound to the `controller-runtime.Manager` in `BindControllerManager`
 	reconcilers []acktypes.AWSResourceReconciler
-	// adoptionReconciler contains a reconciler that for the adoption process
-	// and is bound to the `controller-runtime.Manager` in
-	// `BindControllerManager`
-	adoptionReconciler acktypes.Reconciler
 	// fieldExportReconciler contains a reconciler that for the field export
 	// process and is bound to the `controller-runtime.Manager` in
 	// `BindControllerManager`
@@ -138,12 +134,6 @@ func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlu
 	}
 
 	return true, nil
-}
-
-// GetAdoptedResourceInstalled returns whether the AdoptedResource CRD has been
-// installed into the cluster, and is accessible by the service controller.
-func (c *serviceController) GetAdoptedResourceInstalled(mgr ctrlrt.Manager) (bool, error) {
-	return c.getResourceInstalled(mgr, "adoptedresources")
 }
 
 // GetFieldExportInstalled returns whether the FieldExport CRD has been
@@ -242,25 +232,9 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}
 	}
 
-	if cfg.EnableAdoptedResourceReconciler {
-		adoptionInstalled, err := c.GetAdoptedResourceInstalled(mgr)
-		adoptionLogger := c.log.WithName("adoption")
-		if err != nil {
-			adoptionLogger.Error(err, "unable to determine if the AdoptedResource CRD is installed in the cluster")
-		} else if !adoptionInstalled {
-			adoptionLogger.Info("AdoptedResource CRD not installed. The adoption reconciler will not be started")
-		} else {
-			rec := NewAdoptionReconciler(c, adoptionLogger, cfg, c.metrics, cache)
-			if err := rec.BindControllerManager(mgr); err != nil {
-				return err
-			}
-			c.adoptionReconciler = rec
-		}
-	}
-
 	exporterInstalled := false
 	exporterLogger := c.log.WithName("exporter")
-	
+
 	if cfg.EnableFieldExportReconciler {
 		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
 		if err != nil {
@@ -335,9 +309,9 @@ func NewServiceController(
 ) acktypes.ServiceController {
 	return &serviceController{
 		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
-			VersionInfo:        versionInfo,
-			ServiceAlias:       svcAlias,
-			ServiceAPIGroup:    svcAPIGroup,
+			VersionInfo:     versionInfo,
+			ServiceAlias:    svcAlias,
+			ServiceAPIGroup: svcAPIGroup,
 		},
 		metrics: ackmetrics.NewMetrics(svcAlias),
 	}

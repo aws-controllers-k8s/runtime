@@ -123,6 +123,29 @@ func setupMockApiReaderForFieldExport(apiReader *ctrlrtclientmock.Reader, ctx co
 	}, mock.AnythingOfType("*v1.Secret")).Return(nil)
 }
 
+func mockDescriptorAndAWSResource() (*mocks.AWSResourceDescriptor, *mocks.AWSResource, *mocks.AWSResource) {
+	des := &mocks.AWSResourceDescriptor{}
+	emptyRuntimeObject := &ctrlrtclientmock.Object{}
+	res := &mocks.AWSResource{}
+	resDeepCopy := &mocks.AWSResource{}
+	des.On("EmptyRuntimeObject").Return(emptyRuntimeObject)
+	des.On("ResourceFromRuntimeObject", emptyRuntimeObject).Return(res)
+	return des, res, resDeepCopy
+}
+
+func mockManager() *mocks.AWSResourceManager {
+	return &mocks.AWSResourceManager{}
+}
+
+func setupMockManager(manager *mocks.AWSResourceManager, ctx context.Context, res *mocks.AWSResource) {
+	manager.On("ReadOne", ctx, res).Return(res, nil)
+}
+
+func setupMockDescriptor(descriptor *mocks.AWSResourceDescriptor, res *mocks.AWSResource) {
+	descriptor.On("MarkManaged", res).Run(func(args mock.Arguments) {})
+	descriptor.On("MarkAdopted", res).Run(func(args mock.Arguments) {})
+}
+
 func strPtr(str string) *string {
 	return &str
 }
@@ -594,7 +617,7 @@ func assertPatchedSecretWithKey(expected bool, t *testing.T, ctx context.Context
 		return bytes.Equal(val, []byte("test-book-name"))
 	})
 	if expected {
-			kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
+		kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	} else {
 		kc.AssertNotCalled(t, "Patch", withoutCancelContextMatcher, dataMatcher, mock.Anything)
 	}
