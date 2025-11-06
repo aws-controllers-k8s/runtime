@@ -28,6 +28,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -581,6 +582,20 @@ func (r *resourceReconciler) ensureConditions(
 			}
 		}
 		ackcondition.SetSynced(res, condStatus, &condMessage, &condReason)
+	}
+
+	terminal := ackcondition.Terminal(res)
+	recoverable := ackcondition.Recoverable(res)
+	synced := ackcondition.Synced(res)
+
+	if terminal != nil && terminal.Status == corev1.ConditionTrue {
+		ackcondition.SetReady(res, corev1.ConditionFalse, terminal.Message, ptr.To(string(ackv1alpha1.ConditionTypeTerminal)))
+	} else if recoverable != nil && recoverable.Status == corev1.ConditionTrue {
+		ackcondition.SetReady(res, corev1.ConditionFalse, recoverable.Message, ptr.To(string(ackv1alpha1.ConditionTypeRecoverable)))
+	} else if synced != nil {
+		ackcondition.SetReady(res, synced.Status, synced.Message, synced.Reason)
+	} else {
+		ackcondition.SetReady(res, corev1.ConditionUnknown, &ackcondition.UnknownSyncedMessage, nil)
 	}
 }
 
