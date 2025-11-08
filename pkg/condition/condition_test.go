@@ -46,6 +46,9 @@ func TestConditionGetters(t *testing.T) {
 	got = ackcond.ReferencesResolved(r)
 	assert.Nil(got)
 
+	got = ackcond.Ready(r)
+	assert.Nil(got)
+
 	conds = append(conds, &ackv1alpha1.Condition{
 		Type:   ackv1alpha1.ConditionTypeResourceSynced,
 		Status: corev1.ConditionFalse,
@@ -58,6 +61,9 @@ func TestConditionGetters(t *testing.T) {
 	assert.NotNil(got)
 
 	got = ackcond.Terminal(r)
+	assert.Nil(got)
+
+	got = ackcond.Ready(r)
 	assert.Nil(got)
 
 	conds = append(conds, &ackv1alpha1.Condition{
@@ -73,6 +79,9 @@ func TestConditionGetters(t *testing.T) {
 
 	got = ackcond.Terminal(r)
 	assert.NotNil(got)
+
+	got = ackcond.Ready(r)
+	assert.Nil(got)
 
 	gotAll := ackcond.AllOfType(r, ackv1alpha1.ConditionTypeAdvisory)
 	assert.Empty(gotAll)
@@ -105,6 +114,15 @@ func TestConditionGetters(t *testing.T) {
 	r = &ackmocks.AWSResource{}
 	r.On("Conditions").Return(conds)
 	got = ackcond.ReferencesResolved(r)
+	assert.NotNil(got)
+
+	conds = append(conds, &ackv1alpha1.Condition{
+		Type:   ackv1alpha1.ConditionTypeReady,
+		Status: corev1.ConditionTrue,
+	})
+	r = &ackmocks.AWSResource{}
+	r.On("Conditions").Return(conds)
+	got = ackcond.Ready(r)
 	assert.NotNil(got)
 }
 
@@ -295,4 +313,20 @@ func TestConditionSetters(t *testing.T) {
 		}),
 	)
 	ackcond.WithReferencesResolvedCondition(r, terminalError)
+
+	// Ready condition
+	// SetReady
+	r = &ackmocks.AWSResource{}
+	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	r.On(
+		"ReplaceConditions",
+		mock.MatchedBy(func(subject []*ackv1alpha1.Condition) bool {
+			if len(subject) != 1 {
+				return false
+			}
+			return (subject[0].Type == ackv1alpha1.ConditionTypeReady &&
+				subject[0].Status == corev1.ConditionTrue)
+		}),
+	)
+	ackcond.SetReady(r, corev1.ConditionTrue, nil, nil)
 }

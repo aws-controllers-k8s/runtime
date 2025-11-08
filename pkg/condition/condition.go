@@ -29,14 +29,22 @@ var (
 	NotManagedReason  = "This resource already exists but is not managed by ACK. " +
 		"To bring the resource under ACK management, you should explicitly adopt " +
 		"the resource by enabling the ResourceAdoption feature gate and populating " +
-		"the `services.k8s.aws/adoption-policy` and `services.k8s.aws/adoption-fields` " + 
+		"the `services.k8s.aws/adoption-policy` and `services.k8s.aws/adoption-fields` " +
 		"annotations."
 	UnknownSyncedMessage             = "Unable to determine if desired resource state matches latest observed state"
 	NotSyncedMessage                 = "Resource not synced"
+	TerminalMessage                 = "Resource is "
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
 	UnavailableIAMRoleMessage        = "IAM Role is not available"
 )
+
+// Ready returns the Condition in the resource's Conditions collection that is
+// of type ConditionTypeResourceReady. If no such condition is found, returns
+// nil.
+func Ready(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeReady)
+}
 
 // Synced returns the Condition in the resource's Conditions collection that is
 // of type ConditionTypeResourceSynced. If no such condition is found, returns
@@ -115,6 +123,28 @@ func SetSynced(
 	if c = Synced(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeResourceSynced,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+func SetReady(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = Ready(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeReady,
 		}
 		allConds = append(allConds, c)
 	}

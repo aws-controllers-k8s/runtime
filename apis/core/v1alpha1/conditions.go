@@ -23,6 +23,10 @@ import (
 type ConditionType string
 
 const (
+	// ConditionTypeReady indicates the resource is ready to be consumed by other resources.
+	// It is equivalent to the ResourceSynced condition type. Using Ready will standardize
+	// ACK conditions.
+	ConditionTypeReady ConditionType = "Ready"
 	// ConditionTypeAdopted indicates that the adopted resource custom resource
 	// has been successfully reconciled and the target has been created
 	ConditionTypeAdopted ConditionType = "ACK.Adopted"
