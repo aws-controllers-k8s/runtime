@@ -325,12 +325,10 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	).Once()
-	rm.On("Create", ctx, desired).Return(
-		latest, nil,
-	)
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
-	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
-
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+	
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
@@ -339,10 +337,10 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 1)
+	rd.AssertCalled(t, "Delta", desired, latest)
 	// Assert that the resource is not created or updated
 	rm.AssertNotCalled(t, "Create", 0)
 	rm.AssertNotCalled(t, "Update", 0)
-	rm.AssertNotCalled(t, "Delta", 0)
 }
 
 func TestReconcilerAdoptResource(t *testing.T) {

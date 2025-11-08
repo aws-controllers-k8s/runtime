@@ -486,6 +486,14 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if isReadOnly {
+		delta := r.rd.Delta(desired, latest)
+		if delta.DifferentAt("Spec") {
+			rlog.Info(
+				"desired resource state has changed, but resource is read-only - skipping update",
+				"skipped", true,
+				"diff", delta.Differences,
+			)
+		}
 		return latest, nil
 	} else {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
