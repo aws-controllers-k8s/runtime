@@ -75,7 +75,7 @@ func matchesNamespace(nsSelector ackv1alpha1.NamespaceSelector, namespace string
 	return true
 }
 
-func matchesResourceType(rtSelectors []schema.GroupVersionKind, gvk schema.GroupVersionKind) bool {
+func matchesResourceType(rtSelectors []ackv1alpha1.GroupVersionKind, gvk schema.GroupVersionKind) bool {
 	// If no resource type selector specified, matches all resources
 	if len(rtSelectors) == 0 {
 		return true
@@ -153,7 +153,7 @@ func validateNamespaceSelector(nsSelector ackv1alpha1.NamespaceSelector) error {
 
 // validateResourceTypeSelectors checks that each resource type selector has at least one field specified
 // and that there are no duplicate selectors
-func validateResourceTypeSelectors(rtSelectors []schema.GroupVersionKind) error {
+func validateResourceTypeSelectors(rtSelectors []ackv1alpha1.GroupVersionKind) error {
 	seen := make(map[string]bool)
 
 	for i, rts := range rtSelectors {

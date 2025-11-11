@@ -51,4 +51,7 @@ type AWSResource interface {
 	// PopulateResourceFromAnnotation will set the Spec or Status field that user
 	// provided from annotations
 	PopulateResourceFromAnnotation(fields map[string]string) error 
+	// Set the selected IAMRoleSelector information used to manage this resource
+	// in the resource status
+	SetIAMRoleSelector(*ackv1alpha1.IAMRoleSelector)
 }

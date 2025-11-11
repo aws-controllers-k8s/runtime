@@ -62,9 +62,17 @@ spec:
                 type: object
               resourceTypeSelector:
                 items:
-                  description: |-
-                    GroupVersionKind unambiguously identifies a kind.  It doesn't anonymously include GroupVersion
-                    to avoid automatic coercion.  It doesn't use a GroupVersion to avoid custom marshalling
+                  properties:
+                    group:
+                      type: string
+                    kind:
+                      type: string
+                    version:
+                      type: string
+                  required:
+                  - group
+                  - kind
+                  - version
                   type: object
                 type: array
             required:

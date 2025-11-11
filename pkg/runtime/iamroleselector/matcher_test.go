@@ -183,7 +183,7 @@ func TestMatches(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Group:   "s3.services.k8s.aws",
 							Version: "v1alpha1",
@@ -207,7 +207,7 @@ func TestMatches(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Kind: "Bucket",
 						},
@@ -229,7 +229,7 @@ func TestMatches(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Group:   "rds.services.k8s.aws",
 							Version: "v1alpha1",
@@ -258,7 +258,7 @@ func TestMatches(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Group:   "rds.services.k8s.aws",
 							Version: "v1alpha1",
@@ -285,7 +285,7 @@ func TestMatches(t *testing.T) {
 					NamespaceSelector: ackv1alpha1.NamespaceSelector{
 						Names: []string{"production"},
 					},
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Kind: "Bucket",
 						},
@@ -310,7 +310,7 @@ func TestMatches(t *testing.T) {
 					NamespaceSelector: ackv1alpha1.NamespaceSelector{
 						Names: []string{"production"},
 					},
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Kind: "DBInstance",
 						},
@@ -430,7 +430,7 @@ func TestValidateSelector(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							// all fields empty
 						},
@@ -445,7 +445,7 @@ func TestValidateSelector(t *testing.T) {
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
 					ARN: "arn:aws:iam::123456789012:role/test-role",
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Group:   "s3.services.k8s.aws",
 							Version: "v1alpha1",
@@ -475,7 +475,7 @@ func TestValidateSelector(t *testing.T) {
 							},
 						},
 					},
-					ResourceTypeSelector: []schema.GroupVersionKind{
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 						{
 							Kind: "Bucket",
 						},
@@ -672,13 +672,13 @@ func TestMatchesNamespace(t *testing.T) {
 func TestMatchesResourceType(t *testing.T) {
 	tests := []struct {
 		name        string
-		rtSelectors []schema.GroupVersionKind
+		rtSelectors []ackv1alpha1.GroupVersionKind
 		gvk         schema.GroupVersionKind
 		want        bool
 	}{
 		{
 			name:        "empty selector matches all",
-			rtSelectors: []schema.GroupVersionKind{},
+			rtSelectors: []ackv1alpha1.GroupVersionKind{},
 			gvk: schema.GroupVersionKind{
 				Group:   "s3.services.k8s.aws",
 				Version: "v1alpha1",
@@ -688,7 +688,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "exact match",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Group:   "s3.services.k8s.aws",
 					Version: "v1alpha1",
@@ -704,7 +704,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "partial match - only kind",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Kind: "Bucket",
 				},
@@ -718,7 +718,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "partial match - only group",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Group: "s3.services.k8s.aws",
 				},
@@ -732,7 +732,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "partial match - group and version",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Group:   "s3.services.k8s.aws",
 					Version: "v1alpha1",
@@ -747,7 +747,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "no match - wrong kind",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Kind: "DBInstance",
 				},
@@ -761,7 +761,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "no match - wrong group",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Group:   "rds.services.k8s.aws",
 					Version: "v1alpha1",
@@ -777,7 +777,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "OR logic - multiple selectors",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Kind: "DBInstance",
 				},
@@ -797,7 +797,7 @@ func TestMatchesResourceType(t *testing.T) {
 		},
 		{
 			name: "OR logic - no match",
-			rtSelectors: []schema.GroupVersionKind{
+			rtSelectors: []ackv1alpha1.GroupVersionKind{
 				{
 					Kind: "DBInstance",
 				},

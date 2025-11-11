@@ -268,6 +268,8 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		acctID = ackv1alpha1.AWSAccountID(parsedARN.AccountID)
 	}
 
+	var selector *ackv1alpha1.IAMRoleSelector
+
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) {
 		// If the IAMRoleSelector feature gate is enabled, we need to check if there
 		// are any matching IAMRoleSelectors for this resource. If there are, we
@@ -285,6 +287,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		if len(selectors) == 1 {
 			rlog.WithValues("iam_role_selector", selectors[0].Name)
 			roleARN = ackv1alpha1.AWSResourceName(selectors[0].Spec.ARN)
+			selector = selectors[0]
 			rlog.Info("using role ARN from IAMRoleSelector")
 			parsedARN, err := arn.Parse(string(roleARN))
 			if err != nil {
@@ -350,6 +353,9 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 	latest, err = r.reconcile(ctx, rm, desired)
+	if latest != nil && selector != nil {
+		latest.SetIAMRoleSelector(selector)
+	}
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
@@ -1225,7 +1231,9 @@ func (r *resourceReconciler) getAWSResource(
 	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
-	ro.GetObjectKind().SetGroupVersionKind(r.rd.GroupVersionKind())
+	if ro != nil && ro.GetObjectKind() != nil {
+		ro.GetObjectKind().SetGroupVersionKind(r.rd.GroupVersionKind())
+	}
 	return r.rd.ResourceFromRuntimeObject(ro), nil
 }
 

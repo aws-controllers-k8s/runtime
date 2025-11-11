@@ -15,7 +15,6 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // LabelSelector is a label query over a set of resources.
@@ -29,10 +28,16 @@ type NamespaceSelector struct {
 	LabelSelector LabelSelector `json:"labelSelector,omitempty"`
 }
 
+type GroupVersionKind struct {
+	Group   string `json:"group"`
+	Version string `json:"version"`
+	Kind    string `json:"kind"`
+}
+
 type IAMRoleSelectorSpec struct {
-	ARN                  string                    `json:"arn"`
-	NamespaceSelector    NamespaceSelector         `json:"namespaceSelector,omitempty"`
-	ResourceTypeSelector []schema.GroupVersionKind `json:"resourceTypeSelector,omitempty"`
+	ARN                  string             `json:"arn"`
+	NamespaceSelector    NamespaceSelector  `json:"namespaceSelector,omitempty"`
+	ResourceTypeSelector []GroupVersionKind `json:"resourceTypeSelector,omitempty"`
 }
 
 type IAMRoleSelectorStatus struct{}

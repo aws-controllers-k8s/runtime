@@ -14,7 +14,6 @@
 package iamroleselector
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -79,7 +78,7 @@ func TestCache_Matches(t *testing.T) {
 			NamespaceSelector: ackv1alpha1.NamespaceSelector{
 				Names: []string{"production"},
 			},
-			ResourceTypeSelector: []schema.GroupVersionKind{
+			ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 				{Kind: "Bucket"},
 			},
 		},
@@ -89,7 +88,7 @@ func TestCache_Matches(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "all-rds"},
 		Spec: ackv1alpha1.IAMRoleSelectorSpec{
 			ARN: "arn:aws:iam::123456789012:role/rds-role",
-			ResourceTypeSelector: []schema.GroupVersionKind{
+			ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
 				{
 					Group: "rds.services.k8s.aws",
 					Kind:  "DBInstance",
@@ -150,11 +149,10 @@ func TestCache_Matches(t *testing.T) {
 			wantCount: 0,
 		},
 	}
-	ctx := context.TODO()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matches, err := cache.Matches(ctx, tt.resource)
+			matches, err := cache.Matches(tt.resource)
 			require.NoError(t, err)
 			require.Len(t, matches, tt.wantCount)
 
