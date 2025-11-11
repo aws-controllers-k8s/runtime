@@ -271,10 +271,9 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		// If the IAMRoleSelector feature gate is enabled, we need to check if there
 		// are any matching IAMRoleSelectors for this resource. If there are, we
 		// override the roleARN from CARM (if any) with the one from the selector.
-		selectors, err := r.irsCache.GetMatchingSelectors(
-			req.Namespace,
-			nil,
-			r.rd.GroupVersionKind(),
+		selectors, err := r.irsCache.Matches(
+			ctx,
+			desired.RuntimeObject(),
 		)
 		if err != nil {
 			return ctrlrt.Result{}, fmt.Errorf("checking for matching IAMRoleSelectors: %w", err)

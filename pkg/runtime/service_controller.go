@@ -213,6 +213,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		}},
 		cfg.FeatureGates,
 	)
+	clusterConfig := mgr.GetConfig()
+	clientSet, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		return err
+	}
 	// The caches are only used for cross account resource management. We
 	// want to run them only when --enable-carm is set to true and
 	// --watch-namespace is set to zero or more than one namespaces.
@@ -220,11 +225,6 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 		if len(namespaces) == 1 {
 			c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
 		} else {
-			clusterConfig := mgr.GetConfig()
-			clientSet, err := kubernetes.NewForConfig(clusterConfig)
-			if err != nil {
-				return err
-			}
 			// Run the caches. This will not block as the caches are run in
 			// separate goroutines.
 			carmCache.Run(clientSet)
@@ -268,11 +268,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	if cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) {
 		// init dynamic client
 		clusterConfig := mgr.GetConfig()
-		clientSet, err := dynamic.NewForConfig(clusterConfig)
+		dynamicClient, err := dynamic.NewForConfig(clusterConfig)
 		if err != nil {
 			return err
 		}
-		irsCache.Run(clientSet, context.TODO().Done())
+		irsCache.Run(dynamicClient, clientSet, context.TODO().Done())
 	}
 
 	// Filter the resource manager factories

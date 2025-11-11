@@ -14,6 +14,7 @@
 package iamroleselector
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -24,29 +25,33 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 )
 
 // Cache wraps the informer for IAMRoleSelector resources
 type Cache struct {
 	sync.RWMutex
-	log       logr.Logger
-	informer  cache.SharedIndexInformer
-	selectors map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
+	namespaces *ackcache.NamespaceCache
+	log        logr.Logger
+	informer   cache.SharedIndexInformer
+	selectors  map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
 }
 
 // NewCache creates a new IAMRoleSelector cache
 func NewCache(log logr.Logger) *Cache {
 	return &Cache{
-		log:       log.WithName("cache.iam-role-selector"),
-		selectors: make(map[string]*ackv1alpha1.IAMRoleSelector),
+		log:        log.WithName("cache.iam-role-selector"),
+		selectors:  make(map[string]*ackv1alpha1.IAMRoleSelector),
+		namespaces: ackcache.NewNamespaceCache(log, nil, nil),
 	}
 }
 
 // Run starts the cache and blocks until stopCh is closed
-func (c *Cache) Run(client dynamic.Interface, stopCh <-chan struct{}) {
+func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interface, stopCh <-chan struct{}) {
 	c.log.V(1).Info("Starting IAMRoleSelector cache")
 
 	// Create dynamic informer factory
@@ -74,6 +79,8 @@ func (c *Cache) Run(client dynamic.Interface, stopCh <-chan struct{}) {
 	})
 
 	factory.Start(stopCh)
+
+	c.namespaces.Run(namespaceClient, stopCh)
 }
 
 func (c *Cache) handleAdd(obj interface{}) {
@@ -197,15 +204,15 @@ func (c *Cache) ListSelectors() []*ackv1alpha1.IAMRoleSelector {
 
 // Matches returns a list of IAMRoleSelectors that match the given resource. This function
 // should only be called after the cache has been started and synced.
-func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector, error) {
+func (c *Cache) Matches(ctx context.Context, resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector, error) {
 	// Extract metadata from the resource
 	metaObj, err := meta.Accessor(resource)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get metadata from resource: %w", err)
 	}
 
-	namespace := metaObj.GetNamespace()
-
+	namespaceName := metaObj.GetNamespace()
+	namespaceLabels := c.namespaces.GetLabels(namespaceName)
 	// Get GVK - should be set on ACK resources
 	gvk := resource.GetObjectKind().GroupVersionKind()
 	if gvk.Empty() {
@@ -215,5 +222,5 @@ func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector
 
 	// TODO: get namespace labels from a namespace lister/cache
 	// For now, pass empty namespace labels
-	return c.GetMatchingSelectors(namespace, nil, gvk)
+	return c.GetMatchingSelectors(namespaceName, namespaceLabels, gvk)
 }

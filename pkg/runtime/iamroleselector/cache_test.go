@@ -14,6 +14,7 @@
 package iamroleselector
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -53,13 +55,16 @@ func TestCache_Matches(t *testing.T) {
 	client := fake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind)
 	client.PrependWatchReactor("iamroleselectors", k8stesting.DefaultWatchReactor(watcher, nil))
 
+	k8sClient := k8sfake.NewSimpleClientset()
+	k8sClient.PrependWatchReactor("production", k8stesting.DefaultWatchReactor(watcher, nil))
+
 	logger := zapr.NewLogger(zap.NewNop())
 	cache := NewCache(logger)
 
 	stopCh := make(chan struct{})
 	t.Cleanup(func() { close(stopCh) })
 
-	go cache.Run(client, stopCh)
+	go cache.Run(client, k8sClient, stopCh)
 
 	// Wait for cache to sync
 	require.Eventually(t, func() bool {
@@ -145,10 +150,11 @@ func TestCache_Matches(t *testing.T) {
 			wantCount: 0,
 		},
 	}
+	ctx := context.TODO()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			matches, err := cache.Matches(tt.resource)
+			matches, err := cache.Matches(ctx, tt.resource)
 			require.NoError(t, err)
 			require.Len(t, matches, tt.wantCount)
 
