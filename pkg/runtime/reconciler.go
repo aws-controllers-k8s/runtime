@@ -216,6 +216,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		}
 		return ctrlrt.Result{}, err
 	}
+	latest := desired.DeepCopy()
 
 	rlog := ackrtlog.NewResourceLogger(
 		r.log, desired,
@@ -272,7 +273,6 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		// are any matching IAMRoleSelectors for this resource. If there are, we
 		// override the roleARN from CARM (if any) with the one from the selector.
 		selectors, err := r.irsCache.Matches(
-			ctx,
 			desired.RuntimeObject(),
 		)
 		if err != nil {
@@ -349,7 +349,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
-	latest, err := r.reconcile(ctx, rm, desired)
+	latest, err = r.reconcile(ctx, rm, desired)
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
@@ -374,7 +374,7 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 
 	// look for default region in namespace metadata annotations
 	ns := desired.MetaObject().GetNamespace()
-	nsRegion, ok := r.cache.Namespaces.GetDefaultRegion(ns)
+	nsRegion, ok := r.carmCache.Namespaces.GetDefaultRegion(ns)
 	if ok {
 		return ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
 	}
@@ -1225,6 +1225,7 @@ func (r *resourceReconciler) getAWSResource(
 	if err := r.apiReader.Get(ctx, req.NamespacedName, ro); err != nil {
 		return nil, err
 	}
+	ro.GetObjectKind().SetGroupVersionKind(r.rd.GroupVersionKind())
 	return r.rd.ResourceFromRuntimeObject(ro), nil
 }
 

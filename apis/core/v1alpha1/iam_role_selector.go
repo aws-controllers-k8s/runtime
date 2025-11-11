@@ -25,7 +25,7 @@ type LabelSelector struct {
 
 // IAMRoleSelectorSpec defines the desired state of IAMRoleSelector
 type NamespaceSelector struct {
-	Names         []string      `json:"name"`
+	Names         []string      `json:"names"`
 	LabelSelector LabelSelector `json:"labelSelector,omitempty"`
 }
 
@@ -40,6 +40,7 @@ type IAMRoleSelectorStatus struct{}
 // IAMRoleSelector is the schema for the IAMRoleSelector API.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
 type IAMRoleSelector struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

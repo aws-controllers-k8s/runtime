@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.2
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: iamroleselectors.services.k8s.aws
 spec:
   group: services.k8s.aws
@@ -12,7 +12,7 @@ spec:
     listKind: IAMRoleSelectorList
     plural: iamroleselectors
     singular: iamroleselector
-  scope: Namespaced
+  scope: Cluster
   versions:
   - name: v1alpha1
     schema:
@@ -53,12 +53,12 @@ spec:
                     required:
                     - matchLabels
                     type: object
-                  name:
+                  names:
                     items:
                       type: string
                     type: array
                 required:
-                - name
+                - names
                 type: object
               resourceTypeSelector:
                 items:

@@ -14,7 +14,6 @@
 package iamroleselector
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -204,7 +203,7 @@ func (c *Cache) ListSelectors() []*ackv1alpha1.IAMRoleSelector {
 
 // Matches returns a list of IAMRoleSelectors that match the given resource. This function
 // should only be called after the cache has been started and synced.
-func (c *Cache) Matches(ctx context.Context, resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector, error) {
+func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector, error) {
 	// Extract metadata from the resource
 	metaObj, err := meta.Accessor(resource)
 	if err != nil {

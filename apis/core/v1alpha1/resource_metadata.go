@@ -32,4 +32,11 @@ type ResourceMetadata struct {
 	OwnerAccountID *AWSAccountID `json:"ownerAccountID"`
 	// Region is the AWS region in which the resource exists or will exist.
 	Region *AWSRegion `json:"region"`
+
+	IAMRoleSelector *SelectedIAMRole `json:"iamRoleSelector"`
+}
+
+type SelectedIAMRole struct {
+	SelectorName    string `json:"selectorName"`
+	ResourceVersion string `json:"resourceVersion"`
 }
