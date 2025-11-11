@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -29,10 +30,17 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sobj "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
+	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
+	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -42,10 +50,6 @@ import (
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
-
-	k8srtschemamocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
-	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
-	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 )
 
 // isWithoutCancelContext checks if the context is a WithoutCancel context
@@ -1788,4 +1792,147 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "EnsureTags", ctx, desired, scmd)
+}
+
+func TestReconcile_AccountDrifted(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	req := ctrlrt.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: "production",
+			Name:      "mybook",
+		},
+	}
+
+	// Create resource with existing account
+	existingAccount := ackv1alpha1.AWSAccountID("111111111111")
+
+	desired, _, metaObj := resourceMocks()
+	metaObj.SetNamespace("production")
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("Region").Return(nil)
+	ids.On("OwnerAccountID").Return(&existingAccount)
+	desired.On("Identifiers").Return(ids)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+	desired.On("IsBeingDeleted").Return(false)
+
+	// Setup resource descriptor
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(schema.GroupVersionKind{
+		Group:   "test.services.k8s.aws",
+		Kind:    "Book",
+		Version: "v1alpha1",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+
+	// Setup service controller
+	sc := &ackmocks.ServiceController{}
+	sc.On("GetMetadata").Return(acktypes.ServiceControllerMetadata{})
+	sc.On("NewAWSConfig",
+		mock.Anything,
+		mock.AnythingOfType("v1alpha1.AWSRegion"),
+		mock.Anything,
+		mock.AnythingOfType("v1alpha1.AWSResourceName"),
+		mock.AnythingOfType("schema.GroupVersionKind"),
+	).Return(aws.Config{}, nil)
+
+	// Get fakeLogger
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+
+	// Create fake k8s client with namespace that has owner account annotation
+	k8sClient := k8sfake.NewSimpleClientset()
+
+	// Create namespace with owner account annotation
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "production",
+			Annotations: map[string]string{
+				ackv1alpha1.AnnotationOwnerAccountID: "222222222222",
+			},
+		},
+	}
+	k8sClient.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
+
+	// Create CARM configmap
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ackrtcache.ACKRoleAccountMap,
+			Namespace: "ack-system",
+		},
+		Data: map[string]string{
+			"222222222222": "arn:aws:iam::222222222222:role/ACKRole",
+		},
+	}
+	k8sClient.CoreV1().ConfigMaps("ack-system").Create(context.Background(), configMap, metav1.CreateOptions{})
+
+	// Create caches with the k8s client
+	caches := ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{})
+
+	// Run the caches
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	caches.Run(k8sClient)
+
+	// Wait for caches to sync
+	time.Sleep(100 * time.Millisecond)
+
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("ManagerFor",
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.AnythingOfType("v1alpha1.AWSAccountID"),
+		mock.AnythingOfType("v1alpha1.AWSRegion"),
+		mock.AnythingOfType("v1alpha1.AWSResourceName"),
+	).Return(rm, nil)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, mock.Anything).Return(
+		desired, false, nil,
+	)
+	rm.On("EnsureTags", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	// Create reconciler with namespace cache
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:      kc,
+			sc:      sc,
+			log:     fakeLogger,
+			cfg:     ackcfg.Config{AccountID: "333333333333"},
+			cache:   caches,
+			metrics: ackmetrics.NewMetrics("test"),
+		},
+		rmf: rmf,
+		rd:  rd,
+	}
+
+	apiReader := &ctrlrtclientmock.Reader{}
+	apiReader.On("Get", ctx, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
+	r.apiReader = apiReader
+
+	// Call Reconcile
+	_, err := r.Reconcile(ctx, req)
+
+	// Should get terminal error for account drift
+	require.NotNil(err)
+	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
+	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
 }
