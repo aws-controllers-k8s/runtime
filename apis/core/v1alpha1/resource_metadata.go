@@ -32,15 +32,5 @@ type ResourceMetadata struct {
 	OwnerAccountID *AWSAccountID `json:"ownerAccountID"`
 	// Region is the AWS region in which the resource exists or will exist.
 	Region *AWSRegion `json:"region"`
-	// IAMRoleSelector is the selected IAMRoleSelector that is used to manage
-	// the AWS resource. This will be nil if the default controller role is used.
-	IAMRoleSelector *SelectedIAMRole `json:"iamRoleSelector,omitempty"`
 }
 
-type SelectedIAMRole struct {
-	// SelectorName is the k8s resource name of the IAMRoleSelector object
-	SelectorName    string `json:"selectorName"`
-	// ResourceVersion is the metadata.resourceVersion of the selected
-	// IAMRoleSelector object
-	ResourceVersion string `json:"resourceVersion"`
-}
