@@ -33,10 +33,13 @@ var (
 		"annotations."
 	UnknownSyncedMessage             = "Unable to determine if desired resource state matches latest observed state"
 	NotSyncedMessage                 = "Resource not synced"
-	TerminalMessage                 = "Resource is "
+	TerminalMessage                  = "Resource is "
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
 	UnavailableIAMRoleMessage        = "IAM Role is not available"
+
+	IAMRoleSelectedReason  = "Selected"
+	IAMRoleSelectedMessage = "roleARN: %s, selectorName: %s, selectorResourceVersion: %s"
 )
 
 // Ready returns the Condition in the resource's Conditions collection that is
@@ -79,6 +82,13 @@ func LateInitialized(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 // returns nil.
 func ReferencesResolved(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeReferencesResolved)
+}
+
+// IAMRoleSelected returns the Condition in the resource's Conditions collection
+// that is of type ConditionTypeIAMRoleSelected. If no such condition is found,
+// returns nil.
+func IAMRoleSelected(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeIAMRoleSelected)
 }
 
 // FirstOfType returns the first Condition in the resource's Conditions
@@ -241,6 +251,30 @@ func SetReferencesResolved(
 	if c = ReferencesResolved(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeReferencesResolved,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// SetIAMRoleSelected sets the resource's Condition of type ConditionTypeIAMRoleSelected
+// to the supplied status, optional message and reason.
+func SetIAMRoleSelected(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = ReferencesResolved(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeIAMRoleSelected,
 		}
 		allConds = append(allConds, c)
 	}

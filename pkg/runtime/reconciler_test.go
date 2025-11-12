@@ -49,6 +49,7 @@ import (
 	ackmetrics "github.com/aws-controllers-k8s/runtime/pkg/metrics"
 	"github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtcache "github.com/aws-controllers-k8s/runtime/pkg/runtime/cache"
+	"github.com/aws-controllers-k8s/runtime/pkg/runtime/iamroleselector"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -128,7 +129,7 @@ func reconcilerMocks(
 	kc := &ctrlrtclientmock.Client{}
 
 	return NewReconcilerWithClient(
-		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{},
+		sc, kc, rmf, fakeLogger, cfg, metrics, ackrtcache.Caches{}, &iamroleselector.Cache{},
 	), kc, scmd
 }
 
@@ -330,7 +331,7 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-	
+
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
@@ -1913,12 +1914,12 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	// Create reconciler with namespace cache
 	r := &resourceReconciler{
 		reconciler: reconciler{
-			kc:      kc,
-			sc:      sc,
-			log:     fakeLogger,
-			cfg:     ackcfg.Config{AccountID: "333333333333"},
-			cache:   caches,
-			metrics: ackmetrics.NewMetrics("test"),
+			kc:        kc,
+			sc:        sc,
+			log:       fakeLogger,
+			cfg:       ackcfg.Config{AccountID: "333333333333"},
+			carmCache: caches,
+			metrics:   ackmetrics.NewMetrics("test"),
 		},
 		rmf: rmf,
 		rd:  rd,

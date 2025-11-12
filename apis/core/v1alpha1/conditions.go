@@ -66,6 +66,10 @@ const (
 	// "False" status indicates that the resource references failed to resolve.
 	// For Ex: When referenced resource is in terminal condition
 	ConditionTypeReferencesResolved ConditionType = "ACK.ReferencesResolved"
+	// ConditionTypeIAMRoleSelected indicates whether an IAMRoleSelector has been selected
+	// to manage the AWSResource. If none are selected, this condition will be removed
+	// and we'll use the custom role to manage the AWSResource
+	ConditionTypeIAMRoleSelected ConditionType = "ACK.IAMRoleSelected"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service

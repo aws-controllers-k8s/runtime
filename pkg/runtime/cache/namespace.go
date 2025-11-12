@@ -38,6 +38,8 @@ type namespaceInfo struct {
 	endpointURL string
 	// {service}.services.k8s.aws/deletion-policy Annotations (keyed by service)
 	deletionPolicies map[string]string
+
+	labels map[string]string
 }
 
 // getDefaultRegion returns the default region value
@@ -226,6 +228,16 @@ func (c *NamespaceCache) GetDeletionPolicy(namespace string, service string) (st
 	return "", false
 }
 
+// GetDeletionPolicy returns the deletion policy if it exists
+func (c *NamespaceCache) GetLabels(namespace string) map[string]string {
+	info, ok := c.getNamespaceInfo(namespace)
+	if ok {
+		return info.labels
+	}
+	return nil
+	
+}
+
 // getNamespaceInfo reads a namespace cached annotations and
 // return a given namespace default aws region, owner account id and endpoint url.
 // This function is thread safe.
@@ -267,6 +279,8 @@ func (c *NamespaceCache) setNamespaceInfoFromK8sObject(ns *corev1.Namespace) {
 		service := strings.TrimSuffix(key, nsDeletionPolicySuffix)
 		nsInfo.deletionPolicies[service] = elem
 	}
+
+	nsInfo.labels = ns.GetLabels()
 
 	c.Lock()
 	defer c.Unlock()
