@@ -40,6 +40,9 @@ spec:
             properties:
               arn:
                 type: string
+                x-kubernetes-validations:
+                - message: Value is immutable once set
+                  rule: self == oldSelf
               namespaceSelector:
                 description: IAMRoleSelectorSpec defines the desired state of IAMRoleSelector
                 properties:

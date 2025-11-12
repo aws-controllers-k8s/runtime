@@ -353,10 +353,19 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		return ctrlrt.Result{}, err
 	}
 	latest, err = r.reconcile(ctx, rm, desired)
-	if latest != nil && selector != nil {
-		latest.SetIAMRoleSelector(selector)
+	if latest != nil {
+		setIAMRoleSelectorCondition(latest, selector)
 	}
 	return r.HandleReconcileError(ctx, desired, latest, err)
+}
+
+func setIAMRoleSelectorCondition(r acktypes.ConditionManager, selector *ackv1alpha1.IAMRoleSelector) {
+	if selector == nil {
+		return
+	}
+
+	message := fmt.Sprintf(condition.IAMRoleSelectedMessage, selector.Spec.ARN, selector.GetName(), selector.GetResourceVersion())
+	condition.SetIAMRoleSelected(r, corev1.ConditionTrue, &condition.IAMRoleSelectedReason, &message)
 }
 
 // regionDrifted return true if the desired resource region is different

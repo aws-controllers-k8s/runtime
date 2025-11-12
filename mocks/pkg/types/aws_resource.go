@@ -159,11 +159,6 @@ func (_m *AWSResource) RuntimeObject() client.Object {
 	return r0
 }
 
-// SetIAMRoleSelector provides a mock function with given fields: _a0
-func (_m *AWSResource) SetIAMRoleSelector(_a0 *v1alpha1.IAMRoleSelector) {
-	_m.Called(_a0)
-}
-
 // SetIdentifiers provides a mock function with given fields: _a0
 func (_m *AWSResource) SetIdentifiers(_a0 *v1alpha1.AWSIdentifiers) error {
 	ret := _m.Called(_a0)
