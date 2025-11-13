@@ -77,6 +77,27 @@ func IsSynced(res acktypes.AWSResource) bool {
 	return false
 }
 
+// IsSyncedInRes is like IsSynced, but instead of returnning false
+// when the Synced condition is not there, it returns true.
+// Note(michaelhtm) We will be using this as a preUpdate check to
+// see if a resource has a NotSynced condition
+func IsSyncedInRes(ctx context.Context, rm acktypes.AWSResourceManager, res acktypes.AWSResource) (bool, error) {
+	for _, c := range res.Conditions() {
+		if c.Type == ackv1alpha1.ConditionTypeResourceSynced {
+			if c.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+			// TODO(michaelhtm) we should probably start relying more and more in IsSynced below.
+			// Or maybe store the RequeueError in ackCondition.RequeueError...
+			return false, fmt.Errorf("resource is not synced")
+			
+		}
+	}
+
+	synced, err := rm.IsSynced(ctx, res)
+	return synced, err
+}
+
 // IsReadOnly returns true if the supplied AWSResource has an annotation
 // indicating that it is in read-only mode.
 func IsReadOnly(res acktypes.AWSResource) bool {

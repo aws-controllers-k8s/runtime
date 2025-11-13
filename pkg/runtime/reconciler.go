@@ -888,6 +888,13 @@ func (r *resourceReconciler) updateResource(
 		return latest, err
 	}
 
+	// We don't want to attempt updating the resource until it is Synced!
+	if synced, err := IsSyncedInRes(ctx, rm, latest); !synced {
+		rlog.Info(
+			"requeing until resource is synced",
+		)
+		return latest, err
+	}
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.rd.Delta(desired, latest)
