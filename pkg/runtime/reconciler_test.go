@@ -518,8 +518,8 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 			}
 
 			hasSynced = true
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Equal(ackcondition.SyncedMessage, *condition.Message)
+			assert.Equal(corev1.ConditionUnknown, condition.Status)
+			assert.Equal(ackcondition.UnknownSyncedMessage, *condition.Message)
 		}
 		assert.True(hasSynced)
 	}).Once()
@@ -532,19 +532,6 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 	})
-	updated, updatedRTObj, _ := resourceMocks()
-	updated.On("Identifiers").Return(ids)
-	updated.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	updated.On("MetaObject").Return(metav1.ObjectMeta{
-		Annotations: map[string]string{
-			ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
-			ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
-		},
-	})
-	updated.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -552,18 +539,14 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	).Times(2)
 	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
-	rm.On("ClearResolvedReferences", updated).Return(updated)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	).Once()
-	rm.On("Update", ctx, desired, latest, delta).Return(
-		updated, nil,
-	).Once()
 	rm.On("IsSynced", ctx, latest).Return(true, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 
-	rm.On("LateInitialize", ctx, updated).Return(latest, nil)
 	rd.On("IsManaged", desired).Return(false).Once()
 	rd.On("IsManaged", desired).Return(true)
 	rd.On("MarkAdopted", latest).Return().Once()
@@ -572,28 +555,16 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
 		ackv1alpha1.AnnotationAdopted:        "true",
 	})
-	// setManaged
-	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta()).Once()
-	// update
-	rd.On("Delta", desired, latest).Return(delta).Once()
-	//
-	rd.On("Delta", desired, updated).Return(ackcompare.NewDelta())
-	rd.On("Delta", updated, updated).Return(ackcompare.NewDelta())
-	rd.On("MarkAdopted", updated).Return().Once()
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	kc.On("Patch", withoutCancelContextMatcher, updatedRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
-	statusWriter.On("Patch", withoutCancelContextMatcher, updatedRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil).Once()
 	_, err := r.Sync(ctx, rm, desired)
-	require.Nil(err)
+	require.NotNil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 1)
-	rm.AssertCalled(t, "Update", ctx, desired, latest, delta)
-	rd.AssertCalled(t, "Delta", desired, latest)
-	rd.AssertNumberOfCalls(t, "MarkAdopted", 2)
 	// Assert that the resource is not created or updated
 	rm.AssertNumberOfCalls(t, "Create", 0)
 }
