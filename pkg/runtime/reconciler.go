@@ -615,6 +615,9 @@ func (r *resourceReconciler) Sync(
 				return latest, err
 			}
 			r.rd.MarkAdopted(latest)
+			// ensure status is patched before checking for updates
+			r.patchResourceStatus(ctx, desired, latest)
+			return latest, requeue.Needed(fmt.Errorf("requeuing to check for updates"))
 		}
 		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
