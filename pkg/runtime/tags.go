@@ -75,6 +75,14 @@ var ACKResourceTagFormats = map[string]resolveTagFormat{
 	) string {
 		return obj.GetName()
 	},
+
+	acktags.ResourceKindTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		return gvk.Kind
+	},
 }
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource

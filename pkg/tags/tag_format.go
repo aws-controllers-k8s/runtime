@@ -18,4 +18,5 @@ const (
 	ControllerVersionTagFormat = "%CONTROLLER_VERSION%"
 	NamespaceTagFormat         = "%K8S_NAMESPACE%"
 	ResourceNameTagFormat      = "%K8S_RESOURCE_NAME%"
+	ResourceKindTagFormat      = "%K8S_RESOURCE_KIND%"
 )
