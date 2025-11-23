@@ -589,10 +589,9 @@ func (r *resourceReconciler) Sync(
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
 		rm.FilterSystemTags(latest)
-		if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
 			return latest, err
 		}
-		r.rd.MarkAdopted(latest)
 		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 		if err != nil {
 			return latest, err
@@ -609,12 +608,13 @@ func (r *resourceReconciler) Sync(
 		return latest, nil
 	} else {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
-			// set adopt-or-create resource as managed before attempting
-			// update
-			if err = r.setResourceManaged(ctx, rm, latest); err != nil {
+			// set adopt-or-create resource as managed
+			// and requeue to ensure status is patched
+			if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
 				return latest, err
 			}
-			r.rd.MarkAdopted(latest)
+			err = requeue.Needed(fmt.Errorf("adopted resource, requeuing to check for updates"))
+			return latest, err
 		}
 		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
 			return latest, err
@@ -1171,6 +1171,34 @@ func (r *resourceReconciler) setResourceManaged(
 		return err
 	}
 	rlog.Debug("marked resource as managed")
+	return nil
+}
+// setResourceManagedAndAdopted marks the underlying CR in the supplied AWSResource with
+// a finalizer and adopted annotation that indicates the object is under ACK management and will not
+// be deleted until that finalizer is removed (in setResourceUnmanaged())
+func (r *resourceReconciler) setResourceManagedAndAdopted(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	res acktypes.AWSResource,
+) error {
+	if r.rd.IsManaged(res) {
+		return nil
+	}
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.setResourceManagedAndAdopted")
+	defer func() {
+		exit(err)
+	}()
+
+	orig := res.DeepCopy().RuntimeObject()
+	r.rd.MarkManaged(res)
+	r.rd.MarkAdopted(res)
+	res, err = r.patchResourceMetadataAndSpec(ctx, rm, r.rd.ResourceFromRuntimeObject(orig), res)
+	if err != nil {
+		return err
+	}
+	rlog.Debug("marked resource as managed and adopted")
 	return nil
 }
 
