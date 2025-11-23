@@ -34,7 +34,7 @@ import (
 // Cache wraps the informer for IAMRoleSelector resources
 type Cache struct {
 	sync.RWMutex
-	namespaces *ackcache.NamespaceCache
+	Namespaces *ackcache.NamespaceCache
 	log        logr.Logger
 	informer   cache.SharedIndexInformer
 	selectors  map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
@@ -45,7 +45,7 @@ func NewCache(log logr.Logger) *Cache {
 	return &Cache{
 		log:        log.WithName("cache.iam-role-selector"),
 		selectors:  make(map[string]*ackv1alpha1.IAMRoleSelector),
-		namespaces: ackcache.NewNamespaceCache(log, nil, nil),
+		Namespaces: ackcache.NewNamespaceCache(log, nil, nil),
 	}
 }
 
@@ -79,7 +79,7 @@ func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interfa
 
 	factory.Start(stopCh)
 
-	c.namespaces.Run(namespaceClient, stopCh)
+	c.Namespaces.Run(namespaceClient, stopCh)
 }
 
 func (c *Cache) handleAdd(obj interface{}) {
@@ -211,7 +211,7 @@ func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector
 	}
 
 	namespaceName := metaObj.GetNamespace()
-	namespaceLabels := c.namespaces.GetLabels(namespaceName)
+	namespaceLabels := c.Namespaces.GetLabels(namespaceName)
 	// Get GVK - should be set on ACK resources
 	gvk := resource.GetObjectKind().GroupVersionKind()
 	if gvk.Empty() {
