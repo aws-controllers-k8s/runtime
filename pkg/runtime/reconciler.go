@@ -390,6 +390,9 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 	// look for default region in namespace metadata annotations
 	ns := desired.MetaObject().GetNamespace()
 	nsRegion, ok := r.carmCache.Namespaces.GetDefaultRegion(ns)
+	if !ok {
+		nsRegion, ok = r.irsCache.Namespaces.GetDefaultRegion(ns)
+	}
 	if ok {
 		return ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
 	}
@@ -1472,6 +1475,9 @@ func (r *resourceReconciler) getRegion(
 	// look for default region in namespace metadata annotations
 	ns := res.MetaObject().GetNamespace()
 	defaultRegion, ok := r.carmCache.Namespaces.GetDefaultRegion(ns)
+	if !ok {
+		defaultRegion, ok = r.irsCache.Namespaces.GetDefaultRegion(ns)
+	}
 	if ok {
 		return ackv1alpha1.AWSRegion(defaultRegion)
 	}
@@ -1501,6 +1507,9 @@ func (r *resourceReconciler) getDeletionPolicy(
 	// look for default deletion policy in namespace metadata annotations
 	ns := res.MetaObject().GetNamespace()
 	deletionPolicy, ok = r.carmCache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
+	if !ok {
+		deletionPolicy, ok = r.irsCache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
+	}
 	if ok {
 		return ackv1alpha1.DeletionPolicy(deletionPolicy)
 	}
@@ -1520,6 +1529,9 @@ func (r *resourceReconciler) getEndpointURL(
 	// look for endpoint url in the namespace annotations
 	namespace := res.MetaObject().GetNamespace()
 	endpointURL, ok := r.carmCache.Namespaces.GetEndpointURL(namespace)
+	if !ok {
+		endpointURL, ok = r.irsCache.Namespaces.GetEndpointURL(namespace)
+	}
 	if ok {
 		return endpointURL
 	}
