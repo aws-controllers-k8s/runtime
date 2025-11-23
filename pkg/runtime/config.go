@@ -47,15 +47,28 @@ func (c *serviceController) NewAWSConfig(
 	endpointURL *string,
 	roleARN ackv1alpha1.AWSResourceName,
 	groupVersionKind schema.GroupVersionKind,
+	labels map[string]string,
 ) (aws.Config, error) {
+
+	extra := []string{
+		"GitCommit/" + c.VersionInfo.GitCommit,
+		"BuildDate/" + c.VersionInfo.BuildDate,
+		"CRDKind/" + groupVersionKind.Kind,
+		"CRDVersion/" + groupVersionKind.Version,
+	}
+
+	// Add kro managed info if managed by kro
+	if isKROManaged(labels) {
+		extra = append(extra, "ManagedBy/kro")
+		if kroVersion := getKROVersion(labels); kroVersion != "" {
+			extra = append(extra, "KROVersion/"+kroVersion)
+		}
+	}
 
 	val := formatUserAgent(
 		appName,
 		groupVersionKind.Group+"-"+c.VersionInfo.GitVersion,
-		"GitCommit/"+c.VersionInfo.GitCommit,
-		"BuildDate/"+c.VersionInfo.BuildDate,
-		"CRDKind/"+groupVersionKind.Kind,
-		"CRDVersion/"+groupVersionKind.Version,
+		extra...,
 	)
 
 	client := &clientWithUserAgent{

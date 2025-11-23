@@ -29,6 +29,17 @@ import (
 
 // TODO(jaypipes): Place this code somewhere separate
 //     (michaelhtm)             ^ +1
+//     (a-hilaly)               ^ +1
+
+// Label keys used by the runtime
+const (
+	// LabelManagedBy is the standard Kubernetes label for indicating which tool manages a resource
+	LabelManagedBy = "app.kubernetes.io/managed-by"
+	// LabelKroVersion is the kro-specific label for the kro version
+	LabelKroVersion = "kro.run/kro-version"
+	// LabelKroOwned is the legacy label for kro ownership (backward compatibility)
+	LabelKroOwned = "kro.run/owned"
+)
 
 // AdoptionPolicy stores adoptionPolicy values we expect users to
 // provide in the resources `adoption-policy` annotation
@@ -91,6 +102,80 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 		}
 	}
 	return false
+}
+
+// IsManagedBy returns true if the supplied AWSResource has a label
+// indicating that it is managed by the specified manager.
+// It checks for the standard Kubernetes label app.kubernetes.io/managed-by.
+func IsManagedBy(res acktypes.AWSResource, manager string) bool {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("IsManagedBy received resource with nil RuntimeObject")
+	}
+	labels := mo.GetLabels()
+	if labels == nil {
+		return false
+	}
+	managedBy, exists := labels[LabelManagedBy]
+	return exists && managedBy == manager
+}
+
+// KROVersion returns the kro version from the resource labels.
+// Returns empty string if the kro.run/kro-version label is not present.
+func KROVersion(res acktypes.AWSResource) string {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("KROVersion received resource with nil RuntimeObject")
+	}
+	labels := mo.GetLabels()
+	if labels == nil {
+		return ""
+	}
+	version := labels[LabelKroVersion]
+	return version
+}
+
+// isKROManaged returns true if the labels indicate the resource is managed by kro.
+// It checks for the standard Kubernetes label app.kubernetes.io/managed-by set to "kro",
+// and falls back to kro.run/owned for backward compatibility.
+func isKROManaged(labels map[string]string) bool {
+	if labels == nil {
+		return false
+	}
+
+	// Check standard Kubernetes label
+	if managedBy, exists := labels[LabelManagedBy]; exists && managedBy == "kro" {
+		return true
+	}
+
+	// Check legacy label for backward compatibility
+	if owned, exists := labels[LabelKroOwned]; exists && owned == "true" {
+		return true
+	}
+
+	return false
+}
+
+// getManagedBy returns the value of the app.kubernetes.io/managed-by label.
+// Returns empty string if the label is not present.
+func getManagedBy(labels map[string]string) string {
+	if labels == nil {
+		return ""
+	}
+	managedBy, _ := labels[LabelManagedBy]
+	return managedBy
+}
+
+// getKROVersion returns the kro version from the labels map.
+// Returns empty string if the kro.run/kro-version label is not present.
+func getKROVersion(labels map[string]string) string {
+	if labels == nil {
+		return ""
+	}
+	version := labels[LabelKroVersion]
+	return version
 }
 
 // GetAdoptionPolicy returns the Adoption Policy of the resource
@@ -197,7 +282,7 @@ func patchWithRetry(
 			key := client.ObjectKeyFromObject(obj)
 			freshObject := obj.DeepCopyObject().(client.Object)
 
-			err := apiReader.Get(ctx, key, freshObject) 
+			err := apiReader.Get(ctx, key, freshObject)
 			if err != nil {
 				logger.Info(fmt.Sprintf("failed to refresh resource version during %s patch retry", operationType),
 					"attempt", attempt,

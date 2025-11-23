@@ -19,4 +19,6 @@ const (
 	NamespaceTagFormat         = "%K8S_NAMESPACE%"
 	ResourceNameTagFormat      = "%K8S_RESOURCE_NAME%"
 	ResourceKindTagFormat      = "%K8S_RESOURCE_KIND%"
+	ManagedByTagFormat         = "%MANAGED_BY%"
+	KROVersionTagFormat        = "%KRO_VERSION%"
 )

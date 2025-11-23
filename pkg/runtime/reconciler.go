@@ -335,7 +335,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 
 	// The config pivot to the roleARN will happen if it is not empty.
 	// in the NewResourceManager
-	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk)
+	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk, desired.MetaObject().GetLabels())
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
@@ -1173,6 +1173,7 @@ func (r *resourceReconciler) setResourceManaged(
 	rlog.Debug("marked resource as managed")
 	return nil
 }
+
 // setResourceManagedAndAdopted marks the underlying CR in the supplied AWSResource with
 // a finalizer and adopted annotation that indicates the object is under ACK management and will not
 // be deleted until that finalizer is removed (in setResourceUnmanaged())
