@@ -591,7 +591,7 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
-		rm.FilterSystemTags(latest)
+		rm.FilterSystemTags(latest, r.cfg.ResourceTagKeys)
 		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
 			return latest, err
 		}

@@ -120,6 +120,7 @@ func reconcilerMocks(
 			featuregate.ReadOnlyResources: {Enabled: true},
 			featuregate.ResourceAdoption:  {Enabled: true},
 		},
+		ResourceTagKeys: []string{},
 	}
 	metrics := ackmetrics.NewMetrics("bookstore")
 
@@ -393,7 +394,7 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
-	rm.On("FilterSystemTags", latest).Return()
+	rm.On("FilterSystemTags", latest, []string{})
 	rd.On("MarkAdopted", latest).Return()
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
@@ -783,7 +784,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
-	rm.On("FilterSystemTags", latest)
+	rm.On("FilterSystemTags", latest, []string{})
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
@@ -1851,6 +1852,7 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 
 	// Create caches with the k8s client
 	caches := ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{})
+	irscaches := iamroleselector.NewCache(fakeLogger)
 
 	// Run the caches
 	stopCh := make(chan struct{})
@@ -1891,6 +1893,7 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 			log:       fakeLogger,
 			cfg:       ackcfg.Config{AccountID: "333333333333"},
 			carmCache: caches,
+			irsCache:  irscaches,
 			metrics:   ackmetrics.NewMetrics("test"),
 		},
 		rmf: rmf,

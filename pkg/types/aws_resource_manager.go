@@ -90,7 +90,7 @@ type AWSResourceManager interface {
 	// and this function will remove them before adoption.
 	// Eg. resources created with cloudformation have tags that cannot be
 	//removed by an ACK controller
-	FilterSystemTags(AWSResource)
+	FilterSystemTags(AWSResource, []string)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
