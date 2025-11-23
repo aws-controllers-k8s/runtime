@@ -83,6 +83,20 @@ var ACKResourceTagFormats = map[string]resolveTagFormat{
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		return gvk.Kind
 	},
+
+	acktags.ManagedByTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		return getManagedBy(obj.GetLabels())
+	},
+
+	acktags.KROVersionTagFormat: func(
+		obj rtclient.Object,
+		md acktypes.ServiceControllerMetadata,
+	) string {
+		return getKROVersion(obj.GetLabels())
+	},
 }
 
 // GetDefaultTags provides Default tags (key value pairs) for given resource
@@ -105,7 +119,11 @@ func GetDefaultTags(
 		if key == "" || val == "" {
 			continue
 		}
-		defaultTags[key] = expandTagValue(val, obj, md)
+		expandedVal := expandTagValue(val, obj, md)
+		// Skip tags where the expanded value is empty
+		if expandedVal != "" {
+			defaultTags[key] = expandedVal
+		}
 	}
 	return defaultTags
 }

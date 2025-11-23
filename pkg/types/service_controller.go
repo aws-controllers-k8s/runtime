@@ -85,6 +85,7 @@ type ServiceController interface {
 		*string,
 		ackv1alpha1.AWSResourceName,
 		schema.GroupVersionKind,
+		map[string]string,
 	) (aws.Config, error)
 
 	// GetMetadata returns the metadata associated with the service controller.
