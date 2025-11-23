@@ -1813,6 +1813,7 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 		mock.Anything,
 		mock.AnythingOfType("v1alpha1.AWSResourceName"),
 		mock.AnythingOfType("schema.GroupVersionKind"),
+		mock.Anything, // labels map[string]string
 	).Return(aws.Config{}, nil)
 
 	// Get fakeLogger

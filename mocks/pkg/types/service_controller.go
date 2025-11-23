@@ -104,9 +104,9 @@ func (_m *ServiceController) GetResourceManagerFactories() map[string]types.AWSR
 	return r0
 }
 
-// NewAWSConfig provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
-func (_m *ServiceController) NewAWSConfig(_a0 context.Context, _a1 v1alpha1.AWSRegion, _a2 *string, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind) (aws.Config, error) {
-	ret := _m.Called(_a0, _a1, _a2, _a3, _a4)
+// NewAWSConfig provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4, _a5
+func (_m *ServiceController) NewAWSConfig(_a0 context.Context, _a1 v1alpha1.AWSRegion, _a2 *string, _a3 v1alpha1.AWSResourceName, _a4 schema.GroupVersionKind, _a5 map[string]string) (aws.Config, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4, _a5)
 
 	if len(ret) == 0 {
 		panic("no return value specified for NewAWSConfig")
@@ -114,17 +114,17 @@ func (_m *ServiceController) NewAWSConfig(_a0 context.Context, _a1 v1alpha1.AWSR
 
 	var r0 aws.Config
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) (aws.Config, error)); ok {
-		return rf(_a0, _a1, _a2, _a3, _a4)
+	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind, map[string]string) (aws.Config, error)); ok {
+		return rf(_a0, _a1, _a2, _a3, _a4, _a5)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) aws.Config); ok {
-		r0 = rf(_a0, _a1, _a2, _a3, _a4)
+	if rf, ok := ret.Get(0).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind, map[string]string) aws.Config); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4, _a5)
 	} else {
 		r0 = ret.Get(0).(aws.Config)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind) error); ok {
-		r1 = rf(_a0, _a1, _a2, _a3, _a4)
+	if rf, ok := ret.Get(1).(func(context.Context, v1alpha1.AWSRegion, *string, v1alpha1.AWSResourceName, schema.GroupVersionKind, map[string]string) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4, _a5)
 	} else {
 		r1 = ret.Error(1)
 	}

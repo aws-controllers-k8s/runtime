@@ -18,8 +18,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
+	schemaMocks "github.com/aws-controllers-k8s/runtime/mocks/apimachinery/pkg/runtime/schema"
 	"github.com/aws-controllers-k8s/runtime/pkg/config"
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
@@ -30,6 +32,14 @@ func TestGetDefaultTags(t *testing.T) {
 	obj := mocks.Object{}
 	obj.On("GetNamespace").Return("ns")
 	obj.On("GetName").Return("res")
+	obj.On("GetLabels").Return(map[string]string{})
+
+	// Mock GetObjectKind to return a mock ObjectKind
+	mockObjectKind := &schemaMocks.ObjectKind{}
+	mockObjectKind.On("GroupVersionKind").Return(schema.GroupVersionKind{
+		Kind: "Table",
+	})
+	obj.On("GetObjectKind").Return(mockObjectKind)
 
 	cfg := config.Config{}
 
