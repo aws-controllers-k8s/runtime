@@ -98,6 +98,7 @@ type Config struct {
 	AllowUnsafeEndpointURL          bool
 	LogLevel                        string
 	ResourceTags                    []string
+	ResourceTagKeys                 []string
 	WatchNamespace                  string
 	WatchSelectors                  string
 	EnableWebhookServer             bool
@@ -307,6 +308,15 @@ func (cfg *Config) SetAWSAccountID(ctx context.Context) error {
 
 // Validate ensures the options are valid
 func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
+	cfg.ResourceTagKeys = []string{}
+	// parse resource tags
+	for _, tag := range cfg.ResourceTags {
+		split := strings.Split(tag, "=")
+		if len(split) != 2 {
+			return fmt.Errorf("invalid resource tag: %s", tag)
+		}
+		cfg.ResourceTagKeys = append(cfg.ResourceTagKeys, split[0])
+	}
 	merged := mergeOptions(options)
 	if len(merged.gvks) > 0 {
 		err := cfg.validateReconcileConfigResources(merged.gvks)

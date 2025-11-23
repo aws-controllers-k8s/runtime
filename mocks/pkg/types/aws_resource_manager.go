@@ -134,9 +134,9 @@ func (_m *AWSResourceManager) EnsureTags(_a0 context.Context, _a1 types.AWSResou
 	return r0
 }
 
-// FilterSystemTags provides a mock function with given fields: _a0
-func (_m *AWSResourceManager) FilterSystemTags(_a0 types.AWSResource) {
-	_m.Called(_a0)
+// FilterSystemTags provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceManager) FilterSystemTags(_a0 types.AWSResource, _a1 []string) {
+	_m.Called(_a0, _a1)
 }
 
 // IsSynced provides a mock function with given fields: _a0, _a1
