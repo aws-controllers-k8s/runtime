@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	"github.com/aws-controllers-k8s/runtime/pkg/types"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -332,4 +333,11 @@ func patchStatus(
 	logger acktypes.Logger,
 ) error {
 	return patchWithRetry(ctx, kc, apiReader, obj, patch, logger, OperationType_Status)
+}
+
+func returnLatestIfNil(observed, latest types.AWSResource) types.AWSResource {
+	if observed == nil {
+		return latest
+	}
+	return observed
 }
