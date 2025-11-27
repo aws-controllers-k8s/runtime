@@ -252,8 +252,8 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	latest, latestRTObj, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
 
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On(
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return()
@@ -270,7 +270,7 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	rm.On("Create", ctx, desired).Return(
 		latest, awsError{},
 	)
-	rm.On("IsSynced", ctx, latest).Return(false, nil)
+	rm.On("IsSynced", ctx, desired).Return(false, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("IsManaged", desired).Return(false).Twice()
 	rd.On("IsManaged", desired).Return(true)
@@ -1495,12 +1495,13 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
-
+	
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
-
+	
 	latest, _, _ := resourceMocks()
 	latest.On("Identifiers").Return(ids)
+	desired.On("DeepCopy").Return(latest)
 
 	terminalCondition := ackv1alpha1.Condition{
 		Type:    ackv1alpha1.ConditionTypeTerminal,
@@ -1514,6 +1515,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	// These calls will be made from ensureConditions method, which sets
 	// ACK.ResourceSynced condition correctly
 	latest.On("Conditions").Return([]*ackv1alpha1.Condition{&terminalCondition})
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{&terminalCondition})
 
 	// Verify once when the terminal condition is set
 	latest.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return([]*ackv1alpha1.Condition{&terminalCondition}).Run(func(args mock.Arguments) {
@@ -1603,7 +1605,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return().Once()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1631,7 +1633,25 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
 		assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
 		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
-	})
+	}).Once()
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		assert.Equal(t, 1, len(conditions))
+		cond := conditions[0]
+		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
+		// The non-terminal reconciler error causes the ReferencesResolved
+		// condition to be Unknown
+		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+		assert.Equal(t, ackcondition.UnknownSyncedMessage, *cond.Message)
+		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
+	}).Once()
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -1639,22 +1659,9 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	)
 	rm.On("ClearResolvedReferences", desired).Return(desired)
 	rm.On("ClearResolvedReferences", latest).Return(latest)
-	rm.On("ReadOne", ctx, desired).Return(
-		latest, nil,
-	)
-	rm.On("Update", ctx, desired, latest, delta).Return(
-		latest, nil,
-	)
 
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
-	rd.On("Delta", desired, latest).Return(
-		delta,
-	).Once()
-	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
-
-	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
-	rm.On("IsSynced", ctx, latest).Return(true, nil)
-	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
+	rm.On("IsSynced", ctx, desired).Return(true, nil)
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
@@ -1690,7 +1697,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return().Once()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1704,8 +1711,8 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	// manager has not set any Conditions on the resource, that at least an
 	// ACK.ResourceSynced condition with status Unknown will be set on the
 	// resource.
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On(
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
 	).Return().Run(func(args mock.Arguments) {
@@ -1715,10 +1722,11 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
 		// The non-terminal reconciler error causes the ResourceSynced
 		// condition to be False
-		assert.Equal(t, corev1.ConditionFalse, cond.Status)
-		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
+		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+		assert.Equal(t, ackcondition.UnknownSyncedMessage, *cond.Message)
 		assert.Equal(t, ensureControllerTagsError.Error(), *cond.Reason)
-	})
+	}).Once()
+	desired.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
@@ -1738,7 +1746,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
 
 	rm.On("LateInitialize", ctx, latest).Return(latest, nil)
-	rm.On("IsSynced", ctx, latest).Return(true, nil)
+	rm.On("IsSynced", ctx, desired).Return(false, nil)
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
