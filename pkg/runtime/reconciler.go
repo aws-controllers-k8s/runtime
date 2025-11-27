@@ -505,19 +505,21 @@ func (r *resourceReconciler) Sync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-) (latest acktypes.AWSResource, err error) {
+) (acktypes.AWSResource, error) {
+	var err error
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.Sync")
 	defer func() {
 		exit(err)
 	}()
 
+	var latest acktypes.AWSResource // the newly created or mutated resource
+
 	r.resetConditions(ctx, desired)
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
 	}()
 
-	latest = desired.DeepCopy()
 	isAdopted := IsAdopted(desired)
 	rlog.WithValues("is_adopted", isAdopted)
 
@@ -526,7 +528,7 @@ func (r *resourceReconciler) Sync(
 	needAdoption := NeedAdoption(desired) && !r.rd.IsManaged(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption)
 	adoptionPolicy, err := GetAdoptionPolicy(desired)
 	if err != nil {
-		return latest, err
+		return nil, err
 	}
 	if !needAdoption {
 		adoptionPolicy = ""
@@ -541,9 +543,9 @@ func (r *resourceReconciler) Sync(
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
+	// TODO (michaelhtm): ignore error only for `adopt` or `read-only`
 	if err != nil && (adoptionPolicy == "" || adoptionPolicy == AdoptionPolicy_AdoptOrCreate) && !isReadOnly {
-		latest = ackcondition.WithReferencesResolvedCondition(latest, err)
-		return latest, err
+		return ackcondition.WithReferencesResolvedCondition(desired, err), err
 	}
 	if hasReferences {
 		resolved = ackcondition.WithReferencesResolvedCondition(resolved, err)
@@ -552,7 +554,7 @@ func (r *resourceReconciler) Sync(
 	if needAdoption {
 		populated, err := r.handlePopulation(ctx, desired)
 		if err != nil {
-			return latest, err
+			return nil, err
 		}
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// here we assume the spec fields are provided in the spec.
@@ -577,25 +579,25 @@ func (r *resourceReconciler) Sync(
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
-			return resolved, err
+			return latest, err
 		}
 		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
-			return resolved, ackerr.AdoptedResourceNotFound
+			return nil, ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
-			return resolved, ackerr.ReadOnlyResourceNotFound
+			return nil, ackerr.ReadOnlyResourceNotFound
 		}
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
-			return resolved, err
+			return latest, err
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
 		rm.FilterSystemTags(latest, r.cfg.ResourceTagKeys)
 		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
-			return resolved, err
+			return latest, err
 		}
 		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 		if err != nil {
-			return resolved, err
+			return latest, err
 		}
 	} else if isReadOnly {
 		delta := r.rd.Delta(desired, latest)
@@ -623,11 +625,10 @@ func (r *resourceReconciler) Sync(
 	}
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
-	lateInitialized, err := r.lateInitializeResource(ctx, rm, latest)
-	if err != nil {
+	if latest, err = r.lateInitializeResource(ctx, rm, latest); err != nil {
 		return latest, err
 	}
-	return lateInitialized, nil
+	return latest, nil
 }
 
 // resetConditions strips the supplied resource of all objects in its
@@ -669,13 +670,6 @@ func (r *resourceReconciler) ensureConditions(
 		exit(err)
 	}()
 
-	if ackcondition.Terminal(res) == nil {
-		if ackerr.IsTerminalError(reconcileErr) {
-			condReason := reconcileErr.Error()
-			ackcondition.SetTerminal(res, corev1.ConditionTrue, &condReason, nil)
-		}
-	}
-
 	// If the ACK.ResourceSynced condition is not set using the custom hooks,
 	// determine the Synced condition using "rm.IsSynced" method
 	if ackcondition.Synced(res) == nil {
@@ -694,7 +688,7 @@ func (r *resourceReconciler) ensureConditions(
 
 		if reconcileErr != nil {
 			condReason = reconcileErr.Error()
-			if ackerr.IsTerminalError(reconcileErr) {
+			if reconcileErr == ackerr.Terminal {
 				// A terminal condition is a stable state for a resource.
 				// Terminal conditions indicate that without changes to the
 				// desired state of a resource, the resource's desired state
@@ -1325,7 +1319,6 @@ func (r *resourceReconciler) HandleReconcileError(
 	latest acktypes.AWSResource,
 	err error,
 ) (ctrlrt.Result, error) {
-	rlog := ackrtlog.FromContext(ctx)
 	if ackcompare.IsNotNil(latest) {
 		// The reconciliation loop may have returned an error, but if latest is
 		// not nil, there may be some changes available in the CR's Status
@@ -1342,11 +1335,10 @@ func (r *resourceReconciler) HandleReconcileError(
 		// there is a more robust way to handle failures in the patch operation
 		_ = r.patchResourceStatus(ctx, desired, latest)
 	}
-
-	if ackerr.IsTerminalError(err) {
-		rlog.Info("resource is terminal")
+	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
 	}
+	rlog := ackrtlog.FromContext(ctx)
 
 	var requeueNeededAfter *requeue.RequeueNeededAfter
 	if errors.As(err, &requeueNeededAfter) {
