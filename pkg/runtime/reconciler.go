@@ -568,34 +568,34 @@ func (r *resourceReconciler) Sync(
 		err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
 		rlog.Exit("rm.EnsureTags", err)
 		if err != nil {
-			return resolved, err
+			return latest, err
 		}
 	}
 
 	rlog.Enter("rm.ReadOne")
-	latest, err = rm.ReadOne(ctx, resolved)
+	observed, err := rm.ReadOne(ctx, resolved)
 	rlog.Exit("rm.ReadOne", err)
 	if err != nil {
 		if err != ackerr.NotFound {
-			return resolved, err
+			return returnLatestIfNil(observed, latest), err
 		}
 		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
-			return resolved, ackerr.AdoptedResourceNotFound
+			return returnLatestIfNil(observed, latest), ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
-			return resolved, ackerr.ReadOnlyResourceNotFound
+			return returnLatestIfNil(observed, latest), ackerr.ReadOnlyResourceNotFound
 		}
-		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
-			return resolved, err
+		if observed, err = r.createResource(ctx, rm, resolved); err != nil {
+			return returnLatestIfNil(observed, latest), err
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
-		rm.FilterSystemTags(latest, r.cfg.ResourceTagKeys)
-		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
-			return resolved, err
+		rm.FilterSystemTags(observed, r.cfg.ResourceTagKeys)
+		if err = r.setResourceManagedAndAdopted(ctx, rm, observed); err != nil {
+			return observed, err
 		}
-		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+		observed, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, observed)
 		if err != nil {
-			return resolved, err
+			return returnLatestIfNil(observed, latest), err
 		}
 	} else if isReadOnly {
 		delta := r.rd.Delta(desired, latest)
@@ -606,26 +606,26 @@ func (r *resourceReconciler) Sync(
 				"diff", delta.Differences,
 			)
 		}
-		return latest, nil
+		return observed, nil
 	} else {
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// set adopt-or-create resource as managed
 			// and requeue to ensure status is patched
-			if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
-				return latest, err
+			if err = r.setResourceManagedAndAdopted(ctx, rm, observed); err != nil {
+				return observed, err
 			}
 			err = requeue.Needed(fmt.Errorf("adopted resource, requeuing to check for updates"))
-			return latest, err
+			return observed, err
 		}
-		if latest, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
-			return latest, err
+		if observed, err = r.updateResource(ctx, rm, resolved, latest); err != nil {
+			return returnLatestIfNil(observed, latest), err
 		}
 	}
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
-	lateInitialized, err := r.lateInitializeResource(ctx, rm, latest)
+	lateInitialized, err := r.lateInitializeResource(ctx, rm, observed)
 	if err != nil {
-		return latest, err
+		return observed, err
 	}
 	return lateInitialized, nil
 }
