@@ -208,30 +208,28 @@ func NeedAdoption(res acktypes.AWSResource) bool {
 }
 
 func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {
-	fields := getAdoptionFields(res)
-
-	extractedFields := &map[string]string{}
-	err := json.Unmarshal([]byte(fields), extractedFields)
+	fields, ok := getAdoptionFields(res)
+	if !ok {
+		return nil, fmt.Errorf("%s annotation is not defined. Cannot extract resource identifiers", ackv1alpha1.AnnotationAdoptionFields)
+	}
+	extractedFields := map[string]string{}
+	err := json.Unmarshal([]byte(fields), &extractedFields)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing content of %s annotation: %w", ackv1alpha1.AnnotationAdoptionFields, err)
 	}
 
-	return *extractedFields, nil
+	return extractedFields, nil
 }
 
-func getAdoptionFields(res acktypes.AWSResource) string {
+func getAdoptionFields(res acktypes.AWSResource) (string, bool) {
 	mo := res.MetaObject()
 	if mo == nil {
 		// Should never happen... if it does, it's buggy code.
 		panic("ExtractRequiredFields received resource with nil RuntimeObject")
 	}
 
-	for k, v := range mo.GetAnnotations() {
-		if k == ackv1alpha1.AnnotationAdoptionFields {
-			return v
-		}
-	}
-	return ""
+	fields, ok := mo.GetAnnotations()[ackv1alpha1.AnnotationAdoptionFields]
+	return fields, ok
 }
 
 // patchObject performs a patch operation using context.WithoutCancel to prevent
