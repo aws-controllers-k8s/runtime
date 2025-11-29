@@ -123,9 +123,4 @@ func (e TerminalError) Unwrap() error {
 	return e.err
 }
 
-func IsTerminalError(err error) bool {
-	var terminalErr *TerminalError
-	return err == Terminal || errors.As(err, &terminalErr)
-}
-
 var _ error = &TerminalError{}
