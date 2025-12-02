@@ -37,11 +37,11 @@ func Matches(selector *ackv1alpha1.IAMRoleSelector, ctx MatchContext) bool {
 	// All conditions must match (AND logic between different selectors)
 	return matchesNamespace(selector.Spec.NamespaceSelector, ctx.Namespace, ctx.NamespaceLabels) &&
 		matchesResourceType(selector.Spec.ResourceTypeSelector, ctx.GVK) &&
-		matchesResourceLabels(selector.Spec.ResourceLabelSelector, ctx.ResourceLabels)
+		matchesLabels(selector.Spec.ResourceLabelSelector, ctx.ResourceLabels)
 }
 
-// matchesResourceLabels checks if the resource label selector matches the given resource labels
-func matchesResourceLabels(labelSelector ackv1alpha1.LabelSelector, resourceLabels map[string]string) bool {
+// matchesLabels checks if the label selector matches the given resource labels
+func matchesLabels(labelSelector ackv1alpha1.LabelSelector, resourceLabels map[string]string) bool {
 	// If no label selector specified, matches all resources
 	if len(labelSelector.MatchLabels) == 0 {
 		return true
@@ -136,9 +136,9 @@ func validateSelector(selector *ackv1alpha1.IAMRoleSelector) error {
 		return fmt.Errorf("invalid resource type selector: %w", err)
 	}
 
-	// Validate resource label selector
-	if err := validateResourceLabelSelector(selector.Spec.ResourceLabelSelector); err != nil {
-		return fmt.Errorf("invalid resource label selector: %w", err)
+	// Validate label selector
+	if err := validateLabelSelector(selector.Spec.ResourceLabelSelector); err != nil {
+		return fmt.Errorf("invalid label selector: %w", err)
 	}
 
 	return nil
@@ -158,20 +158,11 @@ func validateNamespaceSelector(nsSelector ackv1alpha1.NamespaceSelector) error {
 	}
 
 	// Validate label selector
-	if len(nsSelector.LabelSelector.MatchLabels) > 0 {
-		for key := range nsSelector.LabelSelector.MatchLabels {
-			if key == "" {
-				return fmt.Errorf("label key cannot be empty")
-			}
-			// Kubernetes label values can be empty, so we don't validate value
-		}
-	}
-
-	return nil
+	return validateLabelSelector(nsSelector.LabelSelector)
 }
 
-// validateResourceLabelSelector checks that the resource label selector has valid label keys
-func validateResourceLabelSelector(labelSelector ackv1alpha1.LabelSelector) error {
+// validateLabelSelector checks that the label selector has valid label keys
+func validateLabelSelector(labelSelector ackv1alpha1.LabelSelector) error {
 	if len(labelSelector.MatchLabels) > 0 {
 		for key := range labelSelector.MatchLabels {
 			if key == "" {

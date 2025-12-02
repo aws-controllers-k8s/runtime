@@ -1047,7 +1047,7 @@ func TestMatchesResourceType(t *testing.T) {
 	}
 }
 
-func TestMatchesResourceLabels(t *testing.T) {
+func TestMatchesLabels(t *testing.T) {
 	tests := []struct {
 		name           string
 		labelSelector  ackv1alpha1.LabelSelector
@@ -1155,9 +1155,9 @@ func TestMatchesResourceLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesResourceLabels(tt.labelSelector, tt.resourceLabels)
+			got := matchesLabels(tt.labelSelector, tt.resourceLabels)
 			if got != tt.want {
-				t.Errorf("matchesResourceLabels() = %v, want %v", got, tt.want)
+				t.Errorf("matchesLabels() = %v, want %v", got, tt.want)
 			}
 		})
 	}
