@@ -111,10 +111,24 @@ func TestCache_Matches(t *testing.T) {
 		},
 	})
 
+	selector4 := createSelector("resource-label-based", ackv1alpha1.IAMRoleSelector{
+		ObjectMeta: metav1.ObjectMeta{Name: "resource-label-based"},
+		Spec: ackv1alpha1.IAMRoleSelectorSpec{
+			ARN: "arn:aws:iam::123456789012:role/labeled-resources-role",
+			ResourceLabelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":  "myapp",
+					"tier": "backend",
+				},
+			},
+		},
+	})
+
 	// Simulate adding selectors via watcher
 	watcher.Add(selector1)
 	watcher.Add(selector2)
 	watcher.Add(selector3)
+	watcher.Add(selector4)
 
 	// Wait for cache to process
 	time.Sleep(100 * time.Millisecond)
@@ -128,24 +142,50 @@ func TestCache_Matches(t *testing.T) {
 	}{
 		{
 			name:      "matches production S3 bucket",
-			resource:  mockResource("production", "s3.services.k8s.aws", "v1alpha1", "Bucket"),
+			resource:  mockResource("production", "s3.services.k8s.aws", "v1alpha1", "Bucket", nil),
 			wantCount: 1,
 			wantARNs:  []string{"arn:aws:iam::123456789012:role/prod-s3-role"},
 		},
 		{
 			name:      "matches RDS in any namespace",
-			resource:  mockResource("default", "rds.services.k8s.aws", "v1alpha1", "DBInstance"),
+			resource:  mockResource("default", "rds.services.k8s.aws", "v1alpha1", "DBInstance", nil),
 			wantCount: 1,
 			wantARNs:  []string{"arn:aws:iam::123456789012:role/rds-role"},
 		},
 		{
 			name:      "no match for wrong namespace",
-			resource:  mockResource("development", "s3.services.k8s.aws", "v1alpha1", "Bucket"),
+			resource:  mockResource("development", "s3.services.k8s.aws", "v1alpha1", "Bucket", nil),
 			wantCount: 0,
 		},
 		{
 			name:      "no match for wrong resource type",
-			resource:  mockResource("production", "dynamodb.services.k8s.aws", "v1alpha1", "Table"),
+			resource:  mockResource("production", "dynamodb.services.k8s.aws", "v1alpha1", "Table", nil),
+			wantCount: 0,
+		},
+		{
+			name: "matches resource by labels",
+			resource: mockResource("default", "s3.services.k8s.aws", "v1alpha1", "Bucket", map[string]string{
+				"app":   "myapp",
+				"tier":  "backend",
+				"extra": "label",
+			}),
+			wantCount: 1,
+			wantARNs:  []string{"arn:aws:iam::123456789012:role/labeled-resources-role"},
+		},
+		{
+			name: "does not match resource with wrong labels",
+			resource: mockResource("default", "s3.services.k8s.aws", "v1alpha1", "Bucket", map[string]string{
+				"app":  "otherapp",
+				"tier": "backend",
+			}),
+			wantCount: 0,
+		},
+		{
+			name: "does not match resource with missing labels",
+			resource: mockResource("default", "s3.services.k8s.aws", "v1alpha1", "Bucket", map[string]string{
+				"app": "myapp",
+				// missing "tier" label
+			}),
 			wantCount: 0,
 		},
 	}
@@ -232,9 +272,10 @@ func createSelector(name string, selector ackv1alpha1.IAMRoleSelector) *unstruct
 	return u
 }
 
-func mockResource(namespace, group, version, kind string) runtime.Object {
+func mockResource(namespace, group, version, kind string, labels map[string]string) runtime.Object {
 	return &testResource{
 		namespace: namespace,
+		labels:    labels,
 		gvk: schema.GroupVersionKind{
 			Group:   group,
 			Version: version,
@@ -246,6 +287,7 @@ func mockResource(namespace, group, version, kind string) runtime.Object {
 // Minimal test resource implementation
 type testResource struct {
 	namespace string
+	labels    map[string]string
 	gvk       schema.GroupVersionKind
 }
 
@@ -280,7 +322,7 @@ func (r *testResource) GetDeletionTimestamp() *metav1.Time            { return n
 func (r *testResource) SetDeletionTimestamp(*metav1.Time)             {}
 func (r *testResource) GetDeletionGracePeriodSeconds() *int64         { return nil }
 func (r *testResource) SetDeletionGracePeriodSeconds(*int64)          {}
-func (r *testResource) GetLabels() map[string]string                  { return nil }
+func (r *testResource) GetLabels() map[string]string                  { return r.labels }
 func (r *testResource) SetLabels(map[string]string)                   {}
 func (r *testResource) GetAnnotations() map[string]string             { return nil }
 func (r *testResource) SetAnnotations(map[string]string)              {}

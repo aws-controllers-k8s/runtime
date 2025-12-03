@@ -327,6 +327,193 @@ func TestMatches(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "matches resource by labels",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":  "myapp",
+							"tier": "backend",
+						},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "default",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"app":   "myapp",
+					"tier":  "backend",
+					"extra": "label", // extra labels should be ignored
+				},
+			},
+			want: true,
+		},
+		{
+			name: "does not match resource with wrong labels",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "myapp",
+						},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "default",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"app": "otherapp",
+				},
+			},
+			want: false,
+		},
+		{
+			name: "does not match resource with missing labels",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":  "myapp",
+							"tier": "backend",
+						},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "default",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"app": "myapp",
+					// missing "tier" label
+				},
+			},
+			want: false,
+		},
+		{
+			name: "empty resource label selector matches all resources",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "default",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"any": "label",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "matches with namespace, resource type, and resource labels",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					NamespaceSelector: ackv1alpha1.NamespaceSelector{
+						Names: []string{"production"},
+					},
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
+						{
+							Kind: "Bucket",
+						},
+					},
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "myapp",
+						},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "production",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "does not match if resource labels don't match even when namespace and type match",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					NamespaceSelector: ackv1alpha1.NamespaceSelector{
+						Names: []string{"production"},
+					},
+					ResourceTypeSelector: []ackv1alpha1.GroupVersionKind{
+						{
+							Kind: "Bucket",
+						},
+					},
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "myapp",
+						},
+					},
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "production",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: map[string]string{
+					"app": "otherapp",
+				},
+			},
+			want: false,
+		},
+		{
+			name: "matches resource with nil resource labels when no label selector",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+				},
+			},
+			ctx: MatchContext{
+				Namespace: "default",
+				GVK: schema.GroupVersionKind{
+					Group:   "s3.services.k8s.aws",
+					Version: "v1alpha1",
+					Kind:    "Bucket",
+				},
+				ResourceLabels: nil,
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -463,6 +650,37 @@ func TestValidateSelector(t *testing.T) {
 			errMsg:  "duplicate resource type selector: s3.services.k8s.aws/v1alpha1/Bucket",
 		},
 		{
+			name: "empty resource label key",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"":    "value",
+							"app": "myapp",
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid label selector: label key cannot be empty",
+		},
+		{
+			name: "valid resource label selector",
+			selector: &ackv1alpha1.IAMRoleSelector{
+				Spec: ackv1alpha1.IAMRoleSelectorSpec{
+					ARN: "arn:aws:iam::123456789012:role/test-role",
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app":  "myapp",
+							"tier": "backend",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "valid complex selector",
 			selector: &ackv1alpha1.IAMRoleSelector{
 				Spec: ackv1alpha1.IAMRoleSelectorSpec{
@@ -483,6 +701,11 @@ func TestValidateSelector(t *testing.T) {
 							Group:   "rds.services.k8s.aws",
 							Version: "v1alpha1",
 							Kind:    "DBInstance",
+						},
+					},
+					ResourceLabelSelector: ackv1alpha1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "myapp",
 						},
 					},
 				},
@@ -819,6 +1042,122 @@ func TestMatchesResourceType(t *testing.T) {
 			got := matchesResourceType(tt.rtSelectors, tt.gvk)
 			if got != tt.want {
 				t.Errorf("matchesResourceType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchesLabels(t *testing.T) {
+	tests := []struct {
+		name           string
+		labelSelector  ackv1alpha1.LabelSelector
+		resourceLabels map[string]string
+		want           bool
+	}{
+		{
+			name:           "empty selector matches all",
+			labelSelector:  ackv1alpha1.LabelSelector{},
+			resourceLabels: map[string]string{"any": "label"},
+			want:           true,
+		},
+		{
+			name:           "empty selector matches nil labels",
+			labelSelector:  ackv1alpha1.LabelSelector{},
+			resourceLabels: nil,
+			want:           true,
+		},
+		{
+			name: "matches single label",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			resourceLabels: map[string]string{
+				"app": "myapp",
+			},
+			want: true,
+		},
+		{
+			name: "matches multiple labels",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":  "myapp",
+					"tier": "backend",
+				},
+			},
+			resourceLabels: map[string]string{
+				"app":  "myapp",
+				"tier": "backend",
+			},
+			want: true,
+		},
+		{
+			name: "matches with extra labels on resource",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			resourceLabels: map[string]string{
+				"app":   "myapp",
+				"extra": "label",
+				"more":  "labels",
+			},
+			want: true,
+		},
+		{
+			name: "does not match - wrong value",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			resourceLabels: map[string]string{
+				"app": "otherapp",
+			},
+			want: false,
+		},
+		{
+			name: "does not match - missing label",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app":  "myapp",
+					"tier": "backend",
+				},
+			},
+			resourceLabels: map[string]string{
+				"app": "myapp",
+			},
+			want: false,
+		},
+		{
+			name: "does not match - nil resource labels",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			resourceLabels: nil,
+			want:           false,
+		},
+		{
+			name: "does not match - empty resource labels",
+			labelSelector: ackv1alpha1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "myapp",
+				},
+			},
+			resourceLabels: map[string]string{},
+			want:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchesLabels(tt.labelSelector, tt.resourceLabels)
+			if got != tt.want {
+				t.Errorf("matchesLabels() = %v, want %v", got, tt.want)
 			}
 		})
 	}

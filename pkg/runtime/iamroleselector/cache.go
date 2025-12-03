@@ -152,6 +152,7 @@ func (c *Cache) GetMatchingSelectors(
 	namespace string,
 	namespaceLabels map[string]string,
 	gvk schema.GroupVersionKind,
+	resourceLabels map[string]string,
 ) ([]*ackv1alpha1.IAMRoleSelector, error) {
 	if c.informer == nil {
 		return nil, fmt.Errorf("cache not initialized")
@@ -161,6 +162,7 @@ func (c *Cache) GetMatchingSelectors(
 		Namespace:       namespace,
 		NamespaceLabels: namespaceLabels,
 		GVK:             gvk,
+		ResourceLabels:  resourceLabels,
 	}
 
 	c.RLock()
@@ -212,6 +214,7 @@ func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector
 
 	namespaceName := metaObj.GetNamespace()
 	namespaceLabels := c.Namespaces.GetLabels(namespaceName)
+	resourceLabels := metaObj.GetLabels()
 	// Get GVK - should be set on ACK resources
 	gvk := resource.GetObjectKind().GroupVersionKind()
 	if gvk.Empty() {
@@ -221,5 +224,5 @@ func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector
 
 	// TODO: get namespace labels from a namespace lister/cache
 	// For now, pass empty namespace labels
-	return c.GetMatchingSelectors(namespaceName, namespaceLabels, gvk)
+	return c.GetMatchingSelectors(namespaceName, namespaceLabels, gvk, resourceLabels)
 }
