@@ -663,7 +663,7 @@ func TestValidateSelector(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid resource label selector: label key cannot be empty",
+			errMsg:  "invalid label selector: label key cannot be empty",
 		},
 		{
 			name: "valid resource label selector",
