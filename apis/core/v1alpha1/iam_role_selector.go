@@ -36,9 +36,10 @@ type GroupVersionKind struct {
 
 type IAMRoleSelectorSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="Value is immutable once set"
-	ARN                  string             `json:"arn"`
-	NamespaceSelector    NamespaceSelector  `json:"namespaceSelector,omitempty"`
-	ResourceTypeSelector []GroupVersionKind `json:"resourceTypeSelector,omitempty"`
+	ARN                   string             `json:"arn"`
+	NamespaceSelector     NamespaceSelector  `json:"namespaceSelector,omitempty"`
+	ResourceTypeSelector  []GroupVersionKind `json:"resourceTypeSelector,omitempty"`
+	ResourceLabelSelector LabelSelector      `json:"resourceLabelSelector,omitempty"`
 }
 
 type IAMRoleSelectorStatus struct{}
