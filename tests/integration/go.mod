@@ -2,8 +2,6 @@ module github.com/aws-controllers-k8s/runtime/tests/integration
 
 go 1.25.4
 
-replace github.com/aws-controllers-k8s/runtime => ../..
-
 require (
 	github.com/aws-controllers-k8s/runtime v0.56.0
 	github.com/aws/aws-sdk-go v1.55.8
