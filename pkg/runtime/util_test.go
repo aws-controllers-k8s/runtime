@@ -14,6 +14,8 @@
 package runtime
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -117,4 +119,33 @@ func TestExtractAdoptionFields(t *testing.T) {
 	actual, err := ExtractAdoptionFields(res)
 	require.NoError(err)
 	require.Equal(expected, actual)
+}
+
+func TestExtractAdoptionFields_NoAdoptionFields(t *testing.T) {
+	require := require.New(t)
+
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{},
+	})
+
+	_, err := ExtractAdoptionFields(res)
+	require.Error(err)
+	require.Equal(err, fmt.Errorf("%s annotation is not defined. Cannot extract resource identifiers", ackv1alpha1.AnnotationAdoptionFields))
+}
+
+func TestExtractAdoptionFields_InvalidAdoptionFields(t *testing.T) {
+	require := require.New(t)
+
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionFields: "misconfigured",
+		},
+	})
+
+	_, err := ExtractAdoptionFields(res)
+	require.Error(err)
+	expectedErr := fmt.Sprintf("error parsing content of %s annotation", ackv1alpha1.AnnotationAdoptionFields)
+	require.True(strings.Contains(err.Error(), expectedErr))
 }
