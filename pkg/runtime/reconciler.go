@@ -441,7 +441,7 @@ func (r *resourceReconciler) handlePopulation(
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			return desired, nil
 		}
-		return desired, ackerr.NewTerminalError(err)
+		return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 	}
 
 	populated := desired.DeepCopy()
@@ -554,7 +554,7 @@ func (r *resourceReconciler) Sync(
 	if needAdoption {
 		populated, err := r.handlePopulation(ctx, desired)
 		if err != nil {
-			return nil, err
+			return populated, err
 		}
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// here we assume the spec fields are provided in the spec.

@@ -324,6 +324,21 @@ func WithReferencesResolvedCondition(
 	return ko
 }
 
+// WithTerminalCondition returns a new AWSResource with the
+// ConditionTypeTerminal set based on the err parameter
+func WithTerminalCondition(
+	resource acktypes.AWSResource,
+	err error,
+) acktypes.AWSResource {
+	ko := resource.DeepCopy()
+
+	if err != nil {
+		errString := err.Error()
+		SetTerminal(ko, corev1.ConditionTrue, nil, &errString)
+	}
+	return ko
+}
+
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
 // False status means that resource has LateInitializationConfig but has not been completely
 // late initialized yet.
