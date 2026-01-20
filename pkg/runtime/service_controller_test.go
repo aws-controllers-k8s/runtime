@@ -28,10 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtconfig "sigs.k8s.io/controller-runtime/pkg/config"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -126,10 +128,12 @@ func (m *fakeManager) GetClient() client.Client                                 
 func (m *fakeManager) GetFieldIndexer() client.FieldIndexer                           { return nil }
 func (m *fakeManager) GetCache() cache.Cache                                          { return nil }
 func (m *fakeManager) GetEventRecorderFor(name string) record.EventRecorder           { return nil }
+func (m *fakeManager) GetEventRecorder(name string) events.EventRecorder              { return nil }
 func (m *fakeManager) GetRESTMapper() meta.RESTMapper                                 { return nil }
 func (m *fakeManager) GetAPIReader() client.Reader                                    { return nil }
 func (m *fakeManager) GetWebhookServer() webhook.Server                               { return nil }
 func (m *fakeManager) AddMetricsServerExtraHandler(string, http.Handler) error        { return nil }
+func (m *fakeManager) GetConverterRegistry() conversion.Registry                      { return nil }
 
 func TestServiceController(t *testing.T) {
 	require := require.New(t)
