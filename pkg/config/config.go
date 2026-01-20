@@ -44,6 +44,7 @@ import (
 const (
 	flagEnableFieldExportReconciler     = "enable-field-export-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
+	flagEnableControllerWarmup          = "enable-controller-warmup"
 	flagEnableCARM                      = "enable-carm"
 	flagLeaderElectionNamespace         = "leader-election-namespace"
 	flagMetricAddr                      = "metrics-addr"
@@ -87,6 +88,7 @@ type Config struct {
 	MetricsAddr                     string
 	HealthzAddr                     string
 	EnableLeaderElection            bool
+	EnableControllerWarmup          bool
 	EnableFieldExportReconciler     bool
 	EnableCARM                      bool
 	LeaderElectionNamespace         string
@@ -141,6 +143,12 @@ func (cfg *Config) BindFlags() {
 		false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.",
+	)
+	flag.BoolVar(
+		&cfg.EnableControllerWarmup, flagEnableControllerWarmup,
+		false,
+		"Enable controller warmup to start controller sources (watches/informers) before leader election is won. "+
+			"This pre-populates caches and improves leader failover time. Requires --enable-leader-election to be set.",
 	)
 	flag.BoolVar(
 		&cfg.EnableFieldExportReconciler, flagEnableFieldExportReconciler,
@@ -327,6 +335,10 @@ func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 
 	if cfg.Region == "" {
 		return errors.New("unable to start service controller as AWS region is missing. Please pass --aws-region flag or set AWS_REGION environment variable")
+	}
+
+	if cfg.EnableControllerWarmup && !cfg.EnableLeaderElection {
+		return fmt.Errorf("flag '%s' requires '%s' to be enabled", flagEnableControllerWarmup, flagEnableLeaderElection)
 	}
 
 	if cfg.EndpointURL != "" {
