@@ -14,26 +14,35 @@
 package compare
 
 import (
-	"github.com/samber/lo"
-
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 )
 
 // GetTagsDifference determines which tags have been added, unchanged or have
 // been removed between the `from` and the `to` inputs. Tags that are in `from`
 // but not in `to` are added to `removed`, whereas tags that are in `to` but not
-// in `from` are added to `added`.
+// in `from` are added to `added`. Tags whose value has changed between `from`
+// and `to` are added to `added` only (not `removed`), since tag APIs use
+// upsert semantics where adding a tag with an existing key overwrites the value.
 func GetTagsDifference(from, to acktags.Tags) (added, unchanged, removed acktags.Tags) {
-	// we need to convert the tag tuples to a comparable interface type
-	fromPairs := lo.ToPairs(from)
-	toPairs := lo.ToPairs(to)
+	added = acktags.NewTags()
+	unchanged = acktags.NewTags()
+	removed = acktags.NewTags()
 
-	left, right := lo.Difference(fromPairs, toPairs)
-	middle := lo.Intersect(fromPairs, toPairs)
+	for key, fromVal := range from {
+		toVal, existsInTo := to[key]
+		if !existsInTo {
+			removed[key] = fromVal
+		} else if fromVal == toVal {
+			unchanged[key] = fromVal
+		}
+	}
 
-	removed = lo.FromPairs(left)
-	added = lo.FromPairs(right)
-	unchanged = lo.FromPairs(middle)
+	for key, toVal := range to {
+		fromVal, existsInFrom := from[key]
+		if !existsInFrom || fromVal != toVal {
+			added[key] = toVal
+		}
+	}
 
 	return added, unchanged, removed
 }

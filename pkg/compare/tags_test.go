@@ -22,41 +22,74 @@ import (
 	acktags "github.com/aws-controllers-k8s/runtime/pkg/tags"
 )
 
-func TestTagsDifference(t *testing.T) {
-	require := require.New(t)
+func TestGetTagsDifference(t *testing.T) {
+	tests := []struct {
+		name      string
+		from      acktags.Tags
+		to        acktags.Tags
+		wantAdded acktags.Tags
+		wantUnch  acktags.Tags
+		wantRemov acktags.Tags
+	}{
+		{
+			name:      "both empty",
+			from:      acktags.Tags{},
+			to:        acktags.Tags{},
+			wantAdded: acktags.Tags{},
+			wantUnch:  acktags.Tags{},
+			wantRemov: acktags.Tags{},
+		},
+		{
+			name: "all unchanged",
+			from: acktags.Tags{"a": "1", "b": "2"},
+			to:   acktags.Tags{"a": "1", "b": "2"},
+			wantAdded: acktags.Tags{},
+			wantUnch:  acktags.Tags{"a": "1", "b": "2"},
+			wantRemov: acktags.Tags{},
+		},
+		{
+			name: "tags added",
+			from: acktags.Tags{},
+			to:   acktags.Tags{"a": "1", "b": "2"},
+			wantAdded: acktags.Tags{"a": "1", "b": "2"},
+			wantUnch:  acktags.Tags{},
+			wantRemov: acktags.Tags{},
+		},
+		{
+			name: "tags removed",
+			from: acktags.Tags{"a": "1", "b": "2"},
+			to:   acktags.Tags{},
+			wantAdded: acktags.Tags{},
+			wantUnch:  acktags.Tags{},
+			wantRemov: acktags.Tags{"a": "1", "b": "2"},
+		},
+		{
+			name: "value change only in added not removed",
+			from: acktags.Tags{"env": "prod"},
+			to:   acktags.Tags{"env": "staging"},
+			wantAdded: acktags.Tags{"env": "staging"},
+			wantUnch:  acktags.Tags{},
+			wantRemov: acktags.Tags{},
+		},
+		{
+			name: "mixed add remove unchanged and value change",
+			from: acktags.Tags{"keep": "same", "remove": "old", "update": "old"},
+			to:   acktags.Tags{"keep": "same", "new": "val", "update": "new"},
+			wantAdded: acktags.Tags{"new": "val", "update": "new"},
+			wantUnch:  acktags.Tags{"keep": "same"},
+			wantRemov: acktags.Tags{"remove": "old"},
+		},
+	}
 
-	a := acktags.NewTags()
-	b := acktags.NewTags()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
 
-	a["tag1"] = "value1"
+			added, unchanged, removed := compare.GetTagsDifference(tt.from, tt.to)
 
-	a["tag2"] = "value2"
-	b["tag2"] = "value2"
-
-	b["tag3"] = "value3"
-	b["tag4"] = "value4"
-
-	added, unchanged, removed := compare.GetTagsDifference(a, b)
-
-	require.Len(added, 2)
-	require.Len(unchanged, 1)
-	require.Len(removed, 1)
-
-	require.Contains(added, "tag3")
-	require.Contains(added, "tag4")
-	require.Contains(unchanged, "tag2")
-	require.Contains(removed, "tag1")
-
-	// add test for updating the value of an existing tag
-	a["tag2"] = "oldvalue"
-	b["tag2"] = "newvalue"
-
-	added, unchanged, removed = compare.GetTagsDifference(a, b)
-
-	require.Len(added, 3)
-	require.Len(unchanged, 0)
-	require.Len(removed, 2)
-
-	require.Contains(added, "tag2")
-	require.Equal(added["tag2"], "newvalue")
+			require.Equal(tt.wantAdded, added)
+			require.Equal(tt.wantUnch, unchanged)
+			require.Equal(tt.wantRemov, removed)
+		})
+	}
 }
