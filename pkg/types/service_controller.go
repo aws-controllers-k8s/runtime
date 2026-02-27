@@ -81,7 +81,8 @@ type ServiceController interface {
 	// configured if the provided endpointURL is not empty.
 	NewAWSConfig(
 		context.Context,
-		ackv1alpha1.AWSRegion,
+		ackv1alpha1.AWSRegion, // base region
+		ackv1alpha1.AWSRegion, // region where resource is created
 		*string,
 		ackv1alpha1.AWSResourceName,
 		schema.GroupVersionKind,
