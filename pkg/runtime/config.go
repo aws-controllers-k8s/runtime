@@ -43,6 +43,7 @@ func (c *clientWithUserAgent) Do(r *http.Request) (*http.Response, error) {
 
 func (c *serviceController) NewAWSConfig(
 	ctx context.Context,
+	baseRegion ackv1alpha1.AWSRegion,
 	region ackv1alpha1.AWSRegion,
 	endpointURL *string,
 	roleARN ackv1alpha1.AWSResourceName,
@@ -78,21 +79,26 @@ func (c *serviceController) NewAWSConfig(
 
 	awsCfg, err := config.LoadDefaultConfig(
 		ctx,
-		config.WithRegion(string(region)),
+		config.WithRegion(string(baseRegion)),
 		config.WithHTTPClient(client),
 	)
 	if err != nil {
 		return awsCfg, err
 	}
-
-	if endpointURL != nil && *endpointURL != "" {
-		awsCfg.BaseEndpoint = endpointURL
-	}
+	
+	var credentials *stscreds.AssumeRoleProvider
 
 	if roleARN != "" {
-		client := sts.NewFromConfig(awsCfg)
-		creds := stscreds.NewAssumeRoleProvider(client, string(roleARN))
-		awsCfg.Credentials = aws.NewCredentialsCache(creds)
+		stsClient := sts.NewFromConfig(awsCfg)
+		credentials = stscreds.NewAssumeRoleProvider(stsClient, string(roleARN))
+	}
+
+	awsCfg.Region = string(region)
+	if credentials != nil {
+		awsCfg.Credentials = aws.NewCredentialsCache(credentials)
+	}
+	if endpointURL != nil && *endpointURL != "" {
+		awsCfg.BaseEndpoint = endpointURL
 	}
 	return awsCfg, nil
 }

@@ -335,7 +335,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 
 	// The config pivot to the roleARN will happen if it is not empty.
 	// in the NewResourceManager
-	clientConfig, err := r.sc.NewAWSConfig(ctx, region, &endpointURL, roleARN, gvk, desired.MetaObject().GetLabels())
+	clientConfig, err := r.sc.NewAWSConfig(ctx, ackv1alpha1.AWSRegion(r.cfg.Region), region, &endpointURL, roleARN, gvk, desired.MetaObject().GetLabels())
 	if err != nil {
 		return ctrlrt.Result{}, err
 	}
