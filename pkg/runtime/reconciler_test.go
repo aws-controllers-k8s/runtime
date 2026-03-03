@@ -1912,3 +1912,172 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
 	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
 }
+
+// TestReconcilerDelete_VerifyDeletionNotFound tests that when a resource is deleted
+// and the verification ReadOne returns NotFound, the finalizer is removed.
+func TestReconcilerDelete_VerifyDeletionNotFound(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, desiredRTObj, metaObj := resourceMocks()
+	// Set deletion policy annotation to avoid namespace cache lookup
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationDeletionPolicy: string(ackv1alpha1.DeletionPolicyDelete),
+	})
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("IsBeingDeleted").Return(true)
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+	desired.On("Identifiers").Return(ids)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	// First ReadOne returns the resource (exists)
+	// Delete succeeds
+	// Second ReadOne (verification) returns NotFound
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ReadOne", ctx, desired).Return(desired, nil).Once()
+	rm.On("Delete", ctx, desired).Return(desired, nil)
+	rm.On("ReadOne", ctx, desired).Return(nil, ackerr.NotFound).Once()
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, desired)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkUnmanaged", desired).Return()
+	rd.On("ResourceFromRuntimeObject", desiredRTObj).Return(desired)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", withoutCancelContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	// Set DeletionTimestamp on the meta object
+	now := metav1.Now()
+	metaObj.SetDeletionTimestamp(&now)
+
+	// Call reconcile (not Sync) since delete happens in reconcile
+	reconciler := r.(*resourceReconciler)
+	_, err := reconciler.reconcile(ctx, rm, desired)
+
+	require.Nil(err)
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rm.AssertCalled(t, "Delete", ctx, desired)
+	rm.AssertNumberOfCalls(t, "ReadOne", 2)
+	rd.AssertCalled(t, "MarkUnmanaged", desired)
+}
+
+// TestReconcilerDelete_VerifyDeletionStillExists tests that when a resource is deleted
+// but the verification ReadOne returns success (resource still exists), it requeues.
+func TestReconcilerDelete_VerifyDeletionStillExists(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, _, metaObj := resourceMocks()
+	// Set deletion policy annotation to avoid namespace cache lookup
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationDeletionPolicy: string(ackv1alpha1.DeletionPolicyDelete),
+	})
+	desired.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Return()
+	desired.On("IsBeingDeleted").Return(true)
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+	desired.On("Identifiers").Return(ids)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	// First ReadOne returns the resource (exists)
+	// Delete succeeds
+	// Second ReadOne (verification) also returns success (resource still exists, e.g., in "deleting" state)
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ReadOne", ctx, desired).Return(desired, nil).Once()
+	rm.On("Delete", ctx, desired).Return(desired, nil)
+	rm.On("ReadOne", ctx, desired).Return(desired, nil).Once()
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, desired)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, _, _ := reconcilerMocks(rmf)
+
+	// Set DeletionTimestamp on the meta object
+	now := metav1.Now()
+	metaObj.SetDeletionTimestamp(&now)
+
+	reconciler := r.(*resourceReconciler)
+	_, err := reconciler.reconcile(ctx, rm, desired)
+
+	// Should return a requeue error
+	require.NotNil(err)
+	var requeueErr *requeue.RequeueNeededAfter
+	require.True(errors.As(err, &requeueErr))
+	assert.Equal(t, 15*time.Second, requeueErr.Duration())
+
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rm.AssertCalled(t, "Delete", ctx, desired)
+	rm.AssertNumberOfCalls(t, "ReadOne", 2)
+	// MarkUnmanaged should NOT be called since resource still exists
+	rd.AssertNotCalled(t, "MarkUnmanaged", desired)
+}
+
+// TestReconcilerDelete_VerifyDeletionError tests that when a resource is deleted
+// but the verification ReadOne returns an error (other than NotFound), it returns that error.
+func TestReconcilerDelete_VerifyDeletionError(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, _, metaObj := resourceMocks()
+	// Set deletion policy annotation to avoid namespace cache lookup
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationDeletionPolicy: string(ackv1alpha1.DeletionPolicyDelete),
+	})
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("IsBeingDeleted").Return(true)
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+	desired.On("Identifiers").Return(ids)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	verifyError := errors.New("AWS API error during verification")
+
+	// First ReadOne returns the resource (exists)
+	// Delete succeeds
+	// Second ReadOne (verification) returns an error
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ReadOne", ctx, desired).Return(desired, nil).Once()
+	rm.On("Delete", ctx, desired).Return(desired, nil)
+	rm.On("ReadOne", ctx, desired).Return(nil, verifyError).Once()
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, desired)
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, _, _ := reconcilerMocks(rmf)
+
+	// Set DeletionTimestamp on the meta object
+	now := metav1.Now()
+	metaObj.SetDeletionTimestamp(&now)
+
+	reconciler := r.(*resourceReconciler)
+	_, err := reconciler.reconcile(ctx, rm, desired)
+
+	// Should return the verification error
+	require.NotNil(err)
+	assert.Equal(t, verifyError, err)
+
+	rm.AssertCalled(t, "ReadOne", ctx, desired)
+	rm.AssertCalled(t, "Delete", ctx, desired)
+	rm.AssertNumberOfCalls(t, "ReadOne", 2)
+	// MarkUnmanaged should NOT be called since verification failed
+	rd.AssertNotCalled(t, "MarkUnmanaged", desired)
+}
