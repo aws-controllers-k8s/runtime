@@ -37,6 +37,8 @@ var (
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
 	UnavailableIAMRoleMessage        = "IAM Role is not available"
+	DeletingMessage                  = "deletion in progress"
+	DeletingReason                   = "Deleting"
 
 	IAMRoleSelectedReason  = "Selected"
 	IAMRoleSelectedMessage = "roleARN: %s, selectorName: %s, selectorResourceVersion: %s"

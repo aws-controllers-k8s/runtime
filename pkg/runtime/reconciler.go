@@ -1129,13 +1129,36 @@ func (r *resourceReconciler) deleteResource(
 		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, current, latest)
 	}
 	if err != nil {
-		// NOTE: Delete() implementations that have asynchronously-completing
-		// deletions should return a RequeueNeededAfter.
 		return latest, err
 	}
 
-	// Now that external AWS service resources have been appropriately cleaned
-	// up, we remove the finalizer representing the CR is managed by ACK,
+	// Verify the AWS resource is actually deleted before removing the
+	// finalizer. Some AWS APIs return success immediately while the resource
+	// transitions through a "deleting" state. We need to ensure the resource
+	// is fully gone (ReadOne returns NotFound) before allowing the CR to be
+	// deleted from Kubernetes.
+	rlog.Enter("rm.ReadOne (verify deletion)")
+	_, verifyErr := rm.ReadOne(ctx, current)
+	rlog.Exit("rm.ReadOne (verify deletion)", verifyErr)
+	if verifyErr == nil {
+		// Resource still exists, requeue to wait for deletion to complete
+		resForCondition := latest
+		if !ackcompare.IsNotNil(resForCondition) {
+			resForCondition = current
+		}
+		ackcondition.SetSynced(resForCondition, corev1.ConditionFalse, &condition.DeletingMessage, &condition.DeletingReason)
+		return resForCondition, requeue.NeededAfter(
+			errors.New(condition.DeletingMessage),
+			15*time.Second,
+		)
+	}
+	if verifyErr != ackerr.NotFound {
+		// Some other error occurred during verification, return it
+		return latest, verifyErr
+	}
+
+	// Now that external AWS service resources have been confirmed deleted,
+	// we remove the finalizer representing the CR is managed by ACK,
 	// allowing the CR to be deleted by the Kubernetes API server
 	if ackcompare.IsNotNil(latest) {
 		err = r.setResourceUnmanaged(ctx, rm, latest)
