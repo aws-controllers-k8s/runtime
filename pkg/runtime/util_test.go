@@ -14,6 +14,7 @@
 package runtime
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -117,4 +118,34 @@ func TestExtractAdoptionFields(t *testing.T) {
 	actual, err := ExtractAdoptionFields(res)
 	require.NoError(err)
 	require.Equal(expected, actual)
+}
+
+func TestExtractAdoptionFields_EmptyFields(t *testing.T) {
+	require := require.New(t)
+
+	// No adoption-fields annotation at all
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{},
+	})
+
+	_, err := ExtractAdoptionFields(res)
+	require.Error(err)
+	require.True(strings.Contains(err.Error(), "services.k8s.aws/adoption-fields annotation is required"))
+	require.True(strings.Contains(err.Error(), "adoption-policy is set to 'adopt'"))
+}
+
+func TestExtractAdoptionFields_InvalidJSON(t *testing.T) {
+	require := require.New(t)
+
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{
+		Annotations: map[string]string{
+			ackv1alpha1.AnnotationAdoptionFields: `not valid json`,
+		},
+	})
+
+	_, err := ExtractAdoptionFields(res)
+	require.Error(err)
+	require.True(strings.Contains(err.Error(), "failed to parse services.k8s.aws/adoption-fields annotation as JSON"))
 }

@@ -209,11 +209,18 @@ func NeedAdoption(res acktypes.AWSResource) bool {
 
 func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) {
 	fields := getAdoptionFields(res)
+	if fields == "" {
+		return nil, fmt.Errorf(
+			"services.k8s.aws/adoption-fields annotation is required when " +
+				"adoption-policy is set to 'adopt'; please provide the resource " +
+				"identifier fields as a JSON object (e.g. '{\"name\": \"my-resource\"}')",
+		)
+	}
 
 	extractedFields := &map[string]string{}
 	err := json.Unmarshal([]byte(fields), extractedFields)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse services.k8s.aws/adoption-fields annotation as JSON: %w", err)
 	}
 
 	return *extractedFields, nil
