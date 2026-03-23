@@ -599,6 +599,10 @@ func (r *resourceReconciler) Sync(
 		if err != nil {
 			return latest, err
 		}
+		latest, err = rm.OnAdopted(ctx, latest)
+		if err != nil {
+			return latest, err
+		}
 	} else if isReadOnly {
 		delta := r.rd.Delta(desired, latest)
 		if delta.DifferentAt("Spec") {
@@ -614,6 +618,9 @@ func (r *resourceReconciler) Sync(
 			// set adopt-or-create resource as managed
 			// and requeue to ensure status is patched
 			if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
+				return latest, err
+			}
+			if latest, err = rm.OnAdopted(ctx, latest); err != nil {
 				return latest, err
 			}
 			err = requeue.Needed(fmt.Errorf("adopted resource, requeuing to check for updates"))

@@ -91,6 +91,10 @@ type AWSResourceManager interface {
 	// Eg. resources created with cloudformation have tags that cannot be
 	//removed by an ACK controller
 	FilterSystemTags(AWSResource, []string)
+	// OnAdopted is called after a resource has been successfully adopted
+	// and marked as managed. Controllers can use this hook to perform
+	// custom post-adoption logic.
+	OnAdopted(context.Context, AWSResource) (AWSResource, error)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to
