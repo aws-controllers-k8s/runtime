@@ -53,6 +53,7 @@ const (
 	flagAWSEndpointURL                  = "aws-endpoint-url"
 	flagAWSIdentityEndpointURL          = "aws-identity-endpoint-url"
 	flagUnsafeAWSEndpointURLs           = "allow-unsafe-aws-endpoint-urls"
+	flagAWSEndpointUsePathStyle         = "aws-endpoint-use-path-style"
 	flagLogLevel                        = "log-level"
 	flagResourceTags                    = "resource-tags"
 	flagWatchNamespace                  = "watch-namespace"
@@ -96,6 +97,7 @@ type Config struct {
 	IdentityEndpointURL             string
 	EndpointURL                     string
 	AllowUnsafeEndpointURL          bool
+	UsePathStyle                    bool
 	LogLevel                        string
 	ResourceTags                    []string
 	ResourceTagKeys                 []string
@@ -198,6 +200,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.AllowUnsafeEndpointURL, flagUnsafeAWSEndpointURLs,
 		false,
 		"Allow an unsafe AWS endpoint URL over http",
+	)
+	flag.BoolVar(
+		&cfg.UsePathStyle, flagAWSEndpointUsePathStyle,
+		false,
+		"Force path-style URLs for S3 API calls (e.g. http://host/bucket/key instead of http://bucket.host/key).",
 	)
 	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
