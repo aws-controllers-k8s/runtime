@@ -1912,3 +1912,333 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
 	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
 }
+
+// preDeleteDescriptorMock implements both AWSResourceDescriptor and
+// AWSResourceDescriptorWithPreDeleteDelta so the reconciler's type
+// assertion succeeds in pre-delete sync tests.
+type preDeleteDescriptorMock struct {
+	ackmocks.AWSResourceDescriptor
+}
+
+// DeltaForPreDelete satisfies the AWSResourceDescriptorWithPreDeleteDelta
+// interface. It delegates to the testify mock machinery.
+func (d *preDeleteDescriptorMock) DeltaForPreDelete(a, b acktypes.AWSResource) *ackcompare.Delta {
+	ret := d.Called(a, b)
+	return ret.Get(0).(*ackcompare.Delta)
+}
+
+// newPreDeleteReconciler builds a resourceReconciler wired to the given
+// descriptor for pre-delete sync tests.
+func newPreDeleteReconciler(
+	rd acktypes.AWSResourceDescriptor,
+) (*resourceReconciler, *ctrlrtclientmock.Client) {
+	zapOpts := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	logger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOpts))
+	cfg := ackcfg.Config{
+		DeletionPolicy: ackv1alpha1.DeletionPolicyDelete,
+		FeatureGates: featuregate.FeatureGates{
+			featuregate.ReadOnlyResources: {Enabled: true},
+			featuregate.ResourceAdoption:  {Enabled: true},
+		},
+	}
+	metrics := ackmetrics.NewMetrics("bookstore")
+
+	sc := &ackmocks.ServiceController{}
+	sc.On("GetMetadata").Return(acktypes.ServiceControllerMetadata{})
+
+	kc := &ctrlrtclientmock.Client{}
+
+	rmf := &ackmocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	rec := &resourceReconciler{
+		reconciler: reconciler{
+			sc:        sc,
+			kc:        kc,
+			log:       logger.WithName("ackrt"),
+			cfg:       cfg,
+			metrics:   metrics,
+			carmCache: ackrtcache.Caches{},
+			irsCache:  &iamroleselector.Cache{},
+		},
+		rmf: rmf,
+		rd:  rd,
+	}
+	return rec, kc
+}
+
+// newMockRes creates a mock AWSResource with standard bookstore metadata
+// and the deletion-policy annotation set to "delete".
+func newMockRes() (*ackmocks.AWSResource, *k8sobj.Unstructured) {
+	objKind := &k8srtschemamocks.ObjectKind{}
+	objKind.On("GroupVersionKind").Return(
+		k8srtschema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Kind:    "Book",
+			Version: "v1alpha1",
+		},
+	)
+	rtObj := &ctrlrtclientmock.Object{}
+	rtObj.On("GetObjectKind").Return(objKind)
+	rtObj.On("DeepCopyObject").Return(rtObj)
+
+	metaObj := &k8sobj.Unstructured{}
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationDeletionPolicy: string(ackv1alpha1.DeletionPolicyDelete),
+	})
+	metaObj.SetNamespace("default")
+	metaObj.SetName("mybook")
+	metaObj.SetGeneration(int64(1))
+
+	res := &ackmocks.AWSResource{}
+	res.On("MetaObject").Return(metaObj)
+	res.On("RuntimeObject").Return(rtObj)
+	res.On("DeepCopy").Return(res)
+	res.On("SetStatus", mock.Anything).Return()
+	return res, metaObj
+}
+
+// TestPreDeleteSync_ReadOneNotFound verifies that when ReadOne returns
+// NotFound during deletion, the finalizer is removed and neither Update
+// nor Delete is called.
+func TestPreDeleteSync_ReadOneNotFound(t *testing.T) {
+	require := require.New(t)
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "bookstore.services.k8s.aws", Kind: "Book",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkUnmanaged", desired).Return()
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	// Delta is called by patchResourceMetadataAndSpec inside setResourceUnmanaged
+	noDelta := ackcompare.NewDelta()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
+
+	rec, kc := newPreDeleteReconciler(rd)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(nil, ackerr.NotFound)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+
+	// Patch for setResourceUnmanaged
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	require.NoError(err)
+
+	// Update and Delete should never be called
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+// TestPreDeleteSync_ReadOneError verifies that when ReadOne returns a
+// non-NotFound error, the error is returned and neither Update nor Delete
+// is called.
+func TestPreDeleteSync_ReadOneError(t *testing.T) {
+	assert := assert.New(t)
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "bookstore.services.k8s.aws", Kind: "Book",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	rd.On("IsManaged", desired).Return(true)
+
+	rec, _ := newPreDeleteReconciler(rd)
+
+	readOneErr := errors.New("DescribeCluster API throttled")
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(nil, readOneErr)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	assert.Error(err)
+	assert.Equal(readOneErr, err)
+
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+// TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete verifies that when
+// the resource descriptor implements AWSResourceDescriptorWithPreDeleteDelta,
+// the DeltaForPreDelete method is used (not the standard Delta).
+func TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete(t *testing.T) {
+	require := require.New(t)
+
+	rd := &preDeleteDescriptorMock{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "bookstore.services.k8s.aws", Kind: "Book",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	observed, _ := newMockRes()
+
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("MarkUnmanaged", mock.Anything).Return()
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	// Delta is called by patchResourceMetadataAndSpec (in setResourceUnmanaged
+	// and in the post-delete patch path). We set up a no-diff delta.
+	noDelta := ackcompare.NewDelta()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
+
+	// DeltaForPreDelete returns a delta with a spec difference
+	preDeleteDelta := ackcompare.NewDelta()
+	preDeleteDelta.Add("Spec.DeletionProtectionEnabled", true, false)
+	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta)
+
+	rec, kc := newPreDeleteReconciler(rd)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+
+	// Update succeeds
+	updated, _ := newMockRes()
+	rm.On("Update", mock.Anything, desired, observed, preDeleteDelta).Return(updated, nil)
+
+	// Delete succeeds — receives the updated resource
+	rm.On("Delete", mock.Anything, updated).Return(updated, nil)
+
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	require.NoError(err)
+
+	// DeltaForPreDelete should have been called
+	rd.AssertCalled(t, "DeltaForPreDelete", desired, observed)
+	rm.AssertCalled(t, "Update", mock.Anything, desired, observed, preDeleteDelta)
+	rm.AssertCalled(t, "Delete", mock.Anything, updated)
+}
+
+// TestPreDeleteSync_DescriptorDoesNotImplementDeltaForPreDelete verifies that
+// when the resource descriptor does NOT implement
+// AWSResourceDescriptorWithPreDeleteDelta, preDeleteSync returns observed
+// directly (no-op) and deletion proceeds.
+func TestPreDeleteSync_DescriptorDoesNotImplementDeltaForPreDelete(t *testing.T) {
+	require := require.New(t)
+
+	// Use the plain AWSResourceDescriptor mock — no DeltaForPreDelete method.
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "bookstore.services.k8s.aws", Kind: "Book",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	observed, _ := newMockRes()
+
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("MarkUnmanaged", mock.Anything).Return()
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	// Delta is called by patchResourceMetadataAndSpec — no-diff
+	noDelta := ackcompare.NewDelta()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
+
+	rec, kc := newPreDeleteReconciler(rd)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+
+	// Delete succeeds — preDeleteSync is a no-op, so Delete receives observed
+	rm.On("Delete", mock.Anything, observed).Return(observed, nil)
+
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	require.NoError(err)
+
+	// Update should NOT be called — preDeleteSync short-circuits
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertCalled(t, "Delete", mock.Anything, observed)
+}
+
+// TestPreDeleteSync_DeletionProtectionScenario is an end-to-end scenario:
+// desired has DeletionProtectionEnabled=false, observed has true.
+// Verifies Update is called (to disable protection) then Delete is called
+// with the synced resource.
+func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
+	require := require.New(t)
+
+	rd := &preDeleteDescriptorMock{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "dsql.services.k8s.aws", Kind: "Cluster",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	observed, _ := newMockRes()
+
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("MarkUnmanaged", mock.Anything).Return()
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	noDelta := ackcompare.NewDelta()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
+
+	// DeltaForPreDelete detects the DeletionProtectionEnabled difference
+	preDeleteDelta := ackcompare.NewDelta()
+	preDeleteDelta.Add("Spec.DeletionProtectionEnabled", true, false)
+	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta)
+
+	rec, kc := newPreDeleteReconciler(rd)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+
+	// Update succeeds — protection is now disabled on AWS side
+	synced, _ := newMockRes()
+	rm.On("Update", mock.Anything, desired, observed, preDeleteDelta).Return(synced, nil)
+
+	// Delete succeeds with the synced resource
+	rm.On("Delete", mock.Anything, synced).Return(synced, nil)
+
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	require.NoError(err)
+
+	// Verify the call order: Update before Delete
+	rm.AssertCalled(t, "Update", mock.Anything, desired, observed, preDeleteDelta)
+	rm.AssertCalled(t, "Delete", mock.Anything, synced)
+}
