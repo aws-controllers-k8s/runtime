@@ -1089,6 +1089,50 @@ func (r *resourceReconciler) patchResourceStatus(
 //
 // Returns a copy of the resource with the latest state either right before
 // deletion OR after a failed attempted deletion.
+// preDeleteSync reconciles spec differences between the desired CR state
+// and the observed AWS resource state before deletion. This ensures fields
+// like DeletionProtectionEnabled are updated on the AWS resource before the
+// Delete API call. If the update fails, the original observed resource is
+// returned so that deletion can still proceed.
+func (r *resourceReconciler) preDeleteSync(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	observed acktypes.AWSResource,
+) acktypes.AWSResource {
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Enter("r.preDeleteSync")
+	defer rlog.Exit("r.preDeleteSync", nil)
+
+	// Compute delta, preferring the pre-delete variant if available.
+	// The pre-delete delta includes fields marked with compare.is_ignored,
+	// which the standard Delta skips.
+	var delta *ackcompare.Delta
+	if pdrd, ok := r.rd.(acktypes.AWSResourceDescriptorWithPreDeleteDelta); ok {
+		delta = pdrd.DeltaForPreDelete(desired, observed)
+	} else {
+		delta = r.rd.Delta(desired, observed)
+	}
+
+	if !delta.DifferentAt("Spec") {
+		return observed
+	}
+
+	rlog.Info(
+		"pre-delete sync: detected spec differences, updating before delete",
+		"diff", delta.Differences,
+	)
+	updated, err := rm.Update(ctx, desired, observed, delta)
+	if err != nil {
+		rlog.Info(
+			"pre-delete sync: update failed, proceeding with delete",
+			"error", err,
+		)
+		return observed
+	}
+	return updated
+}
+
 func (r *resourceReconciler) deleteResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -1114,6 +1158,11 @@ func (r *resourceReconciler) deleteResource(
 		}
 		return current, err
 	}
+	// Pre-delete sync: reconcile spec differences before deletion.
+	// This ensures fields like DeletionProtectionEnabled are synced
+	// to AWS before the Delete call.
+	observed = r.preDeleteSync(ctx, rm, current, observed)
+
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
 	rlog.Exit("rm.Delete", err)
