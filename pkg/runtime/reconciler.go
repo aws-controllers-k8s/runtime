@@ -1104,15 +1104,17 @@ func (r *resourceReconciler) preDeleteSync(
 	rlog.Enter("r.preDeleteSync")
 	defer rlog.Exit("r.preDeleteSync", nil)
 
-	// Compute delta, preferring the pre-delete variant if available.
-	// The pre-delete delta includes fields marked with compare.is_ignored,
-	// which the standard Delta skips.
-	var delta *ackcompare.Delta
-	if pdrd, ok := r.rd.(acktypes.AWSResourceDescriptorWithPreDeleteDelta); ok {
-		delta = pdrd.DeltaForPreDelete(desired, observed)
-	} else {
-		delta = r.rd.Delta(desired, observed)
+	// Only run pre-delete sync if the descriptor implements the
+	// DeltaForPreDelete interface. This interface produces a delta that
+	// includes fields marked with compare.is_ignored (e.g.
+	// DeletionProtectionEnabled). Without it, the standard Delta is
+	// already handled by the normal Sync flow, so there is nothing
+	// extra to reconcile before deletion.
+	pdrd, ok := r.rd.(acktypes.AWSResourceDescriptorWithPreDeleteDelta)
+	if !ok {
+		return observed
 	}
+	delta := pdrd.DeltaForPreDelete(desired, observed)
 
 	if !delta.DifferentAt("Spec") {
 		return observed
