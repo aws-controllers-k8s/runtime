@@ -23,8 +23,14 @@ import (
 // sync to ensure fields like DeletionProtectionEnabled are compared before
 // deletion.
 type AWSResourceDescriptorWithPreDeleteDelta interface {
-	// DeltaForPreDelete returns an `ackcompare.Delta` that includes fields
-	// normally excluded by compare.is_ignored configuration. Used during
-	// pre-delete sync to detect all spec differences before calling Delete.
-	DeltaForPreDelete(a, b AWSResource) *ackcompare.Delta
+	// DeltaForPreDelete compares two AWSResources and returns:
+	// - a Delta that includes fields normally excluded by compare.is_ignored
+	//   (only fields configured for pre-delete comparison)
+	// - a merged AWSResource that is a deep copy of b (observed) with only
+	//   the pre-delete fields overwritten from a (desired)
+	//
+	// The merged resource is used as the desired state for rm.Update so that
+	// only the pre-delete fields are changed while all other fields retain
+	// their current AWS values.
+	DeltaForPreDelete(a, b AWSResource) (*ackcompare.Delta, AWSResource)
 }

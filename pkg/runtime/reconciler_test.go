@@ -1922,9 +1922,9 @@ type preDeleteDescriptorMock struct {
 
 // DeltaForPreDelete satisfies the AWSResourceDescriptorWithPreDeleteDelta
 // interface. It delegates to the testify mock machinery.
-func (d *preDeleteDescriptorMock) DeltaForPreDelete(a, b acktypes.AWSResource) *ackcompare.Delta {
+func (d *preDeleteDescriptorMock) DeltaForPreDelete(a, b acktypes.AWSResource) (*ackcompare.Delta, acktypes.AWSResource) {
 	ret := d.Called(a, b)
-	return ret.Get(0).(*ackcompare.Delta)
+	return ret.Get(0).(*ackcompare.Delta), ret.Get(1).(acktypes.AWSResource)
 }
 
 // newPreDeleteReconciler builds a resourceReconciler wired to the given
@@ -2107,10 +2107,11 @@ func TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete(t *testing.T) {
 	noDelta := ackcompare.NewDelta()
 	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
 
-	// DeltaForPreDelete returns a delta with a spec difference
+	// DeltaForPreDelete returns a delta with a spec difference and a merged resource
 	preDeleteDelta := ackcompare.NewDelta()
 	preDeleteDelta.Add("Spec.DeletionProtectionEnabled", true, false)
-	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta)
+	merged, _ := newMockRes()
+	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta, merged)
 
 	rec, kc := newPreDeleteReconciler(rd)
 
@@ -2119,9 +2120,9 @@ func TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete(t *testing.T) {
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
 
-	// Update succeeds
+	// Update succeeds — receives the merged resource (observed + pre-delete fields from desired)
 	updated, _ := newMockRes()
-	rm.On("Update", mock.Anything, desired, observed, preDeleteDelta).Return(updated, nil)
+	rm.On("Update", mock.Anything, merged, observed, preDeleteDelta).Return(updated, nil)
 
 	// Delete succeeds — receives the updated resource
 	rm.On("Delete", mock.Anything, updated).Return(updated, nil)
@@ -2134,7 +2135,7 @@ func TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete(t *testing.T) {
 
 	// DeltaForPreDelete should have been called
 	rd.AssertCalled(t, "DeltaForPreDelete", desired, observed)
-	rm.AssertCalled(t, "Update", mock.Anything, desired, observed, preDeleteDelta)
+	rm.AssertCalled(t, "Update", mock.Anything, merged, observed, preDeleteDelta)
 	rm.AssertCalled(t, "Delete", mock.Anything, updated)
 }
 
@@ -2216,7 +2217,8 @@ func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
 	// DeltaForPreDelete detects the DeletionProtectionEnabled difference
 	preDeleteDelta := ackcompare.NewDelta()
 	preDeleteDelta.Add("Spec.DeletionProtectionEnabled", true, false)
-	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta)
+	merged, _ := newMockRes()
+	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta, merged)
 
 	rec, kc := newPreDeleteReconciler(rd)
 
@@ -2227,7 +2229,7 @@ func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
 
 	// Update succeeds — protection is now disabled on AWS side
 	synced, _ := newMockRes()
-	rm.On("Update", mock.Anything, desired, observed, preDeleteDelta).Return(synced, nil)
+	rm.On("Update", mock.Anything, merged, observed, preDeleteDelta).Return(synced, nil)
 
 	// Delete succeeds with the synced resource
 	rm.On("Delete", mock.Anything, synced).Return(synced, nil)
@@ -2239,6 +2241,85 @@ func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
 	require.NoError(err)
 
 	// Verify the call order: Update before Delete
-	rm.AssertCalled(t, "Update", mock.Anything, desired, observed, preDeleteDelta)
+	rm.AssertCalled(t, "Update", mock.Anything, merged, observed, preDeleteDelta)
 	rm.AssertCalled(t, "Delete", mock.Anything, synced)
+}
+
+// TestPreDeleteSync_UpdateAndDeleteBothFail verifies that when both the
+// pre-delete sync update and rm.Delete fail, the returned error contains
+// both error messages and the recoverable condition on latest has the
+// combined message.
+func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	rd := &preDeleteDescriptorMock{}
+	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{
+		Group: "dsql.services.k8s.aws", Kind: "Cluster",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	desired, _ := newMockRes()
+	desired.On("IsBeingDeleted").Return(true)
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	observed, _ := newMockRes()
+
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	noDelta := ackcompare.NewDelta()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(noDelta)
+
+	// DeltaForPreDelete detects a difference
+	preDeleteDelta := ackcompare.NewDelta()
+	preDeleteDelta.Add("Spec.DeletionProtectionEnabled", true, false)
+	merged, _ := newMockRes()
+	rd.On("DeltaForPreDelete", desired, observed).Return(preDeleteDelta, merged)
+
+	rec, kc := newPreDeleteReconciler(rd)
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
+	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+
+	// Update fails
+	updateErr := fmt.Errorf("AccessDeniedException: not authorized")
+	rm.On("Update", mock.Anything, merged, observed, preDeleteDelta).Return(nil, updateErr)
+
+	// Delete also fails — receives observed since update failed
+	deleteErr := fmt.Errorf("deletion protection is enabled")
+	latest, _ := newMockRes()
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On("ReplaceConditions", mock.Anything).Return()
+	rm.On("Delete", mock.Anything, observed).Return(latest, deleteErr)
+
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ctx := context.Background()
+	_, err := rec.reconcile(ctx, rm, desired)
+	require.Error(err)
+
+	// Error should contain both messages
+	assert.Contains(err.Error(), "deletion protection is enabled")
+	assert.Contains(err.Error(), "pre-delete sync also failed")
+	assert.Contains(err.Error(), "AccessDeniedException")
+
+	// The wrapped error should still unwrap to the delete error
+	assert.True(errors.Is(err, deleteErr))
+
+	// Verify the recoverable condition was set on latest with combined message
+	latest.AssertCalled(t, "ReplaceConditions", mock.MatchedBy(func(conds []*ackv1alpha1.Condition) bool {
+		for _, c := range conds {
+			if c.Type == ackv1alpha1.ConditionTypeRecoverable &&
+				c.Status == corev1.ConditionTrue &&
+				c.Message != nil &&
+				strings.Contains(*c.Message, "deletion protection") &&
+				strings.Contains(*c.Message, "pre-delete sync also failed") {
+				return true
+			}
+		}
+		return false
+	}))
 }

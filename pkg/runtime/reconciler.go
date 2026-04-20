@@ -1084,11 +1084,6 @@ func (r *resourceReconciler) patchResourceStatus(
 	return err
 }
 
-// deleteResource ensures that the supplied AWSResource's backing API resource
-// is destroyed along with all child dependent resources.
-//
-// Returns a copy of the resource with the latest state either right before
-// deletion OR after a failed attempted deletion.
 // preDeleteSync reconciles spec differences between the desired CR state
 // and the observed AWS resource state before deletion. This ensures fields
 // like DeletionProtectionEnabled are updated on the AWS resource before the
@@ -1099,7 +1094,7 @@ func (r *resourceReconciler) preDeleteSync(
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
 	observed acktypes.AWSResource,
-) acktypes.AWSResource {
+) (acktypes.AWSResource, error) {
 	rlog := ackrtlog.FromContext(ctx)
 	rlog.Enter("r.preDeleteSync")
 	defer rlog.Exit("r.preDeleteSync", nil)
@@ -1112,29 +1107,39 @@ func (r *resourceReconciler) preDeleteSync(
 	// extra to reconcile before deletion.
 	pdrd, ok := r.rd.(acktypes.AWSResourceDescriptorWithPreDeleteDelta)
 	if !ok {
-		return observed
+		return observed, nil
 	}
-	delta := pdrd.DeltaForPreDelete(desired, observed)
+	delta, merged := pdrd.DeltaForPreDelete(desired, observed)
 
 	if !delta.DifferentAt("Spec") {
-		return observed
+		return observed, nil
 	}
 
 	rlog.Info(
 		"pre-delete sync: detected spec differences, updating before delete",
 		"diff", delta.Differences,
 	)
-	updated, err := rm.Update(ctx, desired, observed, delta)
+
+	// merged is a deep copy of observed with only the fields that differ
+	// in the delta overwritten from desired. This ensures rm.Update only
+	// changes the fields that DeltaForPreDelete detected as different
+	// while all other fields retain their current AWS values.
+	updated, err := rm.Update(ctx, merged, observed, delta)
 	if err != nil {
 		rlog.Info(
 			"pre-delete sync: update failed, proceeding with delete",
 			"error", err,
 		)
-		return observed
+		return observed, err
 	}
-	return updated
+	return updated, nil
 }
 
+// deleteResource ensures that the supplied AWSResource's backing API resource
+// is destroyed along with all child dependent resources.
+//
+// Returns a copy of the resource with the latest state either right before
+// deletion OR after a failed attempted deletion.
 func (r *resourceReconciler) deleteResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -1163,7 +1168,7 @@ func (r *resourceReconciler) deleteResource(
 	// Pre-delete sync: reconcile spec differences before deletion.
 	// This ensures fields like DeletionProtectionEnabled are synced
 	// to AWS before the Delete call.
-	observed = r.preDeleteSync(ctx, rm, current, observed)
+	observed, preDeleteErr := r.preDeleteSync(ctx, rm, current, observed)
 
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
@@ -1180,6 +1185,17 @@ func (r *resourceReconciler) deleteResource(
 		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, current, latest)
 	}
 	if err != nil {
+		// If both the pre-delete sync update and the delete failed, update
+		// the recoverable condition on latest with the combined error so
+		// the user can see both errors on the CR status. This is important
+		// for managed ACK users who don't have access to controller logs.
+		if preDeleteErr != nil {
+			msg := fmt.Sprintf("%s (pre-delete sync also failed: %v)", err.Error(), preDeleteErr)
+			if ackcompare.IsNotNil(latest) {
+				ackcondition.SetRecoverable(latest, corev1.ConditionTrue, &msg, nil)
+			}
+			return latest, fmt.Errorf("%w (pre-delete sync also failed: %v)", err, preDeleteErr)
+		}
 		// NOTE: Delete() implementations that have asynchronously-completing
 		// deletions should return a RequeueNeededAfter.
 		return latest, err
