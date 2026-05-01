@@ -17,6 +17,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
@@ -197,4 +198,32 @@ func TestServiceController(t *testing.T) {
 	}
 	require.True(foundfakeBookRecon)
 	rd.AssertCalled(t, "EmptyRuntimeObject")
+}
+
+func TestBindControllerManagerStashesCfg(t *testing.T) {
+	require := require.New(t)
+
+	// Construct a serviceController directly (no rmFactories) to avoid
+	// controller name collisions with TestServiceController.
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "cfgtest",
+			ServiceAPIGroup: "cfgtest.services.k8s.aws",
+		},
+	}
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	sc.log = ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+
+	mgr := &fakeManager{}
+	cfg := ackcfg.Config{
+		EnableCARM:        false,
+		HTTPClientTimeout: 7 * time.Second,
+	}
+	err := sc.BindControllerManager(mgr, cfg)
+	require.Nil(err)
+
+	require.Equal(7*time.Second, sc.cfg.HTTPClientTimeout)
 }

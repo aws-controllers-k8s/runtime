@@ -77,6 +77,10 @@ type serviceController struct {
 	// metrics contains a collection of Prometheus metric objects that the
 	// service controller and its reconcilers track
 	metrics *ackmetrics.Metrics
+	// cfg is stashed from BindControllerManager so that NewAWSConfig can
+	// read controller-level settings (e.g. HTTPClientTimeout) without
+	// changing the public ServiceController interface.
+	cfg ackcfg.Config
 }
 
 // GetReconcilers returns a slice of types.AWSResourceReconcilers associated
@@ -194,6 +198,7 @@ func (c *serviceController) WithResourceManagerFactories(
 func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
+	c.cfg = cfg
 
 	namespaces, err := cfg.GetWatchNamespaces()
 	if err != nil {

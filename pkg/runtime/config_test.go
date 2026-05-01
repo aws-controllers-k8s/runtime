@@ -14,9 +14,21 @@
 package runtime
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func TestFormatUserAgent(t *testing.T) {
@@ -231,4 +243,125 @@ func TestGetKROVersion(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func newTestServiceController(cfg ackcfg.Config) *serviceController {
+	return &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			VersionInfo: acktypes.VersionInfo{
+				GitCommit:  "test-commit",
+				BuildDate:  "test-date",
+				GitVersion: "v0.0.0-test",
+			},
+			ServiceAlias:    "test",
+			ServiceAPIGroup: "test.services.k8s.aws",
+		},
+		cfg: cfg,
+	}
+}
+
+// TestNewAWSConfig_HTTPClientTimeout_Fires verifies that when a non-zero
+// HTTPClientTimeout is configured, the resulting aws.Config's HTTPClient
+// enforces that timeout on a stuck request.
+func TestNewAWSConfig_HTTPClientTimeout_Fires(t *testing.T) {
+	require := require.New(t)
+
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+		// Provide dummy static creds via env so LoadDefaultConfig succeeds.
+		t.Setenv("AWS_ACCESS_KEY_ID", "test")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+		t.Setenv("AWS_REGION", "us-west-2")
+	}
+
+	// Slow-loris server that sleeps past the client timeout before responding.
+	slowHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(1 * time.Second):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+			// Client gave up; let the server unblock.
+		}
+	})
+	server := httptest.NewServer(slowHandler)
+	defer server.Close()
+
+	sc := newTestServiceController(ackcfg.Config{
+		HTTPClientTimeout: 100 * time.Millisecond,
+	})
+
+	awsCfg, err := sc.NewAWSConfig(
+		context.Background(),
+		ackv1alpha1.AWSRegion("us-west-2"),
+		nil, // endpointURL — unused for this test, we hit the http client directly
+		"",
+		schema.GroupVersionKind{Group: "test", Version: "v1alpha1", Kind: "TestKind"},
+		nil,
+	)
+	require.NoError(err)
+	require.NotNil(awsCfg.HTTPClient, "NewAWSConfig should set HTTPClient")
+
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	require.NoError(err)
+
+	start := time.Now()
+	resp, err := awsCfg.HTTPClient.Do(req)
+	elapsed := time.Since(start)
+
+	require.Error(err, "request against slow-loris server should time out")
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	// The error should be a net timeout.
+	var netErr interface{ Timeout() bool }
+	assert.True(t, errors.As(err, &netErr) && netErr.Timeout(),
+		"error should be a timeout error, got: %v", err)
+
+	// Elapsed time should be in [timeout, timeout + slack].
+	assert.GreaterOrEqual(t, elapsed, 90*time.Millisecond,
+		"timeout fired too early")
+	assert.Less(t, elapsed, 500*time.Millisecond,
+		"timeout did not fire; elapsed %v suggests client waited for server", elapsed)
+}
+
+// TestNewAWSConfig_HTTPClientTimeout_Zero verifies that a zero timeout
+// disables the whole-request timeout.
+func TestNewAWSConfig_HTTPClientTimeout_Zero(t *testing.T) {
+	require := require.New(t)
+
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "test")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+		t.Setenv("AWS_REGION", "us-west-2")
+	}
+
+	slowHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(slowHandler)
+	defer server.Close()
+
+	sc := newTestServiceController(ackcfg.Config{
+		HTTPClientTimeout: 0,
+	})
+
+	awsCfg, err := sc.NewAWSConfig(
+		context.Background(),
+		ackv1alpha1.AWSRegion("us-west-2"),
+		nil,
+		"",
+		schema.GroupVersionKind{Group: "test", Version: "v1alpha1", Kind: "TestKind"},
+		nil,
+	)
+	require.NoError(err)
+	require.NotNil(awsCfg.HTTPClient)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	require.NoError(err)
+
+	resp, err := awsCfg.HTTPClient.Do(req)
+	require.NoError(err, "with HTTPClientTimeout=0, 150ms server should not time out")
+	require.NotNil(resp)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

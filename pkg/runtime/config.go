@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -31,7 +32,7 @@ import (
 const appName = "aws-controllers-k8s"
 
 type clientWithUserAgent struct {
-	client    *http.Client
+	client    aws.HTTPClient
 	userAgent string
 }
 
@@ -71,8 +72,12 @@ func (c *serviceController) NewAWSConfig(
 		extra...,
 	)
 
+	httpClient := awshttp.NewBuildableClient()
+	if c.cfg.HTTPClientTimeout > 0 {
+		httpClient = httpClient.WithTimeout(c.cfg.HTTPClientTimeout)
+	}
 	client := &clientWithUserAgent{
-		client:    &http.Client{},
+		client:    httpClient,
 		userAgent: val,
 	}
 

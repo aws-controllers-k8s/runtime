@@ -17,6 +17,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	flag "github.com/spf13/pflag"
 )
 
 func TestParseReconcileFlagArgument(t *testing.T) {
@@ -179,6 +182,49 @@ func TestParseFeatureGates(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseFeatureGates() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHTTPClientTimeoutFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected time.Duration
+	}{
+		{
+			name:     "default value is 60s",
+			args:     []string{},
+			expected: 60 * time.Second,
+		},
+		{
+			name:     "custom value 30s",
+			args:     []string{"--http-client-timeout=30s"},
+			expected: 30 * time.Second,
+		},
+		{
+			name:     "disabled with 0",
+			args:     []string{"--http-client-timeout=0s"},
+			expected: 0,
+		},
+		{
+			name:     "custom value 2m",
+			args:     []string{"--http-client-timeout=2m"},
+			expected: 2 * time.Minute,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var timeout time.Duration
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.DurationVar(&timeout, "http-client-timeout", 60*time.Second,
+				"Timeout for HTTP requests made by the AWS SDK client.")
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatalf("unexpected parse error: %v", err)
+			}
+			if timeout != tt.expected {
+				t.Errorf("HTTPClientTimeout = %v, want %v", timeout, tt.expected)
 			}
 		})
 	}

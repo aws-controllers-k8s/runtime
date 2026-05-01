@@ -54,6 +54,7 @@ const (
 	flagAWSIdentityEndpointURL          = "aws-identity-endpoint-url"
 	flagUnsafeAWSEndpointURLs           = "allow-unsafe-aws-endpoint-urls"
 	flagAWSEndpointUsePathStyle         = "aws-endpoint-use-path-style"
+	flagHTTPClientTimeout               = "http-client-timeout"
 	flagLogLevel                        = "log-level"
 	flagResourceTags                    = "resource-tags"
 	flagWatchNamespace                  = "watch-namespace"
@@ -98,6 +99,7 @@ type Config struct {
 	EndpointURL                     string
 	AllowUnsafeEndpointURL          bool
 	UsePathStyle                    bool
+	HTTPClientTimeout               time.Duration
 	LogLevel                        string
 	ResourceTags                    []string
 	ResourceTagKeys                 []string
@@ -205,6 +207,11 @@ func (cfg *Config) BindFlags() {
 		&cfg.UsePathStyle, flagAWSEndpointUsePathStyle,
 		false,
 		"Force path-style URLs for S3 API calls (e.g. http://host/bucket/key instead of http://bucket.host/key).",
+	)
+	flag.DurationVar(
+		&cfg.HTTPClientTimeout, flagHTTPClientTimeout,
+		60*time.Second,
+		"Timeout for HTTP requests made by the AWS SDK client. Set to 0 to disable.",
 	)
 	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
