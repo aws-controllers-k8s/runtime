@@ -194,7 +194,7 @@ func GetAdoptionPolicy(res acktypes.AWSResource) (AdoptionPolicy, error) {
 	}
 
 	if policy != string(AdoptionPolicy_Adopt) && policy != string(AdoptionPolicy_AdoptOrCreate) {
-		return "", fmt.Errorf("unrecognized adoption policy")
+		return "", fmt.Errorf("unrecognized adoption policy %s. Supported policies are \"%s\" and \"%s\"", policy, AdoptionPolicy_Adopt, AdoptionPolicy_AdoptOrCreate)
 	}
 
 	return AdoptionPolicy(policy), nil
@@ -213,7 +213,7 @@ func ExtractAdoptionFields(res acktypes.AWSResource) (map[string]string, error) 
 	extractedFields := &map[string]string{}
 	err := json.Unmarshal([]byte(fields), extractedFields)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshalling adoption-fields annotation: %v", err)
 	}
 
 	return *extractedFields, nil

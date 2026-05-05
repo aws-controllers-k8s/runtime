@@ -451,7 +451,7 @@ func (r *resourceReconciler) handlePopulation(
 	// TODO (michaelhtm) change PopulateResourceFromAnnotation to understand
 	// adopt-or-create, and validate Spec fields are not nil...
 	if err != nil && adoptionPolicy != AdoptionPolicy_AdoptOrCreate {
-		return nil, err
+		return nil, fmt.Errorf("Error populating adoption fields: %v", err)
 	}
 
 	return populated, nil
@@ -528,7 +528,7 @@ func (r *resourceReconciler) Sync(
 	needAdoption := NeedAdoption(desired) && !r.rd.IsManaged(desired) && r.cfg.FeatureGates.IsEnabled(featuregate.ResourceAdoption)
 	adoptionPolicy, err := GetAdoptionPolicy(desired)
 	if err != nil {
-		return nil, err
+		return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 	}
 	if !needAdoption {
 		adoptionPolicy = ""
@@ -554,7 +554,7 @@ func (r *resourceReconciler) Sync(
 	if needAdoption {
 		populated, err := r.handlePopulation(ctx, desired)
 		if err != nil {
-			return nil, err
+			return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 		}
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// here we assume the spec fields are provided in the spec.

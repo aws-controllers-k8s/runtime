@@ -410,6 +410,112 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rm.AssertNotCalled(t, "Delta", 0)
 }
 
+func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "invalid-policy",
+	})
+
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		hasTerminal := false
+		for _, condition := range conditions {
+			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
+				continue
+			}
+			hasTerminal = true
+			assert.Equal(corev1.ConditionTrue, condition.Status)
+			assert.Contains(*condition.Message, "unrecognized adoption policy invalid-policy")
+		}
+		assert.True(hasTerminal)
+	}).Once()
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rmf, rd := managerFactoryMocks(desired, nil, false)
+	rd.On("IsManaged", desired).Return(false)
+
+	r, _, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+
+	latest, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	assert.Equal(ackerr.Terminal, err)
+	require.NotNil(latest)
+	rm.AssertNotCalled(t, "ResolveReferences")
+	rm.AssertNotCalled(t, "ReadOne")
+	rm.AssertNotCalled(t, "Create")
+	rm.AssertNotCalled(t, "Update")
+}
+
+func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+		ackv1alpha1.AnnotationAdoptionFields: "not-valid-json",
+	})
+
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		hasTerminal := false
+		for _, condition := range conditions {
+			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
+				continue
+			}
+			hasTerminal = true
+			assert.Equal(corev1.ConditionTrue, condition.Status)
+			assert.Contains(*condition.Message, "unmarshalling adoption-fields annotation")
+		}
+		assert.True(hasTerminal)
+	}).Once()
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rmf, rd := managerFactoryMocks(desired, nil, false)
+	rd.On("IsManaged", desired).Return(false)
+
+	r, _, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+
+	latest, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	assert.Equal(ackerr.Terminal, err)
+	require.NotNil(latest)
+	rm.AssertNotCalled(t, "ReadOne")
+	rm.AssertNotCalled(t, "Create")
+	rm.AssertNotCalled(t, "Update")
+}
+
 func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	require := require.New(t)
 
