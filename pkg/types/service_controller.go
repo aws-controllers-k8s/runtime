@@ -70,8 +70,13 @@ type ServiceController interface {
 
 	// BindControllerManager takes a `controller-runtime.Manager`, creates all
 	// the AWSResourceReconcilers needed for the service and binds all of the
-	// reconcilers within the service controller with that manager
+	// reconcilers within the service controller with that manager. The supplied
+	// context.CancelCauseFunc is invoked when a reconciler that was deferred via
+	// --lazy-bind-reconcilers fails to bind after its CRD becomes available,
+	// allowing the caller to trigger a graceful shutdown of the manager.
 	BindControllerManager(
+		context.Context,
+		context.CancelCauseFunc,
 		ctrlrt.Manager,
 		ackcfg.Config,
 	) error

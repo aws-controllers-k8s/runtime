@@ -21,17 +21,17 @@ type ServiceController struct {
 	mock.Mock
 }
 
-// BindControllerManager provides a mock function with given fields: _a0, _a1
-func (_m *ServiceController) BindControllerManager(_a0 manager.Manager, _a1 config.Config) error {
-	ret := _m.Called(_a0, _a1)
+// BindControllerManager provides a mock function with given fields: _a0, _a1, _a2, _a3
+func (_m *ServiceController) BindControllerManager(_a0 context.Context, _a1 context.CancelCauseFunc, _a2 manager.Manager, _a3 config.Config) error {
+	ret := _m.Called(_a0, _a1, _a2, _a3)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BindControllerManager")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(manager.Manager, config.Config) error); ok {
-		r0 = rf(_a0, _a1)
+	if rf, ok := ret.Get(0).(func(context.Context, context.CancelCauseFunc, manager.Manager, config.Config) error); ok {
+		r0 = rf(_a0, _a1, _a2, _a3)
 	} else {
 		r0 = ret.Error(0)
 	}
