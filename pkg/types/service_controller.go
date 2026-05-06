@@ -72,6 +72,7 @@ type ServiceController interface {
 	// the AWSResourceReconcilers needed for the service and binds all of the
 	// reconcilers within the service controller with that manager
 	BindControllerManager(
+		context.Context,
 		ctrlrt.Manager,
 		ackcfg.Config,
 	) error
