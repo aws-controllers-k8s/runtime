@@ -131,19 +131,26 @@ func (r *reconciler) SecretValueFromReference(
 		return "", nil
 	}
 
-	namespace := ref.Namespace
 	// During the reconcile process, the resourceNamespace is stored in the context
 	// and can be used to fetch the secret if the namespace is not provided in the
 	// SecretKeyReference.
 	//
 	// NOTE(a-hilaly): When refactoring the runtime, we might want to consider passing
 	// the ObjectMeta in the context.
+	ownerNamespace := ""
 	ctxResourceNamespace := ctx.Value("resourceNamespace")
-	if namespace == "" && ctxResourceNamespace != nil {
-		ctxNamespace, ok := ctxResourceNamespace.(string)
-		if ok {
-			namespace = ctxNamespace
+	if ctxResourceNamespace != nil {
+		if ctxNamespace, ok := ctxResourceNamespace.(string); ok {
+			ownerNamespace = ctxNamespace
 		}
+	}
+
+	// Determine the namespace to use for fetching the secret.
+	// Cross-namespace validation, logging, and condition-setting are handled
+	// by the generated code before calling this method.
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = ownerNamespace
 	}
 
 	nsn := client.ObjectKey{

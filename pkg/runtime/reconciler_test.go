@@ -2405,3 +2405,74 @@ func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
 	// Delete should NOT have been called — fail fast on pre-delete sync error
 	rm.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }
+
+func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	crossNsErr := ackerr.ResourceReferenceCrossNamespaceNotAllowedFor(
+		"default", "other-ns", "my-ref",
+	)
+
+	// When ResolveReferences returns a cross-namespace error, the reconciler
+	// should set ReferencesResolved=False on the resource and return the
+	// error without calling ReadOne.
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		conditions := args.Get(0).([]*ackv1alpha1.Condition)
+		// Find the ReferencesResolved condition
+		var refCond *ackv1alpha1.Condition
+		for _, c := range conditions {
+			if c.Type == ackv1alpha1.ConditionTypeReferencesResolved {
+				refCond = c
+				break
+			}
+		}
+		require.NotNil(refCond, "expected ReferencesResolved condition to be set")
+		assert.Equal(corev1.ConditionFalse, refCond.Status,
+			"ReferencesResolved should be False for cross-namespace rejection")
+		assert.Equal(ackcondition.FailedReferenceResolutionMessage, *refCond.Message)
+		assert.Contains(*refCond.Reason, "cross-namespace resource reference is not allowed")
+		assert.Contains(*refCond.Reason, "default")
+		assert.Contains(*refCond.Reason, "other-ns")
+		assert.Contains(*refCond.Reason, "my-ref")
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, true, crossNsErr,
+	)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+
+	latest, latestRTObj, _ := resourceMocks()
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	// ReadOne should NOT be called — set it up but assert it's never invoked
+	rm.On("ReadOne", ctx, desired).Return(latest, nil)
+
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	assert.True(errors.Is(err, ackerr.ResourceReferenceCrossNamespaceNotAllowed),
+		"error should wrap ResourceReferenceCrossNamespaceNotAllowed sentinel")
+
+	// ReadOne must NOT be invoked when references fail to resolve
+	rm.AssertNotCalled(t, "ReadOne", ctx, desired)
+	// No downstream operations should occur
+	rm.AssertNotCalled(t, "Create", ctx, desired)
+	rm.AssertNotCalled(t, "Update")
+	rm.AssertNotCalled(t, "LateInitialize")
+	rm.AssertNotCalled(t, "EnsureTags", ctx, desired, scmd)
+}

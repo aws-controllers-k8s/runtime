@@ -314,7 +314,8 @@ func WithReferencesResolvedCondition(
 	if err != nil {
 		errString := err.Error()
 		conditionStatus := corev1.ConditionUnknown
-		if strings.Contains(errString, ackerr.ResourceReferenceTerminal.Error()) {
+		if strings.Contains(errString, ackerr.ResourceReferenceTerminal.Error()) ||
+			strings.Contains(errString, ackerr.ResourceReferenceCrossNamespaceNotAllowed.Error()) {
 			conditionStatus = corev1.ConditionFalse
 		}
 		SetReferencesResolved(ko, conditionStatus, &FailedReferenceResolutionMessage, &errString)
