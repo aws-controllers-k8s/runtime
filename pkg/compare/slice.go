@@ -61,3 +61,30 @@ func sortedStringSliceEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// SliceStringPDifference compares a desired slice of string pointers against an
+// observed slice and returns which elements need to be added and which need to
+// be removed to make observed match desired. Order is ignored.
+func SliceStringPDifference(desired, observed []*string) (toAdd, toRemove []*string) {
+	observedSet := make(map[string]bool, len(observed))
+	for _, item := range observed {
+		if item != nil {
+			observedSet[*item] = true
+		}
+	}
+	desiredSet := make(map[string]bool, len(desired))
+	for _, item := range desired {
+		if item != nil {
+			desiredSet[*item] = true
+			if !observedSet[*item] {
+				toAdd = append(toAdd, item)
+			}
+		}
+	}
+	for _, item := range observed {
+		if item != nil && !desiredSet[*item] {
+			toRemove = append(toRemove, item)
+		}
+	}
+	return toAdd, toRemove
+}

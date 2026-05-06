@@ -56,6 +56,62 @@ func TestMapStringStringPEqual(t *testing.T) {
 	require.True(compare.MapStringStringPEqual(ab, abc))
 }
 
+func TestMapStringStringPDifference(t *testing.T) {
+	require := require.New(t)
+
+	v1 := "val1"
+	v2 := "val2"
+	v3 := "val3"
+
+	// Both nil
+	toAdd, toRemove := compare.MapStringStringPDifference(nil, nil)
+	require.Empty(toAdd)
+	require.Nil(toRemove)
+
+	// Desired has entries, observed empty → all added
+	toAdd, toRemove = compare.MapStringStringPDifference(
+		map[string]*string{"a": &v1, "b": &v2},
+		map[string]*string{},
+	)
+	require.Len(toAdd, 2)
+	require.Nil(toRemove)
+
+	// Observed has entries, desired empty → all removed
+	toAdd, toRemove = compare.MapStringStringPDifference(
+		map[string]*string{},
+		map[string]*string{"a": &v1, "b": &v2},
+	)
+	require.Empty(toAdd)
+	require.Len(toRemove, 2)
+
+	// Same entries → no changes
+	toAdd, toRemove = compare.MapStringStringPDifference(
+		map[string]*string{"a": &v1, "b": &v2},
+		map[string]*string{"a": &v1, "b": &v2},
+	)
+	require.Empty(toAdd)
+	require.Nil(toRemove)
+
+	// Value changed → appears in toAdd
+	toAdd, toRemove = compare.MapStringStringPDifference(
+		map[string]*string{"a": &v3},
+		map[string]*string{"a": &v1},
+	)
+	require.Len(toAdd, 1)
+	require.Equal("val3", *toAdd["a"])
+	require.Nil(toRemove)
+
+	// Mixed: add new key, update existing, remove old
+	toAdd, toRemove = compare.MapStringStringPDifference(
+		map[string]*string{"a": &v1, "c": &v3},
+		map[string]*string{"a": &v1, "b": &v2},
+	)
+	require.Len(toAdd, 1)
+	require.Equal("val3", *toAdd["c"])
+	require.Len(toRemove, 1)
+	require.Equal("b", toRemove[0])
+}
+
 func TestMapStringStringEqual(t *testing.T) {
 	require := require.New(t)
 

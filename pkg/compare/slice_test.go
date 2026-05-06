@@ -67,6 +67,41 @@ func TestSliceStringPEqual(t *testing.T) {
 	require.False(compare.SliceStringPEqual(aab, bba))
 }
 
+func TestSliceStringPDifference(t *testing.T) {
+	require := require.New(t)
+
+	a := "a"
+	b := "b"
+	c := "c"
+
+	// Empty desired and observed
+	toAdd, toRemove := compare.SliceStringPDifference(nil, nil)
+	require.Nil(toAdd)
+	require.Nil(toRemove)
+
+	// Desired has items, observed is empty → all added
+	toAdd, toRemove = compare.SliceStringPDifference([]*string{&a, &b}, []*string{})
+	require.Len(toAdd, 2)
+	require.Nil(toRemove)
+
+	// Observed has items, desired is empty → all removed
+	toAdd, toRemove = compare.SliceStringPDifference([]*string{}, []*string{&a, &b})
+	require.Nil(toAdd)
+	require.Len(toRemove, 2)
+
+	// Same items → no changes
+	toAdd, toRemove = compare.SliceStringPDifference([]*string{&a, &b}, []*string{&b, &a})
+	require.Nil(toAdd)
+	require.Nil(toRemove)
+
+	// Mixed: add c, remove b
+	toAdd, toRemove = compare.SliceStringPDifference([]*string{&a, &c}, []*string{&a, &b})
+	require.Len(toAdd, 1)
+	require.Equal("c", *toAdd[0])
+	require.Len(toRemove, 1)
+	require.Equal("b", *toRemove[0])
+}
+
 func TestSliceStringEqual(t *testing.T) {
 	require := require.New(t)
 

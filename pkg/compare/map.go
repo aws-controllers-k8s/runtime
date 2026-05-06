@@ -38,3 +38,24 @@ func MapStringStringEqual(a, b map[string]string) bool {
 	}
 	return true
 }
+
+// MapStringStringPDifference compares a desired map against an observed map and
+// returns which entries need to be added/updated and which keys need to be
+// removed to make observed match desired. An entry is "added" if its key is
+// missing from observed or its value differs.
+func MapStringStringPDifference(desired, observed map[string]*string) (toAddOrUpdate map[string]*string, toRemove []string) {
+	toAddOrUpdate = make(map[string]*string)
+	for key, desiredVal := range desired {
+		observedVal, exists := observed[key]
+		if !exists || (desiredVal != nil && observedVal != nil && *desiredVal != *observedVal) ||
+			(desiredVal == nil) != (observedVal == nil) {
+			toAddOrUpdate[key] = desiredVal
+		}
+	}
+	for key := range observed {
+		if _, exists := desired[key]; !exists {
+			toRemove = append(toRemove, key)
+		}
+	}
+	return toAddOrUpdate, toRemove
+}
