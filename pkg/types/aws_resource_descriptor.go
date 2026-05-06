@@ -29,6 +29,10 @@ type AWSResourceDescriptor interface {
 	// describes the API Group, Version and Kind of CRs described by the
 	// descriptor
 	GroupVersionKind() schema.GroupVersionKind
+	// GroupVersionResource returns a Kubernetes schema.GroupVersionResource struct that
+	// describes the API Group, Version and Resource of CRs described by the
+	// descriptor
+	GroupVersionResource() schema.GroupVersionResource
 	// EmptyRuntimeObject returns an empty object prototype that may be used in
 	// apimachinery and k8s client operations
 	EmptyRuntimeObject() rtclient.Object

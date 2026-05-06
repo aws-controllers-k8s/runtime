@@ -76,6 +76,24 @@ func (_m *AWSResourceDescriptor) GroupVersionKind() schema.GroupVersionKind {
 	return r0
 }
 
+// GroupVersionResource provides a mock function with no fields
+func (_m *AWSResourceDescriptor) GroupVersionResource() schema.GroupVersionResource {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GroupVersionResource")
+	}
+
+	var r0 schema.GroupVersionResource
+	if rf, ok := ret.Get(0).(func() schema.GroupVersionResource); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(schema.GroupVersionResource)
+	}
+
+	return r0
+}
+
 // IsManaged provides a mock function with given fields: _a0
 func (_m *AWSResourceDescriptor) IsManaged(_a0 types.AWSResource) bool {
 	ret := _m.Called(_a0)
