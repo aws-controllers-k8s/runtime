@@ -2245,10 +2245,9 @@ func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
 	rm.AssertCalled(t, "Delete", mock.Anything, synced)
 }
 
-// TestPreDeleteSync_UpdateAndDeleteBothFail verifies that when both the
-// pre-delete sync update and rm.Delete fail, the returned error contains
-// both error messages and the recoverable condition on latest has the
-// combined message.
+// TestPreDeleteSync_UpdateAndDeleteBothFail verifies that when the
+// pre-delete sync update fails, deletion is NOT attempted and the update
+// error is returned directly for requeue.
 func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -2288,38 +2287,15 @@ func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
 	updateErr := fmt.Errorf("AccessDeniedException: not authorized")
 	rm.On("Update", mock.Anything, merged, observed, preDeleteDelta).Return(nil, updateErr)
 
-	// Delete also fails — receives observed since update failed
-	deleteErr := fmt.Errorf("deletion protection is enabled")
-	latest, _ := newMockRes()
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On("ReplaceConditions", mock.Anything).Return()
-	rm.On("Delete", mock.Anything, observed).Return(latest, deleteErr)
-
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	ctx := context.Background()
 	_, err := rec.reconcile(ctx, rm, desired)
 	require.Error(err)
 
-	// Error should contain both messages
-	assert.Contains(err.Error(), "deletion protection is enabled")
-	assert.Contains(err.Error(), "pre-delete sync also failed")
+	// Error should be the update error
 	assert.Contains(err.Error(), "AccessDeniedException")
 
-	// The wrapped error should still unwrap to the delete error
-	assert.True(errors.Is(err, deleteErr))
-
-	// Verify the recoverable condition was set on latest with combined message
-	latest.AssertCalled(t, "ReplaceConditions", mock.MatchedBy(func(conds []*ackv1alpha1.Condition) bool {
-		for _, c := range conds {
-			if c.Type == ackv1alpha1.ConditionTypeRecoverable &&
-				c.Status == corev1.ConditionTrue &&
-				c.Message != nil &&
-				strings.Contains(*c.Message, "deletion protection") &&
-				strings.Contains(*c.Message, "pre-delete sync also failed") {
-				return true
-			}
-		}
-		return false
-	}))
+	// Delete should NOT have been called — fail fast on pre-delete sync error
+	rm.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }

@@ -1087,8 +1087,8 @@ func (r *resourceReconciler) patchResourceStatus(
 // preDeleteSync reconciles spec differences between the desired CR state
 // and the observed AWS resource state before deletion. This ensures fields
 // like DeletionProtectionEnabled are updated on the AWS resource before the
-// Delete API call. If the update fails, the original observed resource is
-// returned so that deletion can still proceed.
+// Delete API call. If the update fails, the error is returned and deletion
+// is not attempted — the reconcile loop will requeue and retry.
 func (r *resourceReconciler) preDeleteSync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -1126,10 +1126,6 @@ func (r *resourceReconciler) preDeleteSync(
 	// while all other fields retain their current AWS values.
 	updated, err := rm.Update(ctx, merged, observed, delta)
 	if err != nil {
-		rlog.Info(
-			"pre-delete sync: update failed, proceeding with delete",
-			"error", err,
-		)
 		return observed, err
 	}
 	return updated, nil
@@ -1167,8 +1163,12 @@ func (r *resourceReconciler) deleteResource(
 	}
 	// Pre-delete sync: reconcile spec differences before deletion.
 	// This ensures fields like DeletionProtectionEnabled are synced
-	// to AWS before the Delete call.
-	observed, preDeleteErr := r.preDeleteSync(ctx, rm, current, observed)
+	// to AWS before the Delete call. If the sync fails, we return the
+	// error immediately — the reconcile loop will requeue and retry.
+	observed, err = r.preDeleteSync(ctx, rm, current, observed)
+	if err != nil {
+		return observed, err
+	}
 
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
@@ -1185,17 +1185,6 @@ func (r *resourceReconciler) deleteResource(
 		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, current, latest)
 	}
 	if err != nil {
-		// If both the pre-delete sync update and the delete failed, update
-		// the recoverable condition on latest with the combined error so
-		// the user can see both errors on the CR status. This is important
-		// for managed ACK users who don't have access to controller logs.
-		if preDeleteErr != nil {
-			msg := fmt.Sprintf("%s (pre-delete sync also failed: %v)", err.Error(), preDeleteErr)
-			if ackcompare.IsNotNil(latest) {
-				ackcondition.SetRecoverable(latest, corev1.ConditionTrue, &msg, nil)
-			}
-			return latest, fmt.Errorf("%w (pre-delete sync also failed: %v)", err, preDeleteErr)
-		}
 		// NOTE: Delete() implementations that have asynchronously-completing
 		// deletions should return a RequeueNeededAfter.
 		return latest, err
