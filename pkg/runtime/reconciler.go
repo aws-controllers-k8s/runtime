@@ -1084,6 +1084,53 @@ func (r *resourceReconciler) patchResourceStatus(
 	return err
 }
 
+// preDeleteSync reconciles spec differences between the desired CR state
+// and the observed AWS resource state before deletion. This ensures fields
+// like DeletionProtectionEnabled are updated on the AWS resource before the
+// Delete API call. If the update fails, the error is returned and deletion
+// is not attempted — the reconcile loop will requeue and retry.
+func (r *resourceReconciler) preDeleteSync(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	observed acktypes.AWSResource,
+) (acktypes.AWSResource, error) {
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Enter("r.preDeleteSync")
+	defer rlog.Exit("r.preDeleteSync", nil)
+
+	// Only run pre-delete sync if the descriptor implements the
+	// DeltaForPreDelete interface. This interface produces a delta that
+	// includes fields marked with compare.is_ignored (e.g.
+	// DeletionProtectionEnabled). Without it, the standard Delta is
+	// already handled by the normal Sync flow, so there is nothing
+	// extra to reconcile before deletion.
+	pdrd, ok := r.rd.(acktypes.AWSResourceDescriptorWithPreDeleteDelta)
+	if !ok {
+		return observed, nil
+	}
+	delta, merged := pdrd.DeltaForPreDelete(desired, observed)
+
+	if !delta.DifferentAt("Spec") {
+		return observed, nil
+	}
+
+	rlog.Info(
+		"pre-delete sync: detected spec differences, updating before delete",
+		"diff", delta.Differences,
+	)
+
+	// merged is a deep copy of observed with only the fields that differ
+	// in the delta overwritten from desired. This ensures rm.Update only
+	// changes the fields that DeltaForPreDelete detected as different
+	// while all other fields retain their current AWS values.
+	updated, err := rm.Update(ctx, merged, observed, delta)
+	if err != nil {
+		return observed, err
+	}
+	return updated, nil
+}
+
 // deleteResource ensures that the supplied AWSResource's backing API resource
 // is destroyed along with all child dependent resources.
 //
@@ -1114,6 +1161,15 @@ func (r *resourceReconciler) deleteResource(
 		}
 		return current, err
 	}
+	// Pre-delete sync: reconcile spec differences before deletion.
+	// This ensures fields like DeletionProtectionEnabled are synced
+	// to AWS before the Delete call. If the sync fails, we return the
+	// error immediately — the reconcile loop will requeue and retry.
+	observed, err = r.preDeleteSync(ctx, rm, current, observed)
+	if err != nil {
+		return observed, err
+	}
+
 	rlog.Enter("rm.Delete")
 	latest, err := rm.Delete(ctx, observed)
 	rlog.Exit("rm.Delete", err)
