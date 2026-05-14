@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/jaypipes/envutil"
@@ -94,6 +95,7 @@ type Config struct {
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
 	AccountID                       string
+	Partition                       string
 	Region                          string
 	IdentityEndpointURL             string
 	EndpointURL                     string
@@ -296,9 +298,10 @@ func (cfg *Config) SetupLogger() {
 	klog.SetLogger(logger)
 }
 
-// SetAWSAccountID uses sts GetCallerIdentity API to find AWS AccountId and set
-// in Config
-func (cfg *Config) SetAWSAccountID(ctx context.Context) error {
+// SetAWSAccountInfo uses sts GetCallerIdentity API to find AWS AccountId and partition
+//
+//	to set in Config
+func (cfg *Config) SetAWSAccountInfo(ctx context.Context) error {
 	awsCfg, err := config.LoadDefaultConfig(
 		ctx,
 		config.WithRegion(cfg.Region),
@@ -316,6 +319,14 @@ func (cfg *Config) SetAWSAccountID(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("unable to get caller identity: %v", err)
 	}
+	if res.Arn == nil {
+		return fmt.Errorf("caller identity response missing ARN")
+	}
+	parsedARN, err := arn.Parse(*res.Arn)
+	if err != nil {
+		return fmt.Errorf("error parsing arn: %v", err)
+	}
+	cfg.Partition = parsedARN.Partition
 	cfg.AccountID = *res.Account
 	return nil
 }
@@ -369,8 +380,8 @@ func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 		}
 	}
 
-	if err := cfg.SetAWSAccountID(ctx); err != nil {
-		return fmt.Errorf("unable to determine account ID: %v", err)
+	if err := cfg.SetAWSAccountInfo(ctx); err != nil {
+		return fmt.Errorf("unable to determine account info: %v", err)
 	}
 
 	if cfg.EnableWebhookServer && cfg.WebhookServerAddr == "" {
