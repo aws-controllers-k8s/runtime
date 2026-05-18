@@ -33,6 +33,6 @@ type ResourceMetadata struct {
 	// Region is the AWS region in which the resource exists or will exist.
 	Region *AWSRegion `json:"region"`
 	// Partition is the AWS partition in which the resource exists or will exist
-	Partition *AWSPartition `json:"partition"`
+	Partition *AWSPartition `json:"partition,omitempty"`
 }
 
