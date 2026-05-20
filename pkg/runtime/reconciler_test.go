@@ -397,6 +397,7 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rm.On("FilterSystemTags", latest, []string{})
 	rd.On("MarkAdopted", latest).Return()
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("OnAdopted", ctx, latest).Return(latest, nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Status").Return(statusWriter)
@@ -665,6 +666,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("OnAdopted", ctx, latest).Return(latest, nil)
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
