@@ -1017,6 +1017,12 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	desiredCleaned := rm.ClearResolvedReferences(desired)
 	latestCleaned := rm.ClearResolvedReferences(latest)
 
+	// Filter system tags from both sides before computing the patch.
+	// This prevents controller-injected tags (services.k8s.aws/*) and
+	// AWS-managed tags (aws:*) from being persisted to the CR spec.
+	rm.FilterSystemTags(desiredCleaned, r.cfg.ResourceTagKeys)
+	rm.FilterSystemTags(latestCleaned, r.cfg.ResourceTagKeys)
+
 	equalMetadata, err := ackcompare.MetaV1ObjectEqual(desiredCleaned.MetaObject(), latestCleaned.MetaObject())
 	if err != nil {
 		return latest, err

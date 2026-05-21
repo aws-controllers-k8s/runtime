@@ -222,6 +222,7 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	// Use specific matcher for WithoutCancel context instead of mock.Anything
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
@@ -282,6 +283,7 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	// Use specific matcher for WithoutCancel context instead of mock.Anything
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
@@ -335,6 +337,7 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -394,9 +397,10 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rd.On("Delta", latest, latest).Return(ackcompare.NewDelta())
 
 	r, kc, scmd := reconcilerMocks(rmf)
-	rm.On("FilterSystemTags", latest, []string{})
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	rd.On("MarkAdopted", latest).Return()
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	kc.On("Status").Return(statusWriter)
@@ -450,6 +454,7 @@ func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 
 	r, _, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	latest, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)
@@ -506,6 +511,7 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 
 	r, _, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	latest, err := r.Sync(ctx, rm, desired)
 	require.NotNil(err)
@@ -576,6 +582,7 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -665,6 +672,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
 	kc.On("Status").Return(statusWriter)
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
@@ -734,6 +742,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -819,6 +828,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -890,7 +900,7 @@ func TestReconcilerUpdate(t *testing.T) {
 	rm.On("ReadOne", ctx, desired).Return(
 		latest, nil,
 	)
-	rm.On("FilterSystemTags", latest, []string{})
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 	rm.On("Update", ctx, desired, latest, delta).Return(
 		latest, nil,
 	)
@@ -907,6 +917,7 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -998,6 +1009,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -1080,6 +1092,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -1163,6 +1176,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -1257,6 +1271,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// pointers returned from "client.MergeFrom" fails the equality check during
 	// assertion even when parameters inside two objects are same.
@@ -1334,6 +1349,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
@@ -1418,6 +1434,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
@@ -1573,6 +1590,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
@@ -1677,6 +1695,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 	r, _, scmd := reconcilerMocks(rmf)
 	rd.On("IsManaged", desired).Return(false)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
 		desired, false, nil,
@@ -1764,6 +1783,7 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 
 	r, kc, scmd := reconcilerMocks(rmf)
 	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
@@ -1851,6 +1871,8 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	rm.On("EnsureTags", ctx, desired, scmd).Return(
 		ensureControllerTagsError,
 	)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
+
 
 	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 
@@ -1990,6 +2012,7 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 		desired, false, nil,
 	)
 	rm.On("EnsureTags", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
 
 	// Create reconciler with namespace cache
 	r := &resourceReconciler{
@@ -2138,6 +2161,7 @@ func TestPreDeleteSync_ReadOneNotFound(t *testing.T) {
 	rm.On("ReadOne", mock.Anything, desired).Return(nil, ackerr.NotFound)
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 
 	// Patch for setResourceUnmanaged
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -2225,6 +2249,7 @@ func TestPreDeleteSync_DescriptorImplementsDeltaForPreDelete(t *testing.T) {
 	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 
 	// Update succeeds — receives the merged resource (observed + pre-delete fields from desired)
 	updated, _ := newMockRes()
@@ -2279,6 +2304,7 @@ func TestPreDeleteSync_DescriptorDoesNotImplementDeltaForPreDelete(t *testing.T)
 	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 
 	// Delete succeeds — preDeleteSync is a no-op, so Delete receives observed
 	rm.On("Delete", mock.Anything, observed).Return(observed, nil)
@@ -2332,6 +2358,7 @@ func TestPreDeleteSync_DeletionProtectionScenario(t *testing.T) {
 	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 
 	// Update succeeds — protection is now disabled on AWS side
 	synced, _ := newMockRes()
@@ -2388,6 +2415,7 @@ func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
 	rm.On("ReadOne", mock.Anything, desired).Return(observed, nil)
 	rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
 	rm.On("ClearResolvedReferences", mock.Anything).Return(desired)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 
 	// Update fails
 	updateErr := fmt.Errorf("AccessDeniedException: not authorized")
