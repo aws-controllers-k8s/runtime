@@ -58,7 +58,7 @@ func ValidateCrossNamespaceReference(
 	if enableCrossNamespace {
 		return *refNamespace, true, nil
 	}
-	return "", false, ackerr.ResourceReferenceCrossNamespaceNotAllowedFor(
+	return ownerNamespace, false, ackerr.ResourceReferenceCrossNamespaceNotAllowedFor(
 		ownerNamespace, *refNamespace, refName,
 	)
 }

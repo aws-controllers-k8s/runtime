@@ -159,13 +159,17 @@ func (r *fieldExportReconciler) Sync(
 		return desired, r.onError(ctx, &desired, ackerr.NewTerminalError(nsErr))
 	}
 	if isCrossNamespace {
+		targetName := ""
+		if desired.Spec.To != nil && desired.Spec.To.Name != nil {
+			targetName = *desired.Spec.To.Name
+		}
 		r.log.V(0).Info(
 			"cross-namespace field export detected; this behavior will be "+
 				"disabled by default in a future release. Set --enable-cross-namespace "+
 				"to preserve this behavior.",
 			"fieldExportNamespace", desired.Namespace,
-			"targetNamespace", r.getTargetNamespace(&desired),
-			"targetName", *desired.Spec.To.Name,
+			"targetNamespace", resolvedNamespace,
+			"targetName", targetName,
 		)
 		r.setCrossNsOptInRequiredCondition(&desired)
 	}
@@ -235,6 +239,14 @@ func (r *fieldExportReconciler) setCrossNsOptInRequiredCondition(
 		desired.Namespace + "\" targets namespace \"" + r.getTargetNamespace(desired) +
 		"\". Cross-namespace behavior will require explicit opt-in in a future release. " +
 		"Set --enable-cross-namespace=true to preserve this behavior."
+	// Use lookup-or-create pattern to avoid duplicate conditions
+	for i, c := range desired.Status.Conditions {
+		if c.Type == ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired {
+			desired.Status.Conditions[i].Status = corev1.ConditionTrue
+			desired.Status.Conditions[i].Message = &message
+			return
+		}
+	}
 	condition := &ackv1alpha1.Condition{
 		Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
 		Status:  corev1.ConditionTrue,

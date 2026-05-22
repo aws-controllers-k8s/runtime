@@ -53,7 +53,7 @@ var (
 	// --enable-cross-namespace flag is not enabled.
 	ResourceReferenceCrossNamespaceNotAllowed = fmt.Errorf(
 		"cross-namespace resource reference is not allowed. " +
-			"Set '--enable-cross-namespace' flag to allow it",
+			"Set --enable-cross-namespace=true to allow it",
 	)
 )
 
