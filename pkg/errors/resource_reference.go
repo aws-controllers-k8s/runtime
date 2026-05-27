@@ -47,6 +47,14 @@ var (
 	ResourceReferenceMissingTargetField = fmt.Errorf(
 		"the referenced resource is missing the target field",
 	)
+	// ResourceReferenceCrossNamespaceNotAllowed indicates that a resource
+	// reference specifies a Namespace that differs from the namespace of the
+	// resource containing the reference, and the
+	// --enable-cross-namespace flag is not enabled.
+	ResourceReferenceCrossNamespaceNotAllowed = fmt.Errorf(
+		"cross-namespace resource reference is not allowed. " +
+			"Set --enable-cross-namespace=true to allow it",
+	)
 )
 
 // ResourceReferenceOrIDRequiredFor returns a ResourceReferenceOrIDRequired error
@@ -89,4 +97,19 @@ func ResourceReferenceMissingTargetFieldFor(resource string, namespace string,
 	return fmt.Errorf("%w. resource:%s, namespace:%s, name:%s"+
 		", targetField:%s", ResourceReferenceMissingTargetField,
 		resource, namespace, name, targetField)
+}
+
+// ResourceReferenceCrossNamespaceNotAllowedFor returns a
+// ResourceReferenceCrossNamespaceNotAllowed error annotated with the
+// source namespace, target namespace, and referenced resource name.
+func ResourceReferenceCrossNamespaceNotAllowedFor(
+	sourceNamespace string,
+	targetNamespace string,
+	name string,
+) error {
+	return fmt.Errorf(
+		"%w. sourceNamespace:%s, targetNamespace:%s, name:%s",
+		ResourceReferenceCrossNamespaceNotAllowed,
+		sourceNamespace, targetNamespace, name,
+	)
 }

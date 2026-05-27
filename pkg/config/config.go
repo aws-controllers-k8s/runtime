@@ -43,6 +43,7 @@ import (
 )
 
 const (
+	flagEnableCrossNamespace            = "enable-cross-namespace"
 	flagEnableFieldExportReconciler     = "enable-field-export-reconciler"
 	flagEnableLeaderElection            = "enable-leader-election"
 	flagEnableCARM                      = "enable-carm"
@@ -92,6 +93,7 @@ type Config struct {
 	EnableLeaderElection            bool
 	EnableFieldExportReconciler     bool
 	EnableCARM                      bool
+	EnableCrossNamespace            bool
 	LeaderElectionNamespace         string
 	EnableDevelopmentLogging        bool
 	AccountID                       string
@@ -157,6 +159,13 @@ func (cfg *Config) BindFlags() {
 		&cfg.EnableCARM, flagEnableCARM,
 		true,
 		"Enable Cross Account Resource Management.",
+	)
+	flag.BoolVar(
+		&cfg.EnableCrossNamespace, flagEnableCrossNamespace,
+		true,
+		"Enable cross-namespace behavior (resource references, secret references, "+
+			"field exports). When false, the controller rejects any operation that "+
+			"crosses namespace boundaries.",
 	)
 	flag.StringVar(
 		// In the context of the controller-runtime library, if the LeaderElectionNamespace parametere is not

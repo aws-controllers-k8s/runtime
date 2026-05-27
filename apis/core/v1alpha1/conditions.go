@@ -70,6 +70,11 @@ const (
 	// to manage the AWSResource. If none are selected, this condition will be removed
 	// and we'll use the custom role to manage the AWSResource
 	ConditionTypeIAMRoleSelected ConditionType = "ACK.IAMRoleSelected"
+	// ConditionTypeCrossNamespaceOptInRequired indicates that the resource uses
+	// cross-namespace behavior (resource references, secret references, or
+	// field exports) that will require explicit opt-in via
+	// --enable-cross-namespace=true in a future release.
+	ConditionTypeCrossNamespaceOptInRequired ConditionType = "ACK.CrossNamespaceOptInRequired"
 )
 
 // Condition is the common struct used by all CRDs managed by ACK service

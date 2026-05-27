@@ -153,6 +153,27 @@ func (r *fieldExportReconciler) Sync(
 		r.patchResourceStatus(ctx, &desired, latest)
 	}()
 
+	// Validate cross-namespace access for the field export target
+	resolvedNamespace, isCrossNamespace, nsErr := r.validateFieldExportNamespace(&desired)
+	if nsErr != nil {
+		return desired, r.onError(ctx, &desired, ackerr.NewTerminalError(nsErr))
+	}
+	if isCrossNamespace {
+		targetName := ""
+		if desired.Spec.To != nil && desired.Spec.To.Name != nil {
+			targetName = *desired.Spec.To.Name
+		}
+		r.log.V(0).Info(
+			"cross-namespace field export detected; this behavior will be "+
+				"disabled by default in a future release. Set --enable-cross-namespace "+
+				"to preserve this behavior.",
+			"fieldExportNamespace", desired.Namespace,
+			"targetNamespace", resolvedNamespace,
+			"targetName", targetName,
+		)
+		r.setCrossNsOptInRequiredCondition(&desired)
+	}
+
 	// Get the field from the resource
 	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
@@ -163,11 +184,11 @@ func (r *fieldExportReconciler) Sync(
 
 	switch desired.Spec.To.Kind {
 	case ackv1alpha1.FieldExportOutputTypeConfigMap:
-		if err = r.writeToConfigMap(ctx, *value, &desired); err != nil {
+		if err = r.writeToConfigMap(ctx, *value, &desired, resolvedNamespace); err != nil {
 			return desired, r.onError(ctx, &desired, err)
 		}
 	case ackv1alpha1.FieldExportOutputTypeSecret:
-		if err = r.writeToSecret(ctx, *value, &desired); err != nil {
+		if err = r.writeToSecret(ctx, *value, &desired, resolvedNamespace); err != nil {
 			return desired, r.onError(ctx, &desired, err)
 		}
 	}
@@ -175,6 +196,63 @@ func (r *fieldExportReconciler) Sync(
 	// Don't attempt to patch conditions again, directly return result of
 	// 'r.onSuccess'
 	return desired, r.onSuccess(ctx, &desired)
+}
+
+// validateFieldExportNamespace checks whether the field export target namespace
+// is allowed given the current cross-namespace flag setting.
+func (r *fieldExportReconciler) validateFieldExportNamespace(
+	desired *ackv1alpha1.FieldExport,
+) (string, bool, error) {
+	targetNamespace := r.getTargetNamespace(desired)
+	targetName := ""
+	if desired.Spec.To != nil && desired.Spec.To.Name != nil {
+		targetName = *desired.Spec.To.Name
+	}
+
+	return ValidateCrossNamespaceReferenceString(
+		r.cfg.EnableCrossNamespace,
+		desired.Namespace,
+		targetNamespace,
+		targetName,
+	)
+}
+
+// getTargetNamespace returns the target namespace for the field export write.
+// If Spec.To.Namespace is set, it returns that value; otherwise it returns
+// the FieldExport's own namespace.
+func (r *fieldExportReconciler) getTargetNamespace(
+	desired *ackv1alpha1.FieldExport,
+) string {
+	if desired.Spec.To != nil && desired.Spec.To.Namespace != nil && *desired.Spec.To.Namespace != "" {
+		return *desired.Spec.To.Namespace
+	}
+	return desired.Namespace
+}
+
+// setCrossNsOptInRequiredCondition sets the ACK.CrossNamespaceOptInRequired
+// condition on the FieldExport resource to notify users that cross-namespace
+// behavior will require explicit opt-in in a future release.
+func (r *fieldExportReconciler) setCrossNsOptInRequiredCondition(
+	desired *ackv1alpha1.FieldExport,
+) {
+	message := "Cross-namespace field export detected: FieldExport in namespace \"" +
+		desired.Namespace + "\" targets namespace \"" + r.getTargetNamespace(desired) +
+		"\". Cross-namespace behavior will require explicit opt-in in a future release. " +
+		"Set --enable-cross-namespace=true to preserve this behavior."
+	// Use lookup-or-create pattern to avoid duplicate conditions
+	for i, c := range desired.Status.Conditions {
+		if c.Type == ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired {
+			desired.Status.Conditions[i].Status = corev1.ConditionTrue
+			desired.Status.Conditions[i].Message = &message
+			return
+		}
+	}
+	condition := &ackv1alpha1.Condition{
+		Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		Status:  corev1.ConditionTrue,
+		Message: &message,
+	}
+	desired.Status.Conditions = append(desired.Status.Conditions, condition)
 }
 
 // cleanup removes the finalizer from FieldExport so that k8s object can
@@ -293,6 +371,7 @@ func (r *fieldExportReconciler) writeToConfigMap(
 	ctx context.Context,
 	sourceValue string,
 	desired *ackv1alpha1.FieldExport,
+	resolvedNamespace string,
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
@@ -302,12 +381,8 @@ func (r *fieldExportReconciler) writeToConfigMap(
 
 	// Get the initial configmap
 	nsn := types.NamespacedName{
-		Name: *desired.Spec.To.Name,
-	}
-	if desired.Spec.To.Namespace != nil {
-		nsn.Namespace = *desired.Spec.To.Namespace
-	} else {
-		nsn.Namespace = desired.Namespace
+		Name:      *desired.Spec.To.Name,
+		Namespace: resolvedNamespace,
 	}
 
 	cm := &corev1.ConfigMap{}
@@ -340,6 +415,7 @@ func (r *fieldExportReconciler) writeToSecret(
 	ctx context.Context,
 	sourceValue string,
 	desired *ackv1alpha1.FieldExport,
+	resolvedNamespace string,
 ) error {
 	// Construct the data key
 	key := fmt.Sprintf("%s.%s", desired.Namespace, desired.Name)
@@ -349,12 +425,8 @@ func (r *fieldExportReconciler) writeToSecret(
 
 	// Get the initial secret
 	nsn := types.NamespacedName{
-		Name: *desired.Spec.To.Name,
-	}
-	if desired.Spec.To.Namespace != nil {
-		nsn.Namespace = *desired.Spec.To.Namespace
-	} else {
-		nsn.Namespace = desired.Namespace
+		Name:      *desired.Spec.To.Name,
+		Namespace: resolvedNamespace,
 	}
 
 	secret := &corev1.Secret{}
