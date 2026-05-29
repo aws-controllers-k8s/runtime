@@ -97,3 +97,73 @@ func HandleCrossNamespaceReference(
 	)
 	return SetCrossNamespaceOptInRequired(conditions, message)
 }
+
+// ResolveCrossNamespaceReference orchestrates the full Phase 1 cross-namespace
+// reference handling flow in a single call. It calls
+// ValidateCrossNamespaceReference and, when the reference targets a different
+// namespace and the flag is enabled, calls HandleCrossNamespaceReference to
+// emit the warning log and set the ACK.CrossNamespaceOptInRequired condition.
+//
+// Parameters:
+//   - ctx: passed to the logger
+//   - enableCrossNamespace: the value of Config.EnableCrossNamespace
+//   - conditions: pointer to the resource's Status.Conditions slice; the
+//     slice is updated in place when a deprecation condition is set
+//   - refKind: label describing the reference kind (resource, secret, ...)
+//   - ownerNamespace: the namespace of the resource containing the reference
+//   - refNamespace: the user-supplied namespace (may be nil or empty)
+//   - refName: the user-supplied reference name; used for log fields and
+//     error message context
+//
+// Returns the resolved namespace to pass to apiReader.Get and any terminal
+// error from ValidateCrossNamespaceReference. Callers do not need to inspect
+// an isCrossNamespace flag or manage the conditions slice themselves.
+func ResolveCrossNamespaceReference(
+	ctx context.Context,
+	enableCrossNamespace bool,
+	conditions *[]*ackv1alpha1.Condition,
+	refKind CrossNamespaceRefKind,
+	ownerNamespace string,
+	refNamespace *string,
+	refName string,
+) (string, error) {
+	resolved, isCrossNs, err := ValidateCrossNamespaceReference(
+		enableCrossNamespace, ownerNamespace, refNamespace, refName,
+	)
+	if err != nil {
+		return "", err
+	}
+	if isCrossNs && conditions != nil {
+		*conditions = HandleCrossNamespaceReference(
+			ctx, *conditions, refKind, ownerNamespace, *refNamespace, refName,
+		)
+	}
+	return resolved, nil
+}
+
+// ResolveCrossNamespaceReferenceString is the string-namespace counterpart of
+// ResolveCrossNamespaceReference, intended for callers that have a plain
+// string namespace (e.g. SecretKeyReference.Namespace,
+// FieldExportTarget.Namespace) rather than a *string.
+func ResolveCrossNamespaceReferenceString(
+	ctx context.Context,
+	enableCrossNamespace bool,
+	conditions *[]*ackv1alpha1.Condition,
+	refKind CrossNamespaceRefKind,
+	ownerNamespace string,
+	refNamespace string,
+	refName string,
+) (string, error) {
+	resolved, isCrossNs, err := ValidateCrossNamespaceReferenceString(
+		enableCrossNamespace, ownerNamespace, refNamespace, refName,
+	)
+	if err != nil {
+		return "", err
+	}
+	if isCrossNs && conditions != nil {
+		*conditions = HandleCrossNamespaceReference(
+			ctx, *conditions, refKind, ownerNamespace, refNamespace, refName,
+		)
+	}
+	return resolved, nil
+}

@@ -140,3 +140,110 @@ func TestHandleCrossNamespaceReference_LookupOrCreate(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
 }
+
+func TestResolveCrossNamespaceReference_SameNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	owner := "ns-a"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		owner, &owner, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, owner, resolved)
+	assert.Empty(t, conds, "no condition should be set for same-namespace refs")
+}
+
+func TestResolveCrossNamespaceReference_NilNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		"ns-a", nil, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-a", resolved)
+	assert.Empty(t, conds)
+}
+
+func TestResolveCrossNamespaceReference_CrossNamespace_FlagEnabled(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	target := "ns-b"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, target, resolved)
+	require.Len(t, conds, 1)
+	assert.Equal(t,
+		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		conds[0].Type,
+	)
+}
+
+func TestResolveCrossNamespaceReference_CrossNamespace_FlagDisabled(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	target := "ns-b"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, false, &conds, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.Error(t, err)
+	assert.Empty(t, resolved)
+	assert.Empty(t, conds, "no condition should be set when validation fails")
+}
+
+func TestResolveCrossNamespaceReference_NilConditionsPointer(t *testing.T) {
+	ctx := context.Background()
+	target := "ns-b"
+
+	// Should not panic; cross-namespace flow still resolves the namespace.
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, nil, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, target, resolved)
+}
+
+func TestResolveCrossNamespaceReferenceString_CrossNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReferenceString(
+		ctx, true, &conds, CrossNamespaceRefKindSecret,
+		"ns-a", "ns-b", "secret",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-b", resolved)
+	require.Len(t, conds, 1)
+	require.NotNil(t, conds[0].Message)
+	assert.Contains(t, *conds[0].Message, "secret reference")
+}
+
+func TestResolveCrossNamespaceReferenceString_EmptyNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReferenceString(
+		ctx, true, &conds, CrossNamespaceRefKindSecret,
+		"ns-a", "", "secret",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-a", resolved)
+	assert.Empty(t, conds)
+}
