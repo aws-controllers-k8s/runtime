@@ -614,6 +614,10 @@ func (r *resourceReconciler) Sync(
 				"skipped", true,
 				"diff", delta.Differences,
 			)
+			latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+			if err != nil {
+				return latest, err
+			}
 		}
 		return latest, nil
 	} else {
