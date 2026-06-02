@@ -245,7 +245,11 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	arn := ackv1alpha1.AWSResourceName("mybook-arn")
 
 	desired, desiredRTObj, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -269,9 +273,9 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 		latest, ackerr.NotFound,
 	).Once()
 	rm.On("Create", ctx, desired).Return(
-		latest, awsError{},
+		nil, awsError{},
 	)
-	rm.On("IsSynced", ctx, latest).Return(false, nil)
+	rm.On("IsSynced", ctx, desired).Return(false, nil)
 	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
 	rd.On("IsManaged", desired).Return(false).Twice()
 	rd.On("IsManaged", desired).Return(true)
