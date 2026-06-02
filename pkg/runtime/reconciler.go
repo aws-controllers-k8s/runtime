@@ -781,6 +781,9 @@ func (r *resourceReconciler) createResource(
 	latest, err = rm.Create(ctx, desired)
 	rlog.Exit("rm.Create", err)
 	if err != nil {
+		if latest == nil {
+			latest = desired.DeepCopy()
+		}
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
 		// that we're only managing (put finalizer) the resources
@@ -910,6 +913,9 @@ func (r *resourceReconciler) updateResource(
 		updated, err = rm.Update(ctx, desired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
 		if err != nil {
+			if updated == nil {
+				updated = latest
+			}
 			return updated, err
 		}
 		// Ensure that we are patching any changes to the annotations/metadata and
