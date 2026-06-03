@@ -239,20 +239,9 @@ func (r *fieldExportReconciler) setCrossNsOptInRequiredCondition(
 		desired.Namespace + "\" targets namespace \"" + r.getTargetNamespace(desired) +
 		"\". Cross-namespace behavior will require explicit opt-in in a future release. " +
 		"Set --enable-cross-namespace=true to preserve this behavior."
-	// Use lookup-or-create pattern to avoid duplicate conditions
-	for i, c := range desired.Status.Conditions {
-		if c.Type == ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired {
-			desired.Status.Conditions[i].Status = corev1.ConditionTrue
-			desired.Status.Conditions[i].Message = &message
-			return
-		}
-	}
-	condition := &ackv1alpha1.Condition{
-		Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
-		Status:  corev1.ConditionTrue,
-		Message: &message,
-	}
-	desired.Status.Conditions = append(desired.Status.Conditions, condition)
+	desired.Status.Conditions = SetCrossNamespaceOptInRequired(
+		desired.Status.Conditions, message,
+	)
 }
 
 // cleanup removes the finalizer from FieldExport so that k8s object can

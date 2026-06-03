@@ -1,0 +1,249 @@
+// Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"). You may
+// not use this file except in compliance with the License. A copy of the
+// License is located at
+//
+//     http://aws.amazon.com/apache2.0/
+//
+// or in the "license" file accompanying this file. This file is distributed
+// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+// express or implied. See the License for the specific language governing
+// permissions and limitations under the License.
+
+package runtime
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+)
+
+func TestSetCrossNamespaceOptInRequired_AppendsWhenAbsent(t *testing.T) {
+	conds := []*ackv1alpha1.Condition{}
+	out := SetCrossNamespaceOptInRequired(conds, "test message")
+
+	require.Len(t, out, 1)
+	assert.Equal(t,
+		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		out[0].Type,
+	)
+	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
+	require.NotNil(t, out[0].Message)
+	assert.Equal(t, "test message", *out[0].Message)
+}
+
+func TestSetCrossNamespaceOptInRequired_UpdatesWhenPresent(t *testing.T) {
+	existingMsg := "old message"
+	conds := []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+			Status:  corev1.ConditionFalse,
+			Message: &existingMsg,
+		},
+	}
+	out := SetCrossNamespaceOptInRequired(conds, "new message")
+
+	// Should still have exactly one condition, not two.
+	require.Len(t, out, 1)
+	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
+	require.NotNil(t, out[0].Message)
+	assert.Equal(t, "new message", *out[0].Message)
+}
+
+func TestSetCrossNamespaceOptInRequired_PreservesOtherConditions(t *testing.T) {
+	otherMsg := "other"
+	conds := []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeReferencesResolved,
+			Status:  corev1.ConditionTrue,
+			Message: &otherMsg,
+		},
+	}
+	out := SetCrossNamespaceOptInRequired(conds, "cross-ns")
+
+	require.Len(t, out, 2)
+	assert.Equal(t, ackv1alpha1.ConditionTypeReferencesResolved, out[0].Type)
+	assert.Equal(t,
+		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		out[1].Type,
+	)
+}
+
+func TestHandleCrossNamespaceReference_ResourceRef(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	out := HandleCrossNamespaceReference(
+		ctx, conds,
+		CrossNamespaceRefKindResource,
+		"owner-ns", "target-ns", "my-ref",
+	)
+
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Message)
+	msg := *out[0].Message
+	// Message should mention all the relevant pieces.
+	assert.True(t, strings.Contains(msg, "resource reference"),
+		"message should mention ref kind: %s", msg)
+	assert.True(t, strings.Contains(msg, "owner-ns"),
+		"message should mention owner namespace: %s", msg)
+	assert.True(t, strings.Contains(msg, "target-ns"),
+		"message should mention target namespace: %s", msg)
+	assert.True(t, strings.Contains(msg, "my-ref"),
+		"message should mention ref name: %s", msg)
+	assert.True(t, strings.Contains(msg, "--enable-cross-namespace"),
+		"message should mention the flag: %s", msg)
+}
+
+func TestHandleCrossNamespaceReference_SecretRef(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	out := HandleCrossNamespaceReference(
+		ctx, conds,
+		CrossNamespaceRefKindSecret,
+		"owner-ns", "secret-ns", "my-secret",
+	)
+
+	require.Len(t, out, 1)
+	require.NotNil(t, out[0].Message)
+	msg := *out[0].Message
+	assert.True(t, strings.Contains(msg, "secret reference"),
+		"message should mention ref kind: %s", msg)
+}
+
+func TestHandleCrossNamespaceReference_LookupOrCreate(t *testing.T) {
+	ctx := context.Background()
+	existing := "old"
+	conds := []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+			Status:  corev1.ConditionFalse,
+			Message: &existing,
+		},
+	}
+
+	out := HandleCrossNamespaceReference(
+		ctx, conds,
+		CrossNamespaceRefKindResource,
+		"owner-ns", "target-ns", "my-ref",
+	)
+
+	// Repeated calls must not produce duplicate conditions.
+	require.Len(t, out, 1)
+	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
+}
+
+func TestResolveCrossNamespaceReference_SameNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	owner := "ns-a"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		owner, &owner, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, owner, resolved)
+	assert.Empty(t, conds, "no condition should be set for same-namespace refs")
+}
+
+func TestResolveCrossNamespaceReference_NilNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		"ns-a", nil, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-a", resolved)
+	assert.Empty(t, conds)
+}
+
+func TestResolveCrossNamespaceReference_CrossNamespace_FlagEnabled(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	target := "ns-b"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, &conds, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, target, resolved)
+	require.Len(t, conds, 1)
+	assert.Equal(t,
+		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		conds[0].Type,
+	)
+}
+
+func TestResolveCrossNamespaceReference_CrossNamespace_FlagDisabled(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+	target := "ns-b"
+
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, false, &conds, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.Error(t, err)
+	assert.Empty(t, resolved)
+	assert.Empty(t, conds, "no condition should be set when validation fails")
+}
+
+func TestResolveCrossNamespaceReference_NilConditionsPointer(t *testing.T) {
+	ctx := context.Background()
+	target := "ns-b"
+
+	// Should not panic; cross-namespace flow still resolves the namespace.
+	resolved, err := ResolveCrossNamespaceReference(
+		ctx, true, nil, CrossNamespaceRefKindResource,
+		"ns-a", &target, "ref",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, target, resolved)
+}
+
+func TestResolveCrossNamespaceReferenceString_CrossNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReferenceString(
+		ctx, true, &conds, CrossNamespaceRefKindSecret,
+		"ns-a", "ns-b", "secret",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-b", resolved)
+	require.Len(t, conds, 1)
+	require.NotNil(t, conds[0].Message)
+	assert.Contains(t, *conds[0].Message, "secret reference")
+}
+
+func TestResolveCrossNamespaceReferenceString_EmptyNamespace(t *testing.T) {
+	ctx := context.Background()
+	conds := []*ackv1alpha1.Condition{}
+
+	resolved, err := ResolveCrossNamespaceReferenceString(
+		ctx, true, &conds, CrossNamespaceRefKindSecret,
+		"ns-a", "", "secret",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-a", resolved)
+	assert.Empty(t, conds)
+}
