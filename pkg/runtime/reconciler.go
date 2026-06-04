@@ -145,12 +145,46 @@ func (r *reconciler) SecretValueFromReference(
 		}
 	}
 
-	// Determine the namespace to use for fetching the secret.
-	// Cross-namespace validation, logging, and condition-setting are handled
-	// by the generated code before calling this method.
-	namespace := ref.Namespace
-	if namespace == "" {
-		namespace = ownerNamespace
+	// Validate cross-namespace access. Performing this here (rather than in
+	// generated code) ensures every caller is covered, including custom
+	// update functions and hooks that call SecretValueFromReference directly.
+	//
+	// When the flag is disabled and the secret targets a different namespace,
+	// a terminal error is returned; the caller's condition-handling machinery
+	// sets the ACK.Terminal condition from the error message. When the flag is
+	// enabled, a deprecation warning is logged and resolution proceeds.
+	namespace, isCrossNamespace, err := ValidateCrossNamespaceReferenceString(
+		r.cfg.EnableCrossNamespace,
+		ownerNamespace,
+		ref.Namespace,
+		ref.Name,
+	)
+	if err != nil {
+		return "", ackerr.NewTerminalError(err)
+	}
+	if isCrossNamespace {
+		r.log.V(0).Info(
+			"cross-namespace secret reference detected; this behavior will be "+
+				"disabled by default in a future release. Set --enable-cross-namespace "+
+				"to preserve this behavior.",
+			"ownerNamespace", ownerNamespace,
+			"secretNamespace", ref.Namespace,
+			"secretName", ref.Name,
+		)
+		// Set the deprecation condition on the resource being reconciled, if
+		// one was stashed in the context. This covers all callers (generated
+		// sdk.go, hooks, and custom update functions) without threading the
+		// resource through this method's signature.
+		if cm := ConditionManagerFromContext(ctx); cm != nil {
+			message := fmt.Sprintf(
+				"Cross-namespace %s detected: resource in namespace %q "+
+					"references %q in namespace %q. Cross-namespace behavior "+
+					"will be disabled by default in a future release. Set "+
+					"--enable-cross-namespace=true to preserve this behavior.",
+				CrossNamespaceRefKindSecret, ownerNamespace, ref.Name, ref.Namespace,
+			)
+			SetCrossNamespaceOptInRequiredOnSubject(cm, message)
+		}
 	}
 
 	nsn := client.ObjectKey{
@@ -237,6 +271,11 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// will be reflected in the context.
 	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 	ctx = context.WithValue(ctx, "resourceNamespace", req.Namespace)
+	// Stash the resource being reconciled so that code paths which only
+	// receive a context (e.g. SecretValueFromReference) can set conditions on
+	// it. The conditions set here are deep-copied into the returned resource
+	// during sdkCreate/sdkUpdate, so they persist to the status patch.
+	ctx = WithConditionManager(ctx, desired)
 
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume

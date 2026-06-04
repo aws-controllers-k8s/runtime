@@ -247,3 +247,48 @@ func TestResolveCrossNamespaceReferenceString_EmptyNamespace(t *testing.T) {
 	assert.Equal(t, "ns-a", resolved)
 	assert.Empty(t, conds)
 }
+
+// subjectConditionManager is a minimal ConditionManager for exercising
+// SetCrossNamespaceOptInRequiredOnSubject.
+type subjectConditionManager struct {
+	conditions []*ackv1alpha1.Condition
+}
+
+func (s *subjectConditionManager) Conditions() []*ackv1alpha1.Condition {
+	return s.conditions
+}
+
+func (s *subjectConditionManager) ReplaceConditions(conds []*ackv1alpha1.Condition) {
+	s.conditions = conds
+}
+
+func TestSetCrossNamespaceOptInRequiredOnSubject_SetsCondition(t *testing.T) {
+	subject := &subjectConditionManager{}
+
+	SetCrossNamespaceOptInRequiredOnSubject(subject, "test message")
+
+	require.Len(t, subject.conditions, 1)
+	assert.Equal(t,
+		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		subject.conditions[0].Type,
+	)
+	require.NotNil(t, subject.conditions[0].Message)
+	assert.Equal(t, "test message", *subject.conditions[0].Message)
+}
+
+func TestSetCrossNamespaceOptInRequiredOnSubject_NilSubject(t *testing.T) {
+	// Must not panic on a nil subject.
+	SetCrossNamespaceOptInRequiredOnSubject(nil, "test message")
+}
+
+func TestConditionManagerFromContext_RoundTrip(t *testing.T) {
+	subject := &subjectConditionManager{}
+	ctx := WithConditionManager(context.Background(), subject)
+
+	got := ConditionManagerFromContext(ctx)
+	assert.Equal(t, subject, got)
+}
+
+func TestConditionManagerFromContext_Absent(t *testing.T) {
+	assert.Nil(t, ConditionManagerFromContext(context.Background()))
+}

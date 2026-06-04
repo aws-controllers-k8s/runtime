@@ -21,7 +21,36 @@ import (
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
+
+// conditionManagerContextKey is the (unexported, collision-free) context key
+// under which the reconciler stashes the resource being reconciled so that
+// helpers without a direct resource handle (e.g. SecretValueFromReference)
+// can set conditions on it.
+type conditionManagerContextKey struct{}
+
+// WithConditionManager returns a copy of ctx that carries the supplied
+// ConditionManager (typically the resource being reconciled). It is used so
+// that code paths which only receive a context can still set conditions on
+// the resource.
+func WithConditionManager(
+	ctx context.Context,
+	cm acktypes.ConditionManager,
+) context.Context {
+	return context.WithValue(ctx, conditionManagerContextKey{}, cm)
+}
+
+// ConditionManagerFromContext returns the ConditionManager previously stored
+// with WithConditionManager, or nil if none is present.
+func ConditionManagerFromContext(ctx context.Context) acktypes.ConditionManager {
+	if v := ctx.Value(conditionManagerContextKey{}); v != nil {
+		if cm, ok := v.(acktypes.ConditionManager); ok {
+			return cm
+		}
+	}
+	return nil
+}
 
 // CrossNamespaceRefKind is a label used in cross-namespace warning logs and
 // condition messages to describe which kind of reference triggered the
@@ -60,6 +89,23 @@ func SetCrossNamespaceOptInRequired(
 		Status:  corev1.ConditionTrue,
 		Message: &message,
 	})
+}
+
+// SetCrossNamespaceOptInRequiredOnSubject sets or updates the
+// ACK.CrossNamespaceOptInRequired condition on the supplied ConditionManager
+// (typically the resource being reconciled). It is a convenience wrapper
+// around SetCrossNamespaceOptInRequired for callers that hold a
+// ConditionManager rather than a raw conditions slice.
+func SetCrossNamespaceOptInRequiredOnSubject(
+	subject acktypes.ConditionManager,
+	message string,
+) {
+	if subject == nil {
+		return
+	}
+	subject.ReplaceConditions(
+		SetCrossNamespaceOptInRequired(subject.Conditions(), message),
+	)
 }
 
 // HandleCrossNamespaceReference emits a Phase 1 deprecation warning log and
