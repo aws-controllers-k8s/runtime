@@ -20,37 +20,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
-// conditionManagerContextKey is the (unexported, collision-free) context key
-// under which the reconciler stashes the resource being reconciled so that
-// helpers without a direct resource handle (e.g. SecretValueFromReference)
-// can set conditions on it.
-type conditionManagerContextKey struct{}
-
-// WithConditionManager returns a copy of ctx that carries the supplied
-// ConditionManager (typically the resource being reconciled). It is used so
-// that code paths which only receive a context can still set conditions on
-// the resource.
-func WithConditionManager(
-	ctx context.Context,
-	cm acktypes.ConditionManager,
-) context.Context {
-	return context.WithValue(ctx, conditionManagerContextKey{}, cm)
-}
-
-// ConditionManagerFromContext returns the ConditionManager previously stored
-// with WithConditionManager, or nil if none is present.
-func ConditionManagerFromContext(ctx context.Context) acktypes.ConditionManager {
-	if v := ctx.Value(conditionManagerContextKey{}); v != nil {
-		if cm, ok := v.(acktypes.ConditionManager); ok {
-			return cm
-		}
-	}
-	return nil
-}
+// CrossNamespaceOptInRequiredReason is the Reason carried by the ACK.Advisory
+// condition that notifies users their cross-namespace usage will require
+// explicit opt-in (via --enable-cross-namespace=true) in a future release.
+//
+// The cross-namespace deprecation notice is surfaced as a Reason on the
+// existing ACK.Advisory condition rather than as a dedicated condition type.
+// Advisory conditions are advisory-only (no programmatic dependencies are
+// expected on them), which keeps this temporary notice cheap to add and to
+// stop setting once the rollout completes, without the API-stability concerns
+// of introducing and later removing a dedicated condition type. The reason is
+// stable so support tooling can grep for it across resources.
+const CrossNamespaceOptInRequiredReason = "CrossNamespaceOptInRequired"
 
 // CrossNamespaceRefKind is a label used in cross-namespace warning logs and
 // condition messages to describe which kind of reference triggered the
@@ -66,10 +52,12 @@ const (
 	CrossNamespaceRefKindSecret CrossNamespaceRefKind = "secret reference"
 )
 
-// SetCrossNamespaceOptInRequired sets or updates the
-// ACK.CrossNamespaceOptInRequired condition in the supplied conditions slice
-// using a lookup-or-create pattern (avoids duplicate conditions on repeated
-// reconciles).
+// SetCrossNamespaceOptInRequired sets or updates the cross-namespace
+// deprecation notice in the supplied conditions slice. The notice is surfaced
+// as an ACK.Advisory condition carrying the CrossNamespaceOptInRequiredReason
+// reason. A lookup-or-create pattern keyed on (type, reason) avoids duplicate
+// conditions on repeated reconciles while preserving any other ACK.Advisory
+// conditions the resource may carry.
 //
 // Returns the (possibly modified) conditions slice. Callers must assign the
 // result back to the resource's Status.Conditions field.
@@ -77,25 +65,27 @@ func SetCrossNamespaceOptInRequired(
 	conditions []*ackv1alpha1.Condition,
 	message string,
 ) []*ackv1alpha1.Condition {
+	reason := CrossNamespaceOptInRequiredReason
 	for i, c := range conditions {
-		if c.Type == ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired {
+		if c.Type == ackv1alpha1.ConditionTypeAdvisory &&
+			c.Reason != nil && *c.Reason == reason {
 			conditions[i].Status = corev1.ConditionTrue
 			conditions[i].Message = &message
 			return conditions
 		}
 	}
 	return append(conditions, &ackv1alpha1.Condition{
-		Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+		Type:    ackv1alpha1.ConditionTypeAdvisory,
 		Status:  corev1.ConditionTrue,
+		Reason:  &reason,
 		Message: &message,
 	})
 }
 
-// SetCrossNamespaceOptInRequiredOnSubject sets or updates the
-// ACK.CrossNamespaceOptInRequired condition on the supplied ConditionManager
-// (typically the resource being reconciled). It is a convenience wrapper
-// around SetCrossNamespaceOptInRequired for callers that hold a
-// ConditionManager rather than a raw conditions slice.
+// SetCrossNamespaceOptInRequiredOnSubject sets or updates the cross-namespace
+// deprecation ACK.Advisory condition on the supplied ConditionManager
+// (typically the resource being reconciled). It is a convenience wrapper for
+// callers that hold a ConditionManager rather than a raw conditions slice.
 func SetCrossNamespaceOptInRequiredOnSubject(
 	subject acktypes.ConditionManager,
 	message string,
@@ -103,13 +93,12 @@ func SetCrossNamespaceOptInRequiredOnSubject(
 	if subject == nil {
 		return
 	}
-	subject.ReplaceConditions(
-		SetCrossNamespaceOptInRequired(subject.Conditions(), message),
-	)
+	reason := CrossNamespaceOptInRequiredReason
+	ackcondition.SetAdvisory(subject, corev1.ConditionTrue, &message, &reason)
 }
 
 // HandleCrossNamespaceReference emits a Phase 1 deprecation warning log and
-// sets the ACK.CrossNamespaceOptInRequired condition on the supplied
+// sets the cross-namespace deprecation ACK.Advisory condition on the supplied
 // conditions slice. It is intended to be called from generated code after
 // ValidateCrossNamespaceReference reports isCrossNamespace=true.
 //
@@ -148,7 +137,8 @@ func HandleCrossNamespaceReference(
 // reference handling flow in a single call. It calls
 // ValidateCrossNamespaceReference and, when the reference targets a different
 // namespace and the flag is enabled, calls HandleCrossNamespaceReference to
-// emit the warning log and set the ACK.CrossNamespaceOptInRequired condition.
+// emit the warning log and set the cross-namespace deprecation ACK.Advisory
+// condition.
 //
 // Parameters:
 //   - ctx: passed to the logger

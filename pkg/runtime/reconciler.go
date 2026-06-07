@@ -122,8 +122,17 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 
 // SecretValueFromReference fetches the value of a Secret given a
 // SecretKeyReference.
+//
+// The subject is the resource that owns the reference; when the secret
+// targets a different namespace and cross-namespace behavior is enabled, the
+// Phase 1 deprecation notice is set as an ACK.Advisory condition on it. The
+// subject is passed explicitly (rather than stashed in the context) so that
+// every caller is covered, including generated code, hooks, and custom update
+// functions. A nil subject is tolerated (the notice is logged but not set as
+// a condition).
 func (r *reconciler) SecretValueFromReference(
 	ctx context.Context,
+	subject acktypes.ConditionManager,
 	ref *ackv1alpha1.SecretKeyReference,
 ) (string, error) {
 
@@ -171,11 +180,11 @@ func (r *reconciler) SecretValueFromReference(
 			"secretNamespace", ref.Namespace,
 			"secretName", ref.Name,
 		)
-		// Set the deprecation condition on the resource being reconciled, if
-		// one was stashed in the context. This covers all callers (generated
-		// sdk.go, hooks, and custom update functions) without threading the
-		// resource through this method's signature.
-		if cm := ConditionManagerFromContext(ctx); cm != nil {
+		// Set the deprecation notice on the resource that owns the reference,
+		// when supplied. The subject is passed by the caller (generated
+		// sdk.go, hooks, and custom update functions all hold the resource),
+		// so no context stashing is required.
+		if subject != nil {
 			message := fmt.Sprintf(
 				"Cross-namespace %s detected: resource in namespace %q "+
 					"references %q in namespace %q. Cross-namespace behavior "+
@@ -183,7 +192,7 @@ func (r *reconciler) SecretValueFromReference(
 					"--enable-cross-namespace=true to preserve this behavior.",
 				CrossNamespaceRefKindSecret, ownerNamespace, ref.Name, ref.Namespace,
 			)
-			SetCrossNamespaceOptInRequiredOnSubject(cm, message)
+			SetCrossNamespaceOptInRequiredOnSubject(subject, message)
 		}
 	}
 
@@ -271,11 +280,6 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// will be reflected in the context.
 	ctx = context.WithValue(ctx, ackrtlog.ContextKey, rlog)
 	ctx = context.WithValue(ctx, "resourceNamespace", req.Namespace)
-	// Stash the resource being reconciled so that code paths which only
-	// receive a context (e.g. SecretValueFromReference) can set conditions on
-	// it. The conditions set here are deep-copied into the returned resource
-	// during sdkCreate/sdkUpdate, so they persist to the status patch.
-	ctx = WithConditionManager(ctx, desired)
 
 	// If a user has specified a namespace that is annotated with the
 	// an owner account ID, we need an appropriate role ARN to assume

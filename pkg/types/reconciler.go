@@ -30,8 +30,15 @@ import (
 type Reconciler interface {
 	ctrlreconcile.Reconciler
 	// SecretValueFromReference fetches the value of a Secret given a
-	// SecretKeyReference
-	SecretValueFromReference(context.Context, *v1alpha1.SecretKeyReference) (string, error)
+	// SecretKeyReference.
+	//
+	// The subject ConditionManager is the resource that owns the reference;
+	// it is used to surface the Phase 1 cross-namespace deprecation notice as
+	// an ACK.Advisory condition when the secret targets a different namespace.
+	// Passing the owning resource explicitly (rather than stashing it in the
+	// context) ensures every call site is covered, including generated code,
+	// hooks, and custom update functions. A nil subject is tolerated.
+	SecretValueFromReference(context.Context, ConditionManager, *v1alpha1.SecretKeyReference) (string, error)
 	// WriteToSecret writes a value to a Secret given the namespace, name,
 	// and key of the Secret
 	WriteToSecret(context.Context, string, string, string, string) error

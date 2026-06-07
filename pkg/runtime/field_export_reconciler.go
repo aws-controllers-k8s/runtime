@@ -229,9 +229,10 @@ func (r *fieldExportReconciler) getTargetNamespace(
 	return desired.Namespace
 }
 
-// setCrossNsOptInRequiredCondition sets the ACK.CrossNamespaceOptInRequired
-// condition on the FieldExport resource to notify users that cross-namespace
-// behavior will require explicit opt-in in a future release.
+// setCrossNsOptInRequiredCondition sets the cross-namespace deprecation
+// ACK.Advisory condition (Reason: CrossNamespaceOptInRequired) on the
+// FieldExport resource to notify users that cross-namespace behavior will
+// require explicit opt-in in a future release.
 func (r *fieldExportReconciler) setCrossNsOptInRequiredCondition(
 	desired *ackv1alpha1.FieldExport,
 ) {
