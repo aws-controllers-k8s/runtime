@@ -52,6 +52,40 @@ const (
 	CrossNamespaceRefKindSecret CrossNamespaceRefKind = "secret reference"
 )
 
+// conditionManagerContextKey is the (unexported, collision-free) context key
+// under which the reconciler stashes the resource being reconciled so that
+// helpers without a direct resource handle (e.g. SecretValueFromReference)
+// can set conditions on it.
+//
+// The resource is passed via the context rather than the method signature so
+// that the SecretValueFromReference interface stays backward compatible: every
+// caller (generated sdk.go, hooks, and hand-written custom update functions)
+// is covered without a signature change that would force all controllers to be
+// regenerated/updated.
+type conditionManagerContextKey struct{}
+
+// WithConditionManager returns a copy of ctx that carries the supplied
+// ConditionManager (typically the resource being reconciled). It is used so
+// that code paths which only receive a context can still set conditions on
+// the resource.
+func WithConditionManager(
+	ctx context.Context,
+	cm acktypes.ConditionManager,
+) context.Context {
+	return context.WithValue(ctx, conditionManagerContextKey{}, cm)
+}
+
+// ConditionManagerFromContext returns the ConditionManager previously stored
+// with WithConditionManager, or nil if none is present.
+func ConditionManagerFromContext(ctx context.Context) acktypes.ConditionManager {
+	if v := ctx.Value(conditionManagerContextKey{}); v != nil {
+		if cm, ok := v.(acktypes.ConditionManager); ok {
+			return cm
+		}
+	}
+	return nil
+}
+
 // SetCrossNamespaceOptInRequired sets or updates the cross-namespace
 // deprecation notice in the supplied conditions slice. The notice is surfaced
 // as an ACK.Advisory condition carrying the CrossNamespaceOptInRequiredReason

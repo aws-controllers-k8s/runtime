@@ -316,3 +316,15 @@ func TestSetCrossNamespaceOptInRequiredOnSubject_UpdatesInPlace(t *testing.T) {
 	require.NotNil(t, subject.conditions[0].Message)
 	assert.Equal(t, "second", *subject.conditions[0].Message)
 }
+
+func TestConditionManagerFromContext_RoundTrip(t *testing.T) {
+	subject := &subjectConditionManager{}
+	ctx := WithConditionManager(context.Background(), subject)
+
+	got := ConditionManagerFromContext(ctx)
+	assert.Equal(t, subject, got)
+}
+
+func TestConditionManagerFromContext_Absent(t *testing.T) {
+	assert.Nil(t, ConditionManagerFromContext(context.Background()))
+}

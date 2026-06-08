@@ -112,9 +112,9 @@ func (_m *AWSResourceReconciler) Reconcile(_a0 context.Context, _a1 reconcile.Re
 	return r0, r1
 }
 
-// SecretValueFromReference provides a mock function with given fields: _a0, _a1, _a2
-func (_m *AWSResourceReconciler) SecretValueFromReference(_a0 context.Context, _a1 types.ConditionManager, _a2 *v1alpha1.SecretKeyReference) (string, error) {
-	ret := _m.Called(_a0, _a1, _a2)
+// SecretValueFromReference provides a mock function with given fields: _a0, _a1
+func (_m *AWSResourceReconciler) SecretValueFromReference(_a0 context.Context, _a1 *v1alpha1.SecretKeyReference) (string, error) {
+	ret := _m.Called(_a0, _a1)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SecretValueFromReference")
@@ -122,17 +122,17 @@ func (_m *AWSResourceReconciler) SecretValueFromReference(_a0 context.Context, _
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.ConditionManager, *v1alpha1.SecretKeyReference) (string, error)); ok {
-		return rf(_a0, _a1, _a2)
+	if rf, ok := ret.Get(0).(func(context.Context, *v1alpha1.SecretKeyReference) (string, error)); ok {
+		return rf(_a0, _a1)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, types.ConditionManager, *v1alpha1.SecretKeyReference) string); ok {
-		r0 = rf(_a0, _a1, _a2)
+	if rf, ok := ret.Get(0).(func(context.Context, *v1alpha1.SecretKeyReference) string); ok {
+		r0 = rf(_a0, _a1)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, types.ConditionManager, *v1alpha1.SecretKeyReference) error); ok {
-		r1 = rf(_a0, _a1, _a2)
+	if rf, ok := ret.Get(1).(func(context.Context, *v1alpha1.SecretKeyReference) error); ok {
+		r1 = rf(_a0, _a1)
 	} else {
 		r1 = ret.Error(1)
 	}
