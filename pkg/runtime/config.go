@@ -16,7 +16,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -24,6 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	smithymiddleware "github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -31,15 +32,33 @@ import (
 
 const appName = "aws-controllers-k8s"
 
-type clientWithUserAgent struct {
-	client    aws.HTTPClient
-	userAgent string
-}
-
-func (c *clientWithUserAgent) Do(r *http.Request) (*http.Response, error) {
-	newUserAgent := c.userAgent + " " + strings.Join(r.Header["User-Agent"], " ")
-	r.Header.Set("User-Agent", newUserAgent)
-	return c.client.Do(r)
+// addACKUserAgent returns a middleware function that prepends the ACK
+// User-Agent string to outgoing HTTP requests. This uses the smithy
+// middleware stack directly to manipulate the User-Agent header without
+// character sanitization, preserving the original format including
+// parentheses, semicolons, and slashes.
+func addACKUserAgent(userAgent string) func(*smithymiddleware.Stack) error {
+	return func(stack *smithymiddleware.Stack) error {
+		return stack.Build.Add(
+			smithymiddleware.BuildMiddlewareFunc("ACKUserAgent",
+				func(ctx context.Context, in smithymiddleware.BuildInput, next smithymiddleware.BuildHandler) (
+					smithymiddleware.BuildOutput, smithymiddleware.Metadata, error,
+				) {
+					req, ok := in.Request.(*smithyhttp.Request)
+					if ok {
+						existing := req.Header.Get("User-Agent")
+						if existing != "" {
+							req.Header.Set("User-Agent", userAgent+" "+existing)
+						} else {
+							req.Header.Set("User-Agent", userAgent)
+						}
+					}
+					return next.HandleBuild(ctx, in)
+				},
+			),
+			smithymiddleware.After,
+		)
+	}
 }
 
 func (c *serviceController) NewAWSConfig(
@@ -76,15 +95,21 @@ func (c *serviceController) NewAWSConfig(
 	if c.cfg.HTTPClientTimeout > 0 {
 		httpClient = httpClient.WithTimeout(c.cfg.HTTPClientTimeout)
 	}
-	client := &clientWithUserAgent{
-		client:    httpClient,
-		userAgent: val,
-	}
 
+	// Pass the *awshttp.BuildableClient directly instead of wrapping it in a
+	// custom struct. This ensures the SDK can type-assert the client to
+	// *awshttp.BuildableClient when it needs to modify transport options
+	// (e.g., when AWS_CA_BUNDLE is set to inject custom root CAs).
+	// The custom User-Agent is injected via a smithy Build middleware that
+	// directly manipulates the HTTP header, preserving the original format.
+	// See: https://github.com/aws-controllers-k8s/community/issues/2915
 	awsCfg, err := config.LoadDefaultConfig(
 		ctx,
 		config.WithRegion(string(region)),
-		config.WithHTTPClient(client),
+		config.WithHTTPClient(httpClient),
+		config.WithAPIOptions([]func(*smithymiddleware.Stack) error{
+			addACKUserAgent(val),
+		}),
 	)
 	if err != nil {
 		return awsCfg, err
