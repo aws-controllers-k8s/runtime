@@ -116,6 +116,50 @@ func SetCrossNamespaceOptInRequired(
 	})
 }
 
+// CrossNamespaceAdvisory returns the cross-namespace deprecation ACK.Advisory
+// condition (Reason: CrossNamespaceOptInRequired) carried by subject, or nil if
+// none is present. subject may be nil.
+//
+// This is used to reconcile the advisory from the resource stashed in the
+// reconcile context onto the resource that is actually patched back to the
+// Kubernetes API, in cases where deep copies inside Sync (e.g. adopt-or-create)
+// detach the two objects.
+func CrossNamespaceAdvisory(
+	subject acktypes.ConditionManager,
+) *ackv1alpha1.Condition {
+	if subject == nil {
+		return nil
+	}
+	for _, c := range subject.Conditions() {
+		if c.Type == ackv1alpha1.ConditionTypeAdvisory &&
+			c.Reason != nil && *c.Reason == CrossNamespaceOptInRequiredReason {
+			return c
+		}
+	}
+	return nil
+}
+
+// reconcileCrossNamespaceAdvisory copies the cross-namespace deprecation
+// ACK.Advisory condition from src onto dst when present. It is used to carry
+// the advisory from the resource stashed in the reconcile context onto the
+// resource that is actually patched back to the Kubernetes API, in cases where
+// deep copies inside Sync (e.g. adopt-or-create's resolved.DeepCopy()) detach
+// the two objects.
+//
+// The copy is idempotent: SetCrossNamespaceOptInRequired is keyed on
+// (type, reason), so if dst already carries the advisory it is updated in place
+// rather than duplicated, and all other conditions on dst are preserved.
+func reconcileCrossNamespaceAdvisory(src, dst acktypes.ConditionManager) {
+	if src == nil || dst == nil {
+		return
+	}
+	if adv := CrossNamespaceAdvisory(src); adv != nil && adv.Message != nil {
+		dst.ReplaceConditions(
+			SetCrossNamespaceOptInRequired(dst.Conditions(), *adv.Message),
+		)
+	}
+}
+
 // SetCrossNamespaceOptInRequiredOnSubject sets or updates the cross-namespace
 // deprecation ACK.Advisory condition on the supplied ConditionManager
 // (typically the resource being reconciled). It is a convenience wrapper for

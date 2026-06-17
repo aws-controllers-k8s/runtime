@@ -1441,6 +1441,15 @@ func (r *resourceReconciler) HandleReconcileError(
 		// It is okay to patch status when resource is not present due to deletion
 		// because a NotFound error is thrown which will be ignored.
 		//
+		// The cross-namespace deprecation advisory is set on the resource
+		// carried in the reconcile context (== desired) during
+		// sdkCreate/sdkUpdate. Deep copies inside Sync (e.g. adopt-or-create's
+		// resolved.DeepCopy()) can make `latest` a different object that never
+		// received it. Reconcile it from `desired` onto `latest` here so it
+		// survives to the status patch regardless of intermediate copies.
+		if ackcompare.IsNotNil(desired) {
+			reconcileCrossNamespaceAdvisory(desired, latest)
+		}
 		// TODO(jaypipes): We ignore error handling here but I don't know if
 		// there is a more robust way to handle failures in the patch operation
 		_ = r.patchResourceStatus(ctx, desired, latest)
