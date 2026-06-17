@@ -91,6 +91,27 @@ func IAMRoleSelected(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeIAMRoleSelected)
 }
 
+// AdvisoryWithReason returns the ConditionTypeAdvisory condition in the
+// resource's Conditions collection that carries the supplied reason. If no
+// such condition is found, returns nil.
+//
+// Unlike most condition types, a resource may carry multiple ACK.Advisory
+// conditions simultaneously (e.g. an immutable-field-modified advisory and a
+// cross-namespace advisory). The reason is therefore used to disambiguate a
+// specific advisory so that setting one does not clobber another.
+func AdvisoryWithReason(
+	subject acktypes.ConditionManager,
+	reason string,
+) *ackv1alpha1.Condition {
+	for _, condition := range subject.Conditions() {
+		if condition.Type == ackv1alpha1.ConditionTypeAdvisory &&
+			condition.Reason != nil && *condition.Reason == reason {
+			return condition
+		}
+	}
+	return nil
+}
+
 // FirstOfType returns the first Condition in the resource's Conditions
 // collection of the supplied type. If no such condition is found, returns nil.
 func FirstOfType(
@@ -275,6 +296,40 @@ func SetIAMRoleSelected(
 	if c = ReferencesResolved(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeIAMRoleSelected,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// SetAdvisory sets (or updates) an ACK.Advisory condition on the resource.
+//
+// A resource may carry several distinct ACK.Advisory conditions at once, so
+// the reason is used as the lookup key: when reason is non-nil, an existing
+// advisory with the same reason is updated in place (so repeated reconciles do
+// not append duplicates and one advisory does not overwrite another with a
+// different reason). When reason is nil there is no key to match on, so a new
+// advisory is always appended; callers that need idempotent updates must
+// supply a reason.
+func SetAdvisory(
+	subject acktypes.ConditionManager,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if reason != nil {
+		c = AdvisoryWithReason(subject, *reason)
+	}
+	if c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeAdvisory,
 		}
 		allConds = append(allConds, c)
 	}

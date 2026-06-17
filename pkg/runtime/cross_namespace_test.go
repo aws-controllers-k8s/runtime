@@ -30,10 +30,9 @@ func TestSetCrossNamespaceOptInRequired_AppendsWhenAbsent(t *testing.T) {
 	out := SetCrossNamespaceOptInRequired(conds, "test message")
 
 	require.Len(t, out, 1)
-	assert.Equal(t,
-		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
-		out[0].Type,
-	)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, out[0].Type)
+	require.NotNil(t, out[0].Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *out[0].Reason)
 	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
 	require.NotNil(t, out[0].Message)
 	assert.Equal(t, "test message", *out[0].Message)
@@ -41,10 +40,12 @@ func TestSetCrossNamespaceOptInRequired_AppendsWhenAbsent(t *testing.T) {
 
 func TestSetCrossNamespaceOptInRequired_UpdatesWhenPresent(t *testing.T) {
 	existingMsg := "old message"
+	existingReason := CrossNamespaceOptInRequiredReason
 	conds := []*ackv1alpha1.Condition{
 		{
-			Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+			Type:    ackv1alpha1.ConditionTypeAdvisory,
 			Status:  corev1.ConditionFalse,
+			Reason:  &existingReason,
 			Message: &existingMsg,
 		},
 	}
@@ -55,6 +56,26 @@ func TestSetCrossNamespaceOptInRequired_UpdatesWhenPresent(t *testing.T) {
 	assert.Equal(t, corev1.ConditionTrue, out[0].Status)
 	require.NotNil(t, out[0].Message)
 	assert.Equal(t, "new message", *out[0].Message)
+}
+
+func TestSetCrossNamespaceOptInRequired_PreservesOtherAdvisory(t *testing.T) {
+	// An unrelated ACK.Advisory condition (different reason) must not be
+	// clobbered by the cross-namespace advisory.
+	otherMsg := "immutable field modified"
+	otherReason := "ImmutableFieldModified"
+	conds := []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeAdvisory,
+			Status:  corev1.ConditionTrue,
+			Reason:  &otherReason,
+			Message: &otherMsg,
+		},
+	}
+	out := SetCrossNamespaceOptInRequired(conds, "cross-ns")
+
+	require.Len(t, out, 2)
+	assert.Equal(t, otherReason, *out[0].Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *out[1].Reason)
 }
 
 func TestSetCrossNamespaceOptInRequired_PreservesOtherConditions(t *testing.T) {
@@ -70,10 +91,9 @@ func TestSetCrossNamespaceOptInRequired_PreservesOtherConditions(t *testing.T) {
 
 	require.Len(t, out, 2)
 	assert.Equal(t, ackv1alpha1.ConditionTypeReferencesResolved, out[0].Type)
-	assert.Equal(t,
-		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
-		out[1].Type,
-	)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, out[1].Type)
+	require.NotNil(t, out[1].Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *out[1].Reason)
 }
 
 func TestHandleCrossNamespaceReference_ResourceRef(t *testing.T) {
@@ -122,10 +142,12 @@ func TestHandleCrossNamespaceReference_SecretRef(t *testing.T) {
 func TestHandleCrossNamespaceReference_LookupOrCreate(t *testing.T) {
 	ctx := context.Background()
 	existing := "old"
+	existingReason := CrossNamespaceOptInRequiredReason
 	conds := []*ackv1alpha1.Condition{
 		{
-			Type:    ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
+			Type:    ackv1alpha1.ConditionTypeAdvisory,
 			Status:  corev1.ConditionFalse,
+			Reason:  &existingReason,
 			Message: &existing,
 		},
 	}
@@ -183,10 +205,9 @@ func TestResolveCrossNamespaceReference_CrossNamespace_FlagEnabled(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, target, resolved)
 	require.Len(t, conds, 1)
-	assert.Equal(t,
-		ackv1alpha1.ConditionTypeCrossNamespaceOptInRequired,
-		conds[0].Type,
-	)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, conds[0].Type)
+	require.NotNil(t, conds[0].Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *conds[0].Reason)
 }
 
 func TestResolveCrossNamespaceReference_CrossNamespace_FlagDisabled(t *testing.T) {
@@ -246,4 +267,243 @@ func TestResolveCrossNamespaceReferenceString_EmptyNamespace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ns-a", resolved)
 	assert.Empty(t, conds)
+}
+
+// subjectConditionManager is a minimal ConditionManager for exercising
+// SetCrossNamespaceOptInRequiredOnSubject.
+type subjectConditionManager struct {
+	conditions []*ackv1alpha1.Condition
+}
+
+func (s *subjectConditionManager) Conditions() []*ackv1alpha1.Condition {
+	return s.conditions
+}
+
+func (s *subjectConditionManager) ReplaceConditions(conds []*ackv1alpha1.Condition) {
+	s.conditions = conds
+}
+
+func TestSetCrossNamespaceOptInRequiredOnSubject_SetsCondition(t *testing.T) {
+	subject := &subjectConditionManager{}
+
+	SetCrossNamespaceOptInRequiredOnSubject(subject, "test message")
+
+	require.Len(t, subject.conditions, 1)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, subject.conditions[0].Type)
+	require.NotNil(t, subject.conditions[0].Reason)
+	assert.Equal(t,
+		CrossNamespaceOptInRequiredReason,
+		*subject.conditions[0].Reason,
+	)
+	require.NotNil(t, subject.conditions[0].Message)
+	assert.Equal(t, "test message", *subject.conditions[0].Message)
+}
+
+func TestSetCrossNamespaceOptInRequiredOnSubject_NilSubject(t *testing.T) {
+	// Must not panic on a nil subject.
+	SetCrossNamespaceOptInRequiredOnSubject(nil, "test message")
+}
+
+func TestSetCrossNamespaceOptInRequiredOnSubject_UpdatesInPlace(t *testing.T) {
+	// Repeated calls update the same advisory rather than appending
+	// duplicates.
+	subject := &subjectConditionManager{}
+
+	SetCrossNamespaceOptInRequiredOnSubject(subject, "first")
+	SetCrossNamespaceOptInRequiredOnSubject(subject, "second")
+
+	require.Len(t, subject.conditions, 1)
+	require.NotNil(t, subject.conditions[0].Message)
+	assert.Equal(t, "second", *subject.conditions[0].Message)
+}
+
+func TestConditionManagerFromContext_RoundTrip(t *testing.T) {
+	subject := &subjectConditionManager{}
+	ctx := WithConditionManager(context.Background(), subject)
+
+	got := ConditionManagerFromContext(ctx)
+	assert.Equal(t, subject, got)
+}
+
+func TestConditionManagerFromContext_Absent(t *testing.T) {
+	assert.Nil(t, ConditionManagerFromContext(context.Background()))
+}
+
+func TestCrossNamespaceAdvisory_Present(t *testing.T) {
+	reason := CrossNamespaceOptInRequiredReason
+	msg := "cross-ns message"
+	subject := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &reason,
+				Message: &msg,
+			},
+		},
+	}
+
+	adv := CrossNamespaceAdvisory(subject)
+
+	require.NotNil(t, adv)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, adv.Type)
+	require.NotNil(t, adv.Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *adv.Reason)
+	require.NotNil(t, adv.Message)
+	assert.Equal(t, msg, *adv.Message)
+}
+
+func TestCrossNamespaceAdvisory_Absent(t *testing.T) {
+	subject := &subjectConditionManager{}
+
+	assert.Nil(t, CrossNamespaceAdvisory(subject))
+}
+
+func TestCrossNamespaceAdvisory_NilSubject(t *testing.T) {
+	// Must not panic on a nil subject.
+	assert.Nil(t, CrossNamespaceAdvisory(nil))
+}
+
+func TestCrossNamespaceAdvisory_IgnoresUnrelatedAdvisory(t *testing.T) {
+	// An ACK.Advisory condition with a different reason must not be mistaken
+	// for the cross-namespace advisory.
+	otherReason := "ImmutableFieldModified"
+	otherMsg := "immutable field modified"
+	subject := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &otherReason,
+				Message: &otherMsg,
+			},
+		},
+	}
+
+	assert.Nil(t, CrossNamespaceAdvisory(subject))
+}
+
+func TestReconcileCrossNamespaceAdvisory_CopiesOntoDstWhenAbsent(t *testing.T) {
+	// Simulates adopt-or-create: the advisory is on src (the stashed
+	// resource), but dst (the patched resource) is a detached copy without it.
+	reason := CrossNamespaceOptInRequiredReason
+	msg := "cross-ns message"
+	src := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &reason,
+				Message: &msg,
+			},
+		},
+	}
+	dst := &subjectConditionManager{}
+
+	reconcileCrossNamespaceAdvisory(src, dst)
+
+	require.Len(t, dst.conditions, 1)
+	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, dst.conditions[0].Type)
+	require.NotNil(t, dst.conditions[0].Reason)
+	assert.Equal(t, CrossNamespaceOptInRequiredReason, *dst.conditions[0].Reason)
+	require.NotNil(t, dst.conditions[0].Message)
+	assert.Equal(t, msg, *dst.conditions[0].Message)
+}
+
+func TestReconcileCrossNamespaceAdvisory_NoDuplicateWhenPresent(t *testing.T) {
+	reason := CrossNamespaceOptInRequiredReason
+	srcMsg := "from src"
+	dstMsg := "already here"
+	src := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &reason,
+				Message: &srcMsg,
+			},
+		},
+	}
+	dst := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &reason,
+				Message: &dstMsg,
+			},
+		},
+	}
+
+	reconcileCrossNamespaceAdvisory(src, dst)
+
+	// Updated in place, not duplicated.
+	require.Len(t, dst.conditions, 1)
+	require.NotNil(t, dst.conditions[0].Message)
+	assert.Equal(t, srcMsg, *dst.conditions[0].Message)
+}
+
+func TestReconcileCrossNamespaceAdvisory_NoAdvisoryOnSrc_PreservesDst(t *testing.T) {
+	// src has no cross-namespace advisory; dst's existing conditions must be
+	// left untouched and no cross-namespace advisory added.
+	syncedReason := "Synced"
+	syncedMsg := "resource synced"
+	src := &subjectConditionManager{}
+	dst := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeResourceSynced,
+				Status:  corev1.ConditionTrue,
+				Reason:  &syncedReason,
+				Message: &syncedMsg,
+			},
+		},
+	}
+
+	reconcileCrossNamespaceAdvisory(src, dst)
+
+	require.Len(t, dst.conditions, 1)
+	assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, dst.conditions[0].Type)
+	assert.Nil(t, CrossNamespaceAdvisory(dst))
+}
+
+func TestReconcileCrossNamespaceAdvisory_PreservesUnrelatedConditions(t *testing.T) {
+	reason := CrossNamespaceOptInRequiredReason
+	msg := "cross-ns message"
+	src := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:    ackv1alpha1.ConditionTypeAdvisory,
+				Status:  corev1.ConditionTrue,
+				Reason:  &reason,
+				Message: &msg,
+			},
+		},
+	}
+	syncedReason := "Synced"
+	dst := &subjectConditionManager{
+		conditions: []*ackv1alpha1.Condition{
+			{
+				Type:   ackv1alpha1.ConditionTypeResourceSynced,
+				Status: corev1.ConditionTrue,
+				Reason: &syncedReason,
+			},
+		},
+	}
+
+	reconcileCrossNamespaceAdvisory(src, dst)
+
+	require.Len(t, dst.conditions, 2)
+	assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, dst.conditions[0].Type)
+	require.NotNil(t, CrossNamespaceAdvisory(dst))
+}
+
+func TestReconcileCrossNamespaceAdvisory_NilArgs(t *testing.T) {
+	// Must not panic on nil src or dst.
+	dst := &subjectConditionManager{}
+	reconcileCrossNamespaceAdvisory(nil, dst)
+	assert.Empty(t, dst.conditions)
+
+	src := &subjectConditionManager{}
+	reconcileCrossNamespaceAdvisory(src, nil)
 }
