@@ -15,13 +15,24 @@ package runtime
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -364,4 +375,161 @@ func TestNewAWSConfig_HTTPClientTimeout_Zero(t *testing.T) {
 	require.NotNil(resp)
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestNewAWSConfig_HTTPClient_IsBuildableClient verifies that the HTTP client
+// returned in the aws.Config is an *awshttp.BuildableClient. This is critical
+// for compatibility with AWS_CA_BUNDLE and other SDK features that need to
+// modify transport options on the HTTP client.
+// See: https://github.com/aws-controllers-k8s/community/issues/2915
+func TestNewAWSConfig_HTTPClient_IsBuildableClient(t *testing.T) {
+	require := require.New(t)
+
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "test")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+		t.Setenv("AWS_REGION", "us-west-2")
+	}
+
+	sc := newTestServiceController(ackcfg.Config{})
+
+	awsCfg, err := sc.NewAWSConfig(
+		context.Background(),
+		ackv1alpha1.AWSRegion("us-west-2"),
+		nil,
+		"",
+		schema.GroupVersionKind{Group: "test", Version: "v1alpha1", Kind: "TestKind"},
+		nil,
+	)
+	require.NoError(err)
+	require.NotNil(awsCfg.HTTPClient)
+
+	_, ok := awsCfg.HTTPClient.(*awshttp.BuildableClient)
+	assert.True(t, ok,
+		"HTTPClient should be *awshttp.BuildableClient for AWS_CA_BUNDLE compatibility, got %T",
+		awsCfg.HTTPClient)
+}
+
+// TestNewAWSConfig_WithAWSCABundle verifies that setting AWS_CA_BUNDLE does
+// not break config loading. This was the original bug reported in
+// https://github.com/aws-controllers-k8s/community/issues/2915
+func TestNewAWSConfig_WithAWSCABundle(t *testing.T) {
+	require := require.New(t)
+
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "test")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+		t.Setenv("AWS_REGION", "us-west-2")
+	}
+
+	// Create a temporary PEM file with a valid self-signed CA certificate
+	// generated using Go's crypto libraries.
+	tmpDir := t.TempDir()
+	caBundle := filepath.Join(tmpDir, "ca-bundle.pem")
+	pemBytes := generateSelfSignedCACert(t)
+	err := os.WriteFile(caBundle, pemBytes, 0600)
+	require.NoError(err)
+
+	t.Setenv("AWS_CA_BUNDLE", caBundle)
+
+	sc := newTestServiceController(ackcfg.Config{})
+
+	awsCfg, err := sc.NewAWSConfig(
+		context.Background(),
+		ackv1alpha1.AWSRegion("us-west-2"),
+		nil,
+		"",
+		schema.GroupVersionKind{Group: "test", Version: "v1alpha1", Kind: "TestKind"},
+		nil,
+	)
+	// This should NOT fail with "unable to add custom RootCAs HTTPClient,
+	// has no WithTransportOptions" error.
+	require.NoError(err, "NewAWSConfig should succeed when AWS_CA_BUNDLE is set")
+	require.NotNil(awsCfg.HTTPClient)
+}
+
+// generateSelfSignedCACert creates a valid self-signed CA certificate for
+// testing purposes. Returns PEM-encoded certificate bytes.
+func generateSelfSignedCACert(t *testing.T) []byte {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.New(t).NoError(err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Test CA",
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.New(t).NoError(err)
+
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certDER,
+	})
+}
+
+// TestNewAWSConfig_UserAgentFormat verifies that the User-Agent header sent
+// on the wire by the new middleware-based approach matches the format that the
+// old clientWithUserAgent wrapper produced. This ensures backward
+// compatibility for any downstream tooling that parses User-Agent strings.
+func TestNewAWSConfig_UserAgentFormat(t *testing.T) {
+	require := require.New(t)
+
+	// Capture the User-Agent header from a real SDK request.
+	var capturedUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUA = r.Header.Get("User-Agent")
+		// Return a minimal valid STS GetCallerIdentity response so the SDK
+		// doesn't retry or error in a way that prevents us from reading the UA.
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>arn:aws:iam::123456789012:user/test</Arn><UserId>AIDATEST</UserId><Account>123456789012</Account></GetCallerIdentityResult></GetCallerIdentityResponse>`))
+	}))
+	defer server.Close()
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	t.Setenv("AWS_REGION", "us-west-2")
+
+	sc := newTestServiceController(ackcfg.Config{})
+
+	endpoint := server.URL
+	awsCfg, err := sc.NewAWSConfig(
+		context.Background(),
+		ackv1alpha1.AWSRegion("us-west-2"),
+		&endpoint,
+		"",
+		schema.GroupVersionKind{Group: "test.services.k8s.aws", Version: "v1alpha1", Kind: "TestKind"},
+		nil,
+	)
+	require.NoError(err)
+
+	// Make a real SDK call (STS GetCallerIdentity) through the middleware
+	// stack so our custom Build middleware executes.
+	stsClient := sts.NewFromConfig(awsCfg)
+	_, _ = stsClient.GetCallerIdentity(context.Background(), &sts.GetCallerIdentityInput{})
+
+	// The expected ACK prefix is the same format the old clientWithUserAgent
+	// produced: "aws-controllers-k8s/<group>-<version> (<extras>)"
+	expectedPrefix := "aws-controllers-k8s/test.services.k8s.aws-v0.0.0-test (GitCommit/test-commit; BuildDate/test-date; CRDKind/TestKind; CRDVersion/v1alpha1)"
+
+	assert.NotEmpty(t, capturedUA, "User-Agent header should have been captured")
+	assert.True(t, strings.HasPrefix(capturedUA, expectedPrefix),
+		"User-Agent should start with ACK prefix.\nExpected prefix: %s\nActual header:   %s",
+		expectedPrefix, capturedUA)
+
+	// Verify special characters survived (not sanitized to dashes).
+	assert.Contains(t, capturedUA, "(GitCommit/test-commit;",
+		"User-Agent should preserve parentheses and semicolons")
+	assert.Contains(t, capturedUA, "CRDVersion/v1alpha1)",
+		"User-Agent should preserve closing parenthesis")
 }
