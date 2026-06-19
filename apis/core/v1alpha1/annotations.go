@@ -82,7 +82,7 @@ const (
 	// ACK service controller.
 	AnnotationReadOnly = AnnotationPrefix + "read-only"
 	// AnnotationAdoptionPolicy is an annotation whose value is the identifier for whether
-	// we will attempt adoption only (value = adopt-only) or attempt a create if resource 
+	// we will attempt adoption only (value = adopt-only) or attempt a create if resource
 	// is not found (value adopt-or-create).
 	//
 	// NOTE (michaelhtm): Currently create-or-adopt is not supported
@@ -91,4 +91,16 @@ const (
 	// format of the requied fields to do a ReadOne when attempting to force-adopt
 	// a Resource
 	AnnotationAdoptionFields = AnnotationPrefix + "adoption-fields"
+	// AnnotationIgnoreFieldDrift is an annotation whose value is a
+	// comma-separated list of dotted, JSON-style field paths (e.g.
+	// "spec.description, spec.someConfig"). For each listed field, the ACK
+	// service controller does not let drift on the named field drive an Update
+	// or overwrite the user's declared value: the field is excluded from the
+	// reconcile delta so observed drift never triggers an Update, and the
+	// declared value is retained in the CR spec rather than being replaced by
+	// the AWS-observed value. The field is still created from the Spec value as
+	// the baseline and is late-initialized normally. This is the declarative
+	// analog of Terraform's lifecycle.ignore_changes and is only honored when
+	// the SelectiveReconciliation feature gate is enabled.
+	AnnotationIgnoreFieldDrift = AnnotationPrefix + "ignore-field-drift"
 )

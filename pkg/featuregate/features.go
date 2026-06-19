@@ -16,7 +16,10 @@
 // optionally overridden.
 package featuregate
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 const (
 	// ResourceAdoption is a feature gate for enabling forced adoption of resources
@@ -34,16 +37,23 @@ const (
 
 	// IAMRoleSelector is a feature gate for enabling the IAMRoleSelector feature and reconciler.
 	IAMRoleSelector = "IAMRoleSelector"
+
+	// SelectiveReconciliation is a feature gate for enabling selective field
+	// reconciliation via the services.k8s.aws/ignore-field-drift annotation. It
+	// alters reconciliation behavior, so it is disabled by default and must be
+	// explicitly enabled by the controller operator.
+	SelectiveReconciliation = "SelectiveReconciliation"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ResourceAdoption:  {Stage: Beta, Enabled: true},
-	ReadOnlyResources: {Stage: Beta, Enabled: true},
-	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
-	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
+	ResourceAdoption:        {Stage: Beta, Enabled: true},
+	ReadOnlyResources:       {Stage: Beta, Enabled: true},
+	TeamLevelCARM:           {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:        {Stage: Alpha, Enabled: false},
+	IAMRoleSelector:         {Stage: Alpha, Enabled: false},
+	SelectiveReconciliation: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
@@ -99,6 +109,37 @@ func (fg FeatureGates) GetFeatureNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// globalFeatureGates holds the process-wide feature gate configuration. It is
+// set once during controller startup (via SetGlobalFeatureGates, called from
+// the runtime's BindControllerManager) and read by generated, package-level
+// code that has no access to the controller's config object (e.g. the
+// per-resource newResourceDelta function). It defaults to the ACK default
+// feature gates so that code reading it before initialization sees sane,
+// disabled-by-default values.
+var (
+	globalFeatureGates     = GetDefaultFeatureGates()
+	globalFeatureGatesLock sync.RWMutex
+)
+
+// SetGlobalFeatureGates publishes the supplied feature gates as the process-wide
+// feature gate configuration. It is intended to be called exactly once, during
+// controller startup, before any reconciliation happens.
+func SetGlobalFeatureGates(fg FeatureGates) {
+	globalFeatureGatesLock.Lock()
+	defer globalFeatureGatesLock.Unlock()
+	globalFeatureGates = fg
+}
+
+// GetGlobalFeatureGates returns the process-wide feature gate configuration. It
+// is safe for concurrent use. Code that has access to the controller's
+// ackcfg.Config should prefer reading cfg.FeatureGates directly; this accessor
+// exists for generated, package-level code that cannot reach the config.
+func GetGlobalFeatureGates() FeatureGates {
+	globalFeatureGatesLock.RLock()
+	defer globalFeatureGatesLock.RUnlock()
+	return globalFeatureGates
 }
 
 // GetDefaultFeatureGates returns a new FeatureGates instance initialized with the default feature set.

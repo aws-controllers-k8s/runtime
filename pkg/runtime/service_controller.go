@@ -200,6 +200,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	defer c.metaLock.Unlock()
 	c.cfg = cfg
 
+	// Publish the controller's feature gates as the process-wide configuration
+	// so that generated, package-level code (e.g. the per-resource
+	// newResourceDelta) can consult them without access to the config object.
+	featuregate.SetGlobalFeatureGates(cfg.FeatureGates)
+
 	namespaces, err := cfg.GetWatchNamespaces()
 	if err != nil {
 		return fmt.Errorf("unable to get watch namespaces: %v", err)

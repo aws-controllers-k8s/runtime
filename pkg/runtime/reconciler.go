@@ -673,7 +673,13 @@ func (r *resourceReconciler) Sync(
 	}
 	// Attempt to late initialize the resource. If there are no fields to
 	// late initialize, this operation will be a no-op.
-	if latest, err = r.lateInitializeResource(ctx, rm, latest); err != nil {
+	//
+	// `resolved` is the declared CR (the stored spec, with references
+	// resolved). It is threaded in so that, for an ignore-field-drift field
+	// that late-init populates from AWS, the late-initialized value can be
+	// persisted against the DECLARED (typically unset) base — see
+	// lateInitializeResource for details.
+	if latest, err = r.lateInitializeResource(ctx, rm, resolved, latest); err != nil {
 		return latest, err
 	}
 	return latest, nil
@@ -725,6 +731,14 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
+		// Selective reconciliation: rm.IsSynced (generated per-resource code)
+		// derives the in-sync determination from the per-resource
+		// newResourceDelta. That generated delta now calls
+		// FilterIgnoredDeltaDifferences as its final step, which strips any
+		// difference under an ignore-fields path when the
+		// SelectiveReconciliation feature gate is enabled. As a result, drift on
+		// ignored fields no longer reports the resource as not-synced here, and
+		// no extra suppression is needed at this call site.
 		rlog.Enter("rm.IsSynced")
 		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
 			condStatus = corev1.ConditionTrue
@@ -939,19 +953,61 @@ func (r *resourceReconciler) updateResource(
 		return latest, err
 	}
 
+	// If the SelectiveReconciliation feature is enabled and the resource carries
+	// the ignore-field-drift annotation, merge the observed (latest) values for
+	// the ignored fields into a copy of desired. The merged copy is used for
+	// delta computation and the Update call so that drift on ignored fields does
+	// not drive an Update. The stored CR is never mutated.
+	reconcileDesired := desired
+	if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
+		HasSelectiveReconciliation(desired) {
+		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
+		if mergeErr != nil {
+			rlog.Info(
+				"failed to apply ignore-field-drift annotation; "+
+					"reconciling authoritatively",
+				"error", mergeErr.Error(),
+			)
+		} else {
+			reconcileDesired = merged
+			r.logIgnoredFieldDrift(ctx, desired, latest)
+		}
+	}
+
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
-	delta := r.rd.Delta(desired, latest)
+	delta := r.rd.Delta(reconcileDesired, latest)
 	if delta.DifferentAt("Spec") {
 		rlog.Info(
 			"desired resource state has changed",
 			"diff", delta.Differences,
 		)
 		rlog.Enter("rm.Update")
-		updated, err = rm.Update(ctx, desired, latest, delta)
+		updated, err = rm.Update(ctx, reconcileDesired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
 		if err != nil {
 			return updated, err
+		}
+		// Selective reconciliation, RETAIN write-back: the anti-clobber merge
+		// above placed the AWS-observed value for each ignored field into the
+		// update request. Now that the Update has completed, copy the user's
+		// declared value for each ignored field back into `updated` so that the
+		// subsequent patch persists the declared value (not the AWS value) to
+		// the CR spec. This is a log-and-continue path: a restore error must not
+		// fail the reconcile.
+		if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
+			HasSelectiveReconciliation(desired) {
+			if rErr := restoreIgnoredFields(
+				updated, desired,
+				IgnoreFieldDriftPaths(desired),
+				r.cfg.FeatureGates,
+			); rErr != nil {
+				rlog.Info(
+					"failed to restore declared values for ignore-field-drift "+
+						"fields; continuing",
+					"error", rErr.Error(),
+				)
+			}
 		}
 		// Ensure that we are patching any changes to the annotations/metadata and
 		// the Spec that may have been set by the resource manager's successful
@@ -981,6 +1037,7 @@ func (r *resourceReconciler) updateResource(
 func (r *resourceReconciler) lateInitializeResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	var err error
@@ -998,8 +1055,43 @@ func (r *resourceReconciler) lateInitializeResource(
 	// This patching does not hurt because if there is no diff then 'patchResourceMetadataAndSpec'
 	// acts as a no-op.
 	if ackcompare.IsNotNil(lateInitializedLatest) {
+		// The patch base is normally `latest` (the resource passed into
+		// LateInitialize). For a NON-ignored late-init field this is correct:
+		// `latest` carries the user's declared spec (the unset field), the
+		// generated LateInitialize populates the field on the returned object
+		// only, so the MergeFrom(latest) patch contains the new value and it is
+		// persisted to the stored CR.
+		//
+		// For an ignore-field-drift field, however, the value may already be
+		// present on `latest` (e.g. the read path populated spec.X from AWS, so
+		// LateInitialize was a no-op for that field) while the DECLARED CR left
+		// it unset. With `latest` as the base, the base and target agree on the
+		// ignored path, the MergeFrom diff is empty, and the late-initialized
+		// (AWS-defaulted) value never reaches the stored CR. "Late-init wins"
+		// requires persisting that value once. To do so, rebase the ignored
+		// late-init paths onto the DECLARED `desired` so the patch base reflects
+		// the stored (unset) state and the MergeFrom diff carries the value.
+		base := latest
+		if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
+			ackcompare.IsNotNil(desired) &&
+			HasSelectiveReconciliation(desired) {
+			rebased, rebaseErr := rebaseIgnoredFieldsForPersist(
+				latest, desired, lateInitializedLatest,
+				IgnoreFieldDriftPaths(desired),
+				r.cfg.FeatureGates,
+			)
+			if rebaseErr != nil {
+				rlog.Info(
+					"failed to rebase ignore-field-drift late-init paths onto "+
+						"declared spec; using observed base",
+					"error", rebaseErr.Error(),
+				)
+			} else {
+				base = rebased
+			}
+		}
 		var patchErr error
-		lateInitializedLatest, patchErr = r.patchResourceMetadataAndSpec(ctx, rm, latest, lateInitializedLatest)
+		lateInitializedLatest, patchErr = r.patchResourceMetadataAndSpec(ctx, rm, base, lateInitializedLatest)
 		// Throw the patching error if reconciler is unable to patch the resource with late initializations
 		if patchErr != nil {
 			err = patchErr
@@ -1075,7 +1167,30 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	if err != nil {
 		return latest, err
 	}
-	if equalMetadata && !r.rd.Delta(desiredCleaned, latestCleaned).DifferentAt("Spec") {
+	// The generated r.rd.Delta runs FilterIgnoredDeltaDifferences, which strips
+	// differences on ignore-field-drift fields. That filtering is correct for
+	// the "should I call AWS Update?" and IsSynced decisions, but it is WRONG as
+	// the gate for skipping THIS patch: on a write-back (e.g. late-init set
+	// spec.path="/"), the only difference between the patch base
+	// (desiredCleaned) and the to-be-persisted object (latestCleaned) may be on
+	// an ignored field. A filtered delta reports "no difference", so we would
+	// skip the patch and lose the late-initialized (and retained) value.
+	//
+	// To fix this without reintroducing drift churn, additionally treat the
+	// resource as needing a patch when an ignored field's value actually differs
+	// between the patch base and the to-be-persisted object (computed WITHOUT
+	// the generated filter, via a direct unstructured per-path comparison). This
+	// fires the patch exactly when a new value (e.g. from late-init) must be
+	// persisted, and stays a no-op for steady-state ignored-field drift, where
+	// the patch base and target already agree on the ignored field.
+	//
+	// Mock-safe: the unstructured comparison is only reached when the resource
+	// carries the ignore-field-drift annotation, which in tests is always an
+	// unstructured-backed resource (never the testify mocks, which carry no such
+	// annotation and whose RuntimeObject cannot be converted to unstructured).
+	ignoredNeedsPersist := r.ignoredFieldNeedsPersist(desiredCleaned, latestCleaned)
+	if equalMetadata && !ignoredNeedsPersist &&
+		!r.rd.Delta(desiredCleaned, latestCleaned).DifferentAt("Spec") {
 		rlog.Debug("no difference found between metadata and spec for desired and latest object.")
 		return latest, nil
 	}
