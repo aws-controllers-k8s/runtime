@@ -1061,13 +1061,8 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 		exit(err)
 	}()
 
-	// Restore reference (*Ref) values that may have been dropped when latest
-	// was rebuilt from an API response. Nested *Ref fields live inside structs
-	// that get reconstructed from the response (which carries only the concrete
-	// resolved values), so they are otherwise lost. This is implemented as an
-	// optional interface so controllers generated before this method existed
-	// continue to compile and run; they simply do not get the preservation
-	// until regenerated.
+	// Restore nested *Ref values that were dropped when latest was rebuilt from
+	// an API response. Optional, so older generated controllers are unaffected.
 	if p, ok := rm.(acktypes.ReferenceValuesPreserver); ok {
 		latest = p.PreserveReferenceValues(desired, latest)
 	}
