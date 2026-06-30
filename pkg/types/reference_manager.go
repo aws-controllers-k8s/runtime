@@ -36,3 +36,20 @@ type ReferenceManager interface {
 	// values.
 	ClearResolvedReferences(AWSResource) AWSResource
 }
+
+// ReferenceValuesPreserver is optionally implemented by resource managers that
+// can preserve nested reference (*Ref) values when a resource is rebuilt from
+// an API response.
+//
+// It is intentionally kept separate from ReferenceManager (rather than added
+// to it) so that controllers generated before this method existed continue to
+// satisfy the AWSResourceManager interface. The reconciler invokes it via a
+// type assertion and skips it when the resource manager does not implement it.
+type ReferenceValuesPreserver interface {
+	// PreserveReferenceValues copies nested reference (*Ref) values from the
+	// `from` resource into a copy of the `to` resource and returns that copy.
+	// `to` is typically a resource rebuilt from an API response, whose nested
+	// *Ref values were dropped because the response carries only the concrete
+	// (resolved) values.
+	PreserveReferenceValues(from AWSResource, to AWSResource) AWSResource
+}
