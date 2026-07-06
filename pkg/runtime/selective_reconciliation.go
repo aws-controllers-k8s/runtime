@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8srt "k8s.io/apimachinery/pkg/runtime"
 
@@ -342,53 +341,97 @@ func FilterIgnoredDeltaDifferences(
 // condition is intentionally left untouched, since the user opted out of
 // managing these fields.
 //
-// Drift is detected by comparing each ignored path directly between desired and
-// latest. It deliberately does NOT use r.rd.Delta: the generated delta runs
-// FilterIgnoredDeltaDifferences, which strips exactly these differences, so a
-// filtered delta would never surface the drift we want to log.
+// Drift is detected via driftedIgnoredPaths, which uses the generated
+// per-resource Delta so that fields the code-generator compares SEMANTICALLY
+// (e.g. is_iam_policy / is_document fields, via IAMPolicyDocumentEqual /
+// DocumentEqual) are judged with the same comparator here. A naive byte
+// comparison would report perpetual "drift" on such fields, because AWS
+// canonicalizes the value on read (re-orders keys, collapses single-element
+// arrays, reindents) so the stored declared string is never byte-equal to the
+// value read back -- producing a spurious log line on every reconcile even when
+// the field never actually drifted.
 func (r *resourceReconciler) logIgnoredFieldDrift(
 	ctx context.Context,
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 ) {
-	ignorePaths := IgnoreFieldDriftPaths(desired)
-	if len(ignorePaths) == 0 {
-		return
-	}
-
-	rlog := ackrtlog.FromContext(ctx)
-
-	d, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(desired.RuntimeObject())
-	if err != nil {
-		return
-	}
-	l, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(latest.RuntimeObject())
-	if err != nil {
-		return
-	}
-
-	drifted := []string{}
-	for _, p := range ignorePaths {
-		parts := pathParts(p)
-		dv, dFound, _ := unstructured.NestedFieldNoCopy(d, parts...)
-		lv, lFound, _ := unstructured.NestedFieldNoCopy(l, parts...)
-		// Drift = the observed (latest) value differs from the declared
-		// (desired) value at this ignored path.
-		if dFound != lFound || !equalitySemanticDeepEqual(dv, lv) {
-			drifted = append(drifted, p)
-		}
-	}
-
+	drifted := r.driftedIgnoredPaths(desired, latest)
 	if len(drifted) == 0 {
 		return
 	}
 
-	sort.Strings(drifted)
+	rlog := ackrtlog.FromContext(ctx)
 	rlog.Info(
 		"selective reconciliation: skipping drifted ignore-field-drift fields",
 		"skipped", true,
 		"fields", drifted,
 	)
+}
+
+// driftedIgnoredPaths returns the sorted list of ignore-field-drift paths (in
+// their original JSON-style annotation form, e.g. "spec.tags") whose value on
+// latest actually differs from desired, judged with the generated per-resource
+// comparators.
+//
+// It computes the difference by running the generated Delta on a copy of
+// desired with the ignore-field-drift annotation REMOVED. Two properties make
+// this correct:
+//
+//   - Removing the annotation on the copy means the generated delta's trailing
+//     FilterIgnoredDeltaDifferences call is a no-op, so differences on the
+//     ignored paths are NOT stripped and remain visible to us. (The stored CR is
+//     never mutated -- the annotation is removed only on a throwaway deep copy.)
+//   - The generated delta applies each field's real comparator -- byte compare
+//     for plain scalars, but IAMPolicyDocumentEqual / DocumentEqual for
+//     is_iam_policy / is_document fields -- so a field that merely got
+//     canonicalized by AWS (and did not actually drift) produces no difference
+//     and is not reported.
+//
+// A path is reported drifted if the delta contains any difference at or under
+// that path (Path.Contains, matching FilterIgnoredDeltaDifferences).
+func (r *resourceReconciler) driftedIgnoredPaths(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) []string {
+	ignorePaths := IgnoreFieldDriftPaths(desired)
+	if len(ignorePaths) == 0 {
+		return nil
+	}
+
+	// Compute the delta against a copy of desired that does NOT carry the
+	// ignore-field-drift annotation, so the generated FilterIgnoredDeltaDifferences
+	// leaves the ignored-path differences in place for us to inspect. Using the
+	// generated Delta (rather than a direct value compare) is what gives us the
+	// correct per-field comparator for semantically-compared fields.
+	desiredNoAnnotation := desired.DeepCopy()
+	if mo := desiredNoAnnotation.MetaObject(); mo != nil {
+		annotations := mo.GetAnnotations()
+		if annotations != nil {
+			delete(annotations, ackv1alpha1.AnnotationIgnoreFieldDrift)
+			mo.SetAnnotations(annotations)
+		}
+	}
+	delta := r.rd.Delta(desiredNoAnnotation, latest)
+	if delta == nil {
+		return nil
+	}
+
+	drifted := []string{}
+	for _, p := range ignorePaths {
+		dp := toDeltaPath(p)
+		for _, diff := range delta.Differences {
+			if diff.Path.Contains(dp) {
+				drifted = append(drifted, p)
+				break
+			}
+		}
+	}
+
+	if len(drifted) == 0 {
+		return nil
+	}
+	sort.Strings(drifted)
+	return drifted
 }
 
 // ignoredFieldNeedsPersist reports whether any ignore-field-drift field has a
@@ -457,12 +500,6 @@ func (r *resourceReconciler) ignoredFieldNeedsPersist(
 		}
 	}
 	return false
-}
-
-// equalitySemanticDeepEqual compares two unstructured field values for
-// equality, treating two nil values as equal.
-func equalitySemanticDeepEqual(a, b interface{}) bool {
-	return apiequality.Semantic.DeepEqual(a, b)
 }
 
 // toDeltaPath converts a JSON-style annotation path (e.g. "spec.tags") into the
