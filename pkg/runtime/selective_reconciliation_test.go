@@ -373,15 +373,40 @@ func TestDriftedIgnoredPaths_SemanticFields(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Test harness for the ignore-field-drift matrix.
+// Reconciler-level behavior tests for ignore-field-drift.
 //
-// The matrix tests use `uResource` (the unstructured-backed AWSResource defined
-// above) so that real Spec values and annotations
-// flow through the unstructured converters used by applyIgnoredFields /
-// restoreIgnoredFields. The mocked AWSResourceDescriptor.Delta computes a real,
-// spec-field-level delta so the reconciler's branching (Update vs. no Update)
-// is driven by the actual (possibly drift-suppressed) spec values, which is the
-// behavior we want to prove.
+// These tests drive the reconciler end to end (rec.Sync / lateInitializeResource
+// / the write-back patch) rather than the helper functions in isolation, so they
+// verify the *composed* behavior: create, drift suppression, anti-clobber, the
+// retain write-back, late-init persistence, and gate-off. They use `uResource`
+// (the unstructured-backed AWSResource defined above) so real Spec values and
+// annotations flow through the unstructured converters used by
+// applyIgnoredFields / restoreIgnoredFields; the mocked AWSResourceDescriptor.Delta
+// computes a real spec-field-level delta so the reconciler's Update-vs-no-Update
+// branching is driven by the actual (possibly drift-suppressed) spec values.
+//
+// The behaviors under test, as a function of (annotation present?, Spec value,
+// late-init configured?). "Ignored" means the field is named in the
+// services.k8s.aws/ignore-field-drift annotation AND the gate is enabled.
+//
+//   annotation | Spec | late-init | behavior verified                          | test
+//   -----------|------|-----------|--------------------------------------------|--------------------------------------
+//   absent     | X    | no        | drift reconciled back to X (Update fires)  | Unannotated_DriftReconciled
+//   absent     | nil  | no        | no drift, no Update                         | Unannotated_NilSpecNoUpdate
+//   absent     | nil  | yes       | late-init writes AWS default D into Spec   | Unannotated_LateInitWritesValue
+//   present    | X    | no        | create still sends declared X (no suppress)| Ignored_CreateStillSendsDeclaredValue
+//   present    | X    | no        | ignored-only drift suppresses the Update   | Ignored_DriftOnlySuppressesUpdate
+//   present    | X    | no        | Update on another field: send AWS value    | Ignored_UpdateAntiClobberAndRetain
+//              |      |           |  (anti-clobber), patch retains declared X  |
+//   present    | Y    | yes       | edited declared value Y retained, not E/X  | Ignored_DeclaredEditRetained
+//   present    | nil  | no        | drift suppressed, Spec stays nil           | Ignored_NilSpecDriftSuppressed
+//   present    | nil  | yes       | late-init still writes D; later drift kept | Ignored_LateInitNotOverridden
+//   present    | nil  | yes       | late-init value D persisted to stored CR   | Ignored_LateInitValuePersisted (regression)
+//   present*   | X    | no        | gate OFF: annotation has no effect         | GateOff_AnnotationHasNoEffect
+//
+// The two regression cases (Ignored_DeclaredEditRetained,
+// Ignored_LateInitValuePersisted) fail against the pre-fix code and pass after;
+// see their per-test comments.
 // -----------------------------------------------------------------------------
 
 const driftField = "description"
@@ -545,11 +570,11 @@ func wireManagerCommon(
 }
 
 // =============================================================================
-// Row 1: annotation absent, Spec=X, no late-init.
+// Unannotated, Spec=X, no late-init.
 // Expectation: normal behavior. AWS has drifted to E; the reconciler detects
 // the delta and calls Update to reconcile the field back to X.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row1_AnnotationAbsent_Drift(t *testing.T) {
+func TestIgnoreFieldDrift_Unannotated_DriftReconciled(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -582,11 +607,11 @@ func TestIgnoreFieldDriftMatrix_Row1_AnnotationAbsent_Drift(t *testing.T) {
 }
 
 // =============================================================================
-// Row 2: annotation absent, Spec=nil, no late-init.
+// Unannotated, Spec=nil, no late-init.
 // Expectation: normal, unchanged behavior. No drift (latest also nil) -> no
 // Update.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row2_AnnotationAbsent_NilSpec(t *testing.T) {
+func TestIgnoreFieldDrift_Unannotated_NilSpecNoUpdate(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -610,11 +635,11 @@ func TestIgnoreFieldDriftMatrix_Row2_AnnotationAbsent_NilSpec(t *testing.T) {
 }
 
 // =============================================================================
-// Row 3: annotation absent, Spec=nil, late-init writes D.
+// Unannotated, Spec=nil, late-init writes D.
 // Expectation: late-init writes D into the spec; normal behavior. We assert
 // LateInitialize runs and its result (carrying D) is patched back.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row3_AnnotationAbsent_LateInit(t *testing.T) {
+func TestIgnoreFieldDrift_Unannotated_LateInitWritesValue(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -647,11 +672,11 @@ func TestIgnoreFieldDriftMatrix_Row3_AnnotationAbsent_LateInit(t *testing.T) {
 }
 
 // =============================================================================
-// Row 4 (create): annotation present, Spec=X, no late-init.
+// Ignored (create): annotation present, Spec=X, no late-init.
 // Expectation: the resource passed to rm.Create carries X (the field is still
 // created from Spec — annotation only suppresses *drift*, not creation).
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row4_Present_Create_SendsX(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_CreateStillSendsDeclaredValue(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -687,11 +712,11 @@ func TestIgnoreFieldDriftMatrix_Row4_Present_Create_SendsX(t *testing.T) {
 }
 
 // =============================================================================
-// Row 4 (suppress): annotation present, Spec=X, AWS drifted to E, ONLY the
+// Ignored (suppress): annotation present, Spec=X, AWS drifted to E, ONLY the
 // ignored field differs.
 // Expectation: drift suppressed -> rm.Update is NOT called.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row4_Present_DriftOnlySuppressed(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_DriftOnlySuppressesUpdate(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -716,7 +741,7 @@ func TestIgnoreFieldDriftMatrix_Row4_Present_DriftOnlySuppressed(t *testing.T) {
 }
 
 // =============================================================================
-// Row 4 (anti-clobber + retain) — THE CENTRAL PROOF.
+// Ignored (anti-clobber + retain) — THE CENTRAL PROOF.
 // annotation present, Spec=X (ignored field), AWS drifted to E, AND a separate
 // NON-ignored field ("name") also differs so an Update is forced.
 // Expectations:
@@ -727,7 +752,7 @@ func TestIgnoreFieldDriftMatrix_Row4_Present_DriftOnlySuppressed(t *testing.T) {
 //     (retain: the user's declared value is never overwritten in the CR spec).
 //
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row4_Present_AntiClobberAndRetain(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_UpdateAntiClobberAndRetain(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -811,7 +836,7 @@ func TestIgnoreFieldDriftMatrix_Row4_Present_AntiClobberAndRetain(t *testing.T) 
 }
 
 // =============================================================================
-// Row 4 (declared-edit retained) — REGRESSION GUARD for the e2e
+// Ignored (declared-edit retained) — REGRESSION GUARD for the e2e
 // `test_tags_drift_ignored` failure.
 //
 // annotation present for the ignored field; the user has EDITED a DECLARED-SET
@@ -842,7 +867,7 @@ func TestIgnoreFieldDriftMatrix_Row4_Present_AntiClobberAndRetain(t *testing.T) 
 // This FAILS against the pre-fix code (patch body sets spec.<ignored>=E) and
 // PASSES after the fix.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row4_DeclaredEditRetained(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_DeclaredEditRetained(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -960,12 +985,12 @@ func TestIgnoreFieldDriftMatrix_Row4_DeclaredEditRetained(t *testing.T) {
 }
 
 // =============================================================================
-// Row 5: annotation present, Spec=nil, no late-init, AWS has a value (drift).
+// Ignored, Spec=nil, no late-init, AWS has a value (drift).
 // Expectation: create sends nothing for the ignored field; drift suppressed;
 // spec stays nil. Here we exercise the update path (resource already exists)
 // with the ignored field absent in desired and present (D) in latest.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row5_Present_NilSpec_Suppressed(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_NilSpecDriftSuppressed(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -1008,11 +1033,11 @@ func TestIgnoreFieldDriftMatrix_Row5_Present_NilSpec_Suppressed(t *testing.T) {
 }
 
 // =============================================================================
-// Row 6: annotation present, Spec=nil, late-init writes D.
+// Ignored, Spec=nil, late-init writes D.
 // Expectation: late-init still writes D to spec (late-init is NOT overridden by
 // the annotation); later drift is suppressed; the spec retains D.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Row6_Present_LateInitNotOverridden(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_LateInitNotOverridden(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -1103,7 +1128,7 @@ func TestIgnoreFieldDriftMatrix_Row6_Present_LateInitNotOverridden(t *testing.T)
 // Regression: late-init write-back of an IGNORED field must be persisted to the
 // CR spec, even though the generated Delta filters out the ignored-field diff.
 //
-// This test mirrors PRODUCTION more closely than the other matrix tests on TWO
+// This test mirrors PRODUCTION more closely than the other tests here on TWO
 // axes the previous version missed:
 //
 //  1. The descriptor's Delta is wired to call FilterIgnoredDeltaDifferences
@@ -1132,7 +1157,7 @@ func TestIgnoreFieldDriftMatrix_Row6_Present_LateInitNotOverridden(t *testing.T)
 //
 // This test FAILS against the pre-fix code and PASSES after the fix.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_Regression_LateInitIgnoredFieldPersisted(t *testing.T) {
+func TestIgnoreFieldDrift_Ignored_LateInitValuePersisted(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
@@ -1215,7 +1240,7 @@ func TestIgnoreFieldDriftMatrix_Regression_LateInitIgnoredFieldPersisted(t *test
 // drift on the (would-be ignored) field is reconciled, so rm.Update IS called
 // and carries the declared value X.
 // =============================================================================
-func TestIgnoreFieldDriftMatrix_GateOff_AnnotationIgnored(t *testing.T) {
+func TestIgnoreFieldDrift_GateOff_AnnotationHasNoEffect(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
