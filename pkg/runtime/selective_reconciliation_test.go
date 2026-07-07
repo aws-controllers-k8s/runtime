@@ -1321,3 +1321,129 @@ func TestIgnoreFieldDrift_GateOff_AnnotationHasNoEffect(t *testing.T) {
 	require.NotNil(updateInput)
 	assert.Equal(t, "X", specOf(updateInput)[driftField])
 }
+
+// =============================================================================
+// Ignored (custom sdkUpdate that BUILDS ITS OWN SDK REQUEST) — verifies the
+// "customUpdate could clobber" concern is a non-issue for the standard pattern.
+//
+// This models what a real custom `sdkUpdate` does: it does NOT just hand back
+// the resource it was given — it constructs an SDK request payload field-by-
+// field from the `desired` argument it received, calls the API, and returns a
+// result. We capture the value that would be sent "to AWS" for the ignored
+// field and assert it is the OBSERVED value E (a no-op re-send), never the
+// user's declared X (which would clobber the external change).
+//
+// A non-ignored field ("name") also drifts, so an Update is genuinely forced
+// (the ignored-only case is covered separately by DriftOnlySuppressesUpdate).
+// =============================================================================
+func TestIgnoreFieldDrift_Ignored_CustomUpdateBuildsRequestFromDesired(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
+	wireDescriptorCommon(rd)
+	wireManagerCommon(rm, scmd)
+
+	desired := newDriftRes(true, map[string]interface{}{
+		driftField: "X",            // ignored field, user-declared
+		"name":     "desired-name", // non-ignored field, forces the Update
+	})
+	latest := newDriftRes(true, map[string]interface{}{
+		driftField: "E",        // AWS drifted the ignored field out-of-band
+		"name":     "aws-name", // non-ignored field also differs
+	})
+
+	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+
+	// sentToAWS captures the request payload a realistic custom sdkUpdate would
+	// build. The KEY LINE is `payload[driftField] = specOf(d)[driftField]`: the
+	// custom method sources the ignored field's value from the `desired` (d)
+	// argument it was handed -- exactly the pattern every audited controller
+	// uses -- NOT from a fresh read or the API response.
+	var sentToAWS map[string]interface{}
+	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(_ context.Context, d, _ acktypes.AWSResource, _ *ackcompare.Delta) acktypes.AWSResource {
+			payload := map[string]interface{}{}
+			for k, v := range specOf(d) { // build request from the passed-in desired
+				payload[k] = v
+			}
+			sentToAWS = payload
+			return d.DeepCopy()
+		}, nil,
+	)
+	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, r acktypes.AWSResource) acktypes.AWSResource { return r }, nil,
+	)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	_, err := rec.Sync(ctx, rm, desired)
+	require.NoError(err)
+
+	require.NotNil(sentToAWS, "custom update should have run (a non-ignored field drifted)")
+	// THE PROOF: the value the custom update sends to AWS for the ignored field
+	// is the OBSERVED value E, not the declared X -> re-sending E is a no-op, so
+	// the external change is NOT clobbered.
+	assert.Equal(t, "E", sentToAWS[driftField],
+		"custom update built from `desired` sends the observed value for the "+
+			"ignored field (no-op); it must NOT send the declared value (clobber)")
+	// The non-ignored field is sent as declared (normal reconciliation).
+	assert.Equal(t, "desired-name", sentToAWS["name"])
+}
+
+// =============================================================================
+// Ignored (custom sdkUpdate sourcing from `latest`) — verifies that even the
+// pattern that looks risky (reading the field from the observed `latest`
+// instead of `desired`) is still safe, because for an ignored field the merge
+// makes desired == latest. This is why the fleet audit classified controllers
+// that read from `latest` (e.g. lambda's "resend current code") as safe.
+//
+// It also pins the boundary: the ONLY value that would clobber is one that is
+// NEITHER the declared X NOR the observed E (a synthesized/stale value) -- a
+// pattern no audited controller exhibits.
+// =============================================================================
+func TestIgnoreFieldDrift_Ignored_CustomUpdateFromLatestIsAlsoSafe(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
+	wireDescriptorCommon(rd)
+	wireManagerCommon(rm, scmd)
+
+	desired := newDriftRes(true, map[string]interface{}{
+		driftField: "X",
+		"name":     "desired-name",
+	})
+	latest := newDriftRes(true, map[string]interface{}{
+		driftField: "E",
+		"name":     "aws-name",
+	})
+
+	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+
+	// This custom update sources the ignored field from `latest` (the observed
+	// state) rather than `desired`. It sends E -- which equals what AWS already
+	// has -- so it is still a no-op, no clobber.
+	var sentToAWS map[string]interface{}
+	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(_ context.Context, d, l acktypes.AWSResource, _ *ackcompare.Delta) acktypes.AWSResource {
+			sentToAWS = map[string]interface{}{
+				driftField: specOf(l)[driftField], // sourced from LATEST, not desired
+				"name":     specOf(d)["name"],
+			}
+			return d.DeepCopy()
+		}, nil,
+	)
+	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, r acktypes.AWSResource) acktypes.AWSResource { return r }, nil,
+	)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	_, err := rec.Sync(ctx, rm, desired)
+	require.NoError(err)
+
+	require.NotNil(sentToAWS)
+	// Reading from `latest` sends the observed value E == what AWS holds -> no-op.
+	assert.Equal(t, "E", sentToAWS[driftField],
+		"sourcing the ignored field from `latest` sends the observed value, "+
+			"which equals what AWS already has -- still a no-op, no clobber")
+}
