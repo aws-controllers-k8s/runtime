@@ -972,6 +972,9 @@ func (r *resourceReconciler) updateResource(
 			reconcileDesired = merged
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
+		// Warn about any ignore-field-drift paths that are not well-formed field
+		// paths (typos / illegal characters); they silently have no effect.
+		r.warnMalformedIgnorePaths(ctx, desired)
 	}
 
 	// Check to see if the latest observed state already matches the

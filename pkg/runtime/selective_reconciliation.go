@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -277,6 +278,49 @@ func pathParts(p string) []string {
 	return strings.Split(p, ".")
 }
 
+// fieldPathSegmentRegex matches a single, well-formed dotted path segment: a
+// JSON/CRD field name that starts with a letter and contains only letters,
+// digits, and underscores (e.g. "spec", "tags", "assumeRolePolicyDocument").
+// This is deliberately a SYNTACTIC check only -- it validates the shape of the
+// path string, not that the field actually exists on the resource schema
+// (which the runtime cannot see; see the design doc's validation follow-up).
+var fieldPathSegmentRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
+// isValidFieldPath reports whether p is a well-formed dotted JSON-style field
+// path: one or more non-empty segments joined by ".", each matching
+// fieldPathSegmentRegex. It rejects malformed paths such as ones with illegal
+// characters (e.g. "spec/tags", "spec.tags!"), empty segments (e.g. "spec..tags",
+// ".spec", "spec."), array indices (e.g. "spec.tags[0]" -- sub-element ignore is
+// out of v1 scope), and the empty string.
+func isValidFieldPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	for _, seg := range strings.Split(p, ".") {
+		if !fieldPathSegmentRegex.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// malformedIgnorePaths returns, sorted, the ignore-field-drift paths on the
+// resource that are not well-formed dotted field paths (see isValidFieldPath).
+// A malformed path is already a harmless no-op at every consumer -- it matches
+// no field in the merge, filter, or drift log -- so this is used only to WARN
+// the user (via warnMalformedIgnorePaths) that a path they set will silently
+// have no effect, most likely due to a typo or illegal character.
+func malformedIgnorePaths(res acktypes.AWSResource) []string {
+	var bad []string
+	for _, p := range IgnoreFieldDriftPaths(res) {
+		if !isValidFieldPath(p) {
+			bad = append(bad, p)
+		}
+	}
+	sort.Strings(bad)
+	return bad
+}
+
 // FilterIgnoredDeltaDifferences removes, in place, any difference in the
 // supplied delta that falls under a field path the resource has marked as
 // ignored via the services.k8s.aws/ignore-field-drift annotation. This
@@ -365,6 +409,31 @@ func (r *resourceReconciler) logIgnoredFieldDrift(
 		"selective reconciliation: skipping drifted ignore-field-drift fields",
 		"skipped", true,
 		"fields", drifted,
+	)
+}
+
+// warnMalformedIgnorePaths emits a single WARN-level log line naming any
+// ignore-field-drift path on the resource that is not a well-formed dotted
+// field path (see isValidFieldPath). Such a path -- typically a typo or one
+// using illegal characters -- is a silent no-op at every consumer (it matches
+// no field in the merge, filter, or drift log), so the field the user meant to
+// ignore keeps being reconciled. This is a syntactic warning only; it does not
+// (and cannot, without the CRD schema) verify that a well-formed path actually
+// resolves to a field on the resource. No-op when there are no malformed paths.
+func (r *resourceReconciler) warnMalformedIgnorePaths(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+) {
+	bad := malformedIgnorePaths(desired)
+	if len(bad) == 0 {
+		return
+	}
+
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Info(
+		"selective reconciliation: ignoring malformed ignore-field-drift paths; "+
+			"these paths are not well-formed field paths and will have no effect",
+		"malformedPaths", bad,
 	)
 }
 

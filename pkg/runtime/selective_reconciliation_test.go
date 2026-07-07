@@ -313,6 +313,56 @@ func TestPathHelpers(t *testing.T) {
 	assert.Equal(t, "Spec.Tags", toDeltaPath("spec.tags"))
 }
 
+func TestIsValidFieldPath(t *testing.T) {
+	testCases := []struct {
+		path  string
+		valid bool
+	}{
+		// Well-formed dotted field paths.
+		{"spec.tags", true},
+		{"spec.assumeRolePolicyDocument", true},
+		{"spec.a.b.c", true},
+		{"spec.field_with_underscore", true},
+		{"spec", true},
+		// Malformed: illegal characters.
+		{"spec/tags", false},
+		{"spec.tags!", false},
+		{"spec.tags-1", false},
+		{"spec.tags 1", false},
+		{"spec.tags[0]", false}, // array index: sub-element ignore is out of v1 scope
+		// Malformed: empty segments.
+		{"spec..tags", false},
+		{".spec", false},
+		{"spec.", false},
+		{"", false},
+		// Malformed: segment starting with a non-letter.
+		{"spec.1tag", false},
+		{"1spec.tags", false},
+	}
+	for _, tc := range testCases {
+		assert.Equalf(t, tc.valid, isValidFieldPath(tc.path),
+			"isValidFieldPath(%q)", tc.path)
+	}
+}
+
+func TestMalformedIgnorePaths(t *testing.T) {
+	// Mix of well-formed and malformed paths; only the malformed ones are
+	// returned, sorted.
+	desired := newUResource(map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.tags, spec/bad, spec.ok, spec..empty",
+	}, nil)
+	assert.Equal(t, []string{"spec..empty", "spec/bad"}, malformedIgnorePaths(desired))
+
+	// All well-formed -> nil.
+	clean := newUResource(map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.tags, spec.description",
+	}, nil)
+	assert.Nil(t, malformedIgnorePaths(clean))
+
+	// No annotation -> nil.
+	assert.Nil(t, malformedIgnorePaths(newUResource(nil, nil)))
+}
+
 // iamPolicyDelta mimics the generated per-resource Delta for a resource whose
 // spec.policy field is is_iam_policy: it compares that field SEMANTICALLY via
 // IAMPolicyDocumentEqual (like the generated code) and every other scalar field
