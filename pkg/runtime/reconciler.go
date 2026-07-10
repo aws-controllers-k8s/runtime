@@ -38,6 +38,7 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	"github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
+	acksecret "github.com/aws-controllers-k8s/runtime/pkg/secret"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
@@ -107,6 +108,7 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.apiReader = mgr.GetAPIReader()
 	rd := r.rmf.ResourceDescriptor()
 	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
+
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -208,6 +210,35 @@ func (r *reconciler) SecretValueFromReference(
 	}
 
 	return "", ackerr.SecretNotFound
+}
+
+// SecretResourceVersion returns the metadata.resourceVersion of the referenced
+// Secret. The resourceNamespace parameter is used as fallback if the reference
+// doesn't specify a namespace.
+func (r *reconciler) SecretResourceVersion(
+	ctx context.Context,
+	ref *ackv1alpha1.SecretKeyReference,
+	resourceNamespace string,
+) (string, error) {
+	if ref == nil || ref.Name == "" {
+		return "", nil
+	}
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = resourceNamespace
+	}
+	nsn := client.ObjectKey{
+		Namespace: namespace,
+		Name:      ref.Name,
+	}
+	var secret corev1.Secret
+	if err := r.apiReader.Get(ctx, nsn, &secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return secret.ResourceVersion, nil
 }
 
 // WriteToSecret writes a value to a Secret given the namespace, name,
@@ -858,6 +889,10 @@ func (r *resourceReconciler) createResource(
 
 	// Take the status from the latest ReadOne
 	latest.SetStatus(observed)
+	// sdkFind sets the secret resource-versions annotation on observed,
+	// but SetStatus only copies status fields. Preserve the annotation so
+	// it gets persisted in the metadata patch below.
+	acksecret.CopyAnnotation(observed.MetaObject(), latest.MetaObject())
 
 	// Ensure that we are patching any changes to the annotations/metadata and
 	// the Spec that may have been set by the resource manager's successful
@@ -953,6 +988,11 @@ func (r *resourceReconciler) updateResource(
 		if err != nil {
 			return updated, err
 		}
+		// rm.Update builds its response from the SDK output which doesn't
+		// carry K8s annotations. Preserve the secret resource-versions
+		// annotation (set during this reconcile's sdkFind) so it survives
+		// the metadata patch.
+		acksecret.CopyAnnotation(latest.MetaObject(), updated.MetaObject())
 		// Ensure that we are patching any changes to the annotations/metadata and
 		// the Spec that may have been set by the resource manager's successful
 		// Update call above.
