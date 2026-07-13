@@ -648,7 +648,7 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if isReadOnly {
-		delta := r.rd.Delta(desired, latest)
+		delta := r.filteredDelta(desired, latest)
 		if delta.DifferentAt("Spec") {
 			rlog.Info(
 				"desired resource state has changed, but resource is read-only - skipping update",
@@ -731,14 +731,12 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
-		// Selective reconciliation: rm.IsSynced (generated per-resource code)
-		// derives the in-sync determination from the per-resource
-		// newResourceDelta. That generated delta now calls
-		// FilterIgnoredDeltaDifferences as its final step, which strips any
-		// difference under an ignore-fields path when the
-		// SelectiveReconciliation feature gate is enabled. As a result, drift on
-		// ignored fields no longer reports the resource as not-synced here, and
-		// no extra suppression is needed at this call site.
+		// Note: rm.IsSynced (generated per-resource code) checks
+		// `synced.when` status conditions only and never consults the
+		// resource delta, so ignore-field-drift needs no suppression here.
+		// Drift on ignored fields is kept out of the synced determination
+		// upstream, where the reconciler's delta-driven decisions
+		// (update/requeue) go through filteredDelta.
 		rlog.Enter("rm.IsSynced")
 		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
 			condStatus = corev1.ConditionTrue
@@ -979,7 +977,7 @@ func (r *resourceReconciler) updateResource(
 
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
-	delta := r.rd.Delta(reconcileDesired, latest)
+	delta := r.filteredDelta(reconcileDesired, latest)
 	if delta.DifferentAt("Spec") {
 		rlog.Info(
 			"desired resource state has changed",
@@ -1170,14 +1168,14 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	if err != nil {
 		return latest, err
 	}
-	// The generated r.rd.Delta runs FilterIgnoredDeltaDifferences, which strips
-	// differences on ignore-field-drift fields. That filtering is correct for
-	// the "should I call AWS Update?" and IsSynced decisions, but it is WRONG as
-	// the gate for skipping THIS patch: on a write-back (e.g. late-init set
-	// spec.path="/"), the only difference between the patch base
-	// (desiredCleaned) and the to-be-persisted object (latestCleaned) may be on
-	// an ignored field. A filtered delta reports "no difference", so we would
-	// skip the patch and lose the late-initialized (and retained) value.
+	// r.filteredDelta strips differences on ignore-field-drift fields. That
+	// filtering is correct for the "should I call AWS Update?" and
+	// requeue/synced decisions, but it is WRONG as the gate for skipping THIS
+	// patch: on a write-back (e.g. late-init set spec.path="/"), the only
+	// difference between the patch base (desiredCleaned) and the
+	// to-be-persisted object (latestCleaned) may be on an ignored field. A
+	// filtered delta reports "no difference", so we would skip the patch and
+	// lose the late-initialized (and retained) value.
 	//
 	// To fix this without reintroducing drift churn, additionally treat the
 	// resource as needing a patch when an ignored field's value actually differs
@@ -1193,7 +1191,7 @@ func (r *resourceReconciler) patchResourceMetadataAndSpec(
 	// annotation and whose RuntimeObject cannot be converted to unstructured).
 	ignoredNeedsPersist := r.ignoredFieldNeedsPersist(desiredCleaned, latestCleaned)
 	if equalMetadata && !ignoredNeedsPersist &&
-		!r.rd.Delta(desiredCleaned, latestCleaned).DifferentAt("Spec") {
+		!r.filteredDelta(desiredCleaned, latestCleaned).DifferentAt("Spec") {
 		rlog.Debug("no difference found between metadata and spec for desired and latest object.")
 		return latest, nil
 	}

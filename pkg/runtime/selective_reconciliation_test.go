@@ -266,7 +266,7 @@ func TestFilterIgnoredDeltaDifferences_RemovesIgnoredPaths(t *testing.T) {
 	delta.Add("Spec.Tags.foo", "a", "b")
 	delta.Add("Spec.Name", "a", "b")
 
-	FilterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
+	filterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
 
 	require.Len(t, delta.Differences, 1)
 	assert.True(t, delta.Differences[0].Path.Contains("Spec.Name"))
@@ -280,7 +280,7 @@ func TestFilterIgnoredDeltaDifferences_GateDisabled(t *testing.T) {
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.Tags", "a", "b")
 
-	FilterIgnoredDeltaDifferences(delta, res, featuregate.GetDefaultFeatureGates())
+	filterIgnoredDeltaDifferences(delta, res, featuregate.GetDefaultFeatureGates())
 	// Gate off -> delta untouched.
 	assert.Len(t, delta.Differences, 1)
 }
@@ -290,17 +290,9 @@ func TestFilterIgnoredDeltaDifferences_NoAnnotation(t *testing.T) {
 	delta := ackcompare.NewDelta()
 	delta.Add("Spec.Tags", "a", "b")
 
-	FilterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
+	filterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
 	// No annotation -> delta untouched.
 	assert.Len(t, delta.Differences, 1)
-}
-
-func TestGlobalFeatureGates_RoundTrip(t *testing.T) {
-	orig := featuregate.GetGlobalFeatureGates()
-	defer featuregate.SetGlobalFeatureGates(orig)
-
-	featuregate.SetGlobalFeatureGates(gatesEnabled(t))
-	assert.True(t, featuregate.GetGlobalFeatureGates().IsEnabled(featuregate.SelectiveReconciliation))
 }
 
 func TestPathHelpers(t *testing.T) {
@@ -923,18 +915,16 @@ func TestIgnoreFieldDrift_Ignored_DeclaredEditRetained(t *testing.T) {
 
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
 
-	// Wire Delta to MIRROR production: compute the real spec delta, then run
-	// FilterIgnoredDeltaDifferences so a difference on the ignored field is
-	// stripped — exactly what the generated newResourceDelta does. This ensures
-	// the patch on the late-init path is NOT spuriously driven by the (filtered)
-	// delta, isolating the persist-gate / rebase logic under test.
+	// The descriptor's Delta returns the RAW spec delta, mirroring the
+	// generated newResourceDelta. The reconciler's filteredDelta wrapper
+	// strips the ignored-field difference from every delta-driven decision,
+	// so the patch on the late-init path is NOT spuriously driven by the
+	// (filtered) delta, isolating the persist-gate / rebase logic under test.
 	rd.On("IsManaged", mock.Anything).Return(true)
 	rd.On("MarkAdopted", mock.Anything).Return()
 	rd.On("Delta", mock.Anything, mock.Anything).Return(
 		func(a, b acktypes.AWSResource) *ackcompare.Delta {
-			d := specDelta(a, b)
-			FilterIgnoredDeltaDifferences(d, a, rec.cfg.FeatureGates)
-			return d
+			return specDelta(a, b)
 		},
 	)
 	wireManagerCommon(rm, scmd)
@@ -1181,9 +1171,9 @@ func TestIgnoreFieldDrift_Ignored_LateInitNotOverridden(t *testing.T) {
 // This test mirrors PRODUCTION more closely than the other tests here on TWO
 // axes the previous version missed:
 //
-//  1. The descriptor's Delta is wired to call FilterIgnoredDeltaDifferences
-//     (exactly like the generated newResourceDelta), so a difference on the
-//     ignored field is stripped from the delta.
+//  1. The reconciler's filteredDelta wrapper (which applies
+//     filterIgnoredDeltaDifferences on top of the descriptor's raw Delta)
+//     strips the ignored-field difference from every delta-driven decision.
 //  2. The AWS-observed `latest` (from ReadOne) ALREADY carries the
 //     service-defaulted value D for the ignored field — the realistic case for
 //     a late-init field that is returned by the Read API. This is the crucial
@@ -1213,16 +1203,15 @@ func TestIgnoreFieldDrift_Ignored_LateInitValuePersisted(t *testing.T) {
 
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
 
-	// Wire Delta to MIRROR production: compute the real spec delta, then run
-	// FilterIgnoredDeltaDifferences so differences on the ignored field are
-	// stripped — exactly what the generated newResourceDelta does.
+	// The descriptor's Delta returns the RAW spec delta, mirroring the
+	// generated newResourceDelta. The reconciler's filteredDelta wrapper
+	// strips differences on the ignored field from every delta-driven
+	// decision.
 	rd.On("IsManaged", mock.Anything).Return(true)
 	rd.On("MarkAdopted", mock.Anything).Return()
 	rd.On("Delta", mock.Anything, mock.Anything).Return(
 		func(a, b acktypes.AWSResource) *ackcompare.Delta {
-			d := specDelta(a, b)
-			FilterIgnoredDeltaDifferences(d, a, rec.cfg.FeatureGates)
-			return d
+			return specDelta(a, b)
 		},
 	)
 	wireManagerCommon(rm, scmd)

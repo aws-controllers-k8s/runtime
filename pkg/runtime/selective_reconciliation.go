@@ -321,22 +321,38 @@ func malformedIgnorePaths(res acktypes.AWSResource) []string {
 	return bad
 }
 
-// FilterIgnoredDeltaDifferences removes, in place, any difference in the
+// filteredDelta computes the per-resource delta between a (desired) and b
+// (latest) via the generated resource descriptor, then removes any difference
+// that falls under a field path the desired resource has marked as ignored via
+// the services.k8s.aws/ignore-field-drift annotation. Every reconciler decision
+// that consumes a delta (should-I-update, requeue/synced, patch) goes through
+// this wrapper, so drift on an ignored field never marks a resource
+// out-of-sync.
+//
+// The filtering lives here in the runtime -- NOT in the generated
+// newResourceDelta -- because the runtime is the only production consumer of
+// the generated delta (controllers reach it solely through the descriptor's
+// Delta method, which the runtime invokes). Wrapping it here keeps the
+// generated code a pure comparison function and lets the filter read the
+// feature gates from the controller's own config instead of process-global
+// state.
+func (r *resourceReconciler) filteredDelta(
+	a acktypes.AWSResource,
+	b acktypes.AWSResource,
+) *ackcompare.Delta {
+	delta := r.rd.Delta(a, b)
+	filterIgnoredDeltaDifferences(delta, a, r.cfg.FeatureGates)
+	return delta
+}
+
+// filterIgnoredDeltaDifferences removes, in place, any difference in the
 // supplied delta that falls under a field path the resource has marked as
-// ignored via the services.k8s.aws/ignore-field-drift annotation. This
-// guarantees that drift on an ignored field never marks a resource out-of-sync,
-// no matter which code path consumes the delta (update, requeue/synced
-// decisions, etc.).
+// ignored via the services.k8s.aws/ignore-field-drift annotation.
 //
 // It is a no-op (delta is left untouched) when the SelectiveReconciliation
 // feature gate is disabled or when the resource carries no ignore-field-drift
 // annotation, so resources that do not use the feature are unaffected.
-//
-// This is exported so it can be called from generated per-resource delta code,
-// which has access to the resource but not to the controller's config object.
-// Such callers pass the process-wide feature gates via
-// featuregate.GetGlobalFeatureGates().
-func FilterIgnoredDeltaDifferences(
+func filterIgnoredDeltaDifferences(
 	delta *ackcompare.Delta,
 	res acktypes.AWSResource,
 	fg featuregate.FeatureGates,
@@ -442,22 +458,17 @@ func (r *resourceReconciler) warnMalformedIgnorePaths(
 // latest actually differs from desired, judged with the generated per-resource
 // comparators.
 //
-// It computes the difference by running the generated Delta on a copy of
-// desired with the ignore-field-drift annotation REMOVED. Two properties make
-// this correct:
-//
-//   - Removing the annotation on the copy means the generated delta's trailing
-//     FilterIgnoredDeltaDifferences call is a no-op, so differences on the
-//     ignored paths are NOT stripped and remain visible to us. (The stored CR is
-//     never mutated -- the annotation is removed only on a throwaway deep copy.)
-//   - The generated delta applies each field's real comparator -- byte compare
-//     for plain scalars, but IAMPolicyDocumentEqual / DocumentEqual for
-//     is_iam_policy / is_document fields -- so a field that merely got
-//     canonicalized by AWS (and did not actually drift) produces no difference
-//     and is not reported.
+// It computes the difference with the RAW generated Delta (r.rd.Delta), NOT the
+// filteredDelta wrapper: the differences on ignored paths are exactly what this
+// function needs to inspect, so they must not be stripped. Using the generated
+// Delta (rather than a direct value compare) applies each field's real
+// comparator -- byte compare for plain scalars, but IAMPolicyDocumentEqual /
+// DocumentEqual for is_iam_policy / is_document fields -- so a field that
+// merely got canonicalized by AWS (and did not actually drift) produces no
+// difference and is not reported.
 //
 // A path is reported drifted if the delta contains any difference at or under
-// that path (Path.Contains, matching FilterIgnoredDeltaDifferences).
+// that path (Path.Contains, matching filterIgnoredDeltaDifferences).
 func (r *resourceReconciler) driftedIgnoredPaths(
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
@@ -467,20 +478,7 @@ func (r *resourceReconciler) driftedIgnoredPaths(
 		return nil
 	}
 
-	// Compute the delta against a copy of desired that does NOT carry the
-	// ignore-field-drift annotation, so the generated FilterIgnoredDeltaDifferences
-	// leaves the ignored-path differences in place for us to inspect. Using the
-	// generated Delta (rather than a direct value compare) is what gives us the
-	// correct per-field comparator for semantically-compared fields.
-	desiredNoAnnotation := desired.DeepCopy()
-	if mo := desiredNoAnnotation.MetaObject(); mo != nil {
-		annotations := mo.GetAnnotations()
-		if annotations != nil {
-			delete(annotations, ackv1alpha1.AnnotationIgnoreFieldDrift)
-			mo.SetAnnotations(annotations)
-		}
-	}
-	delta := r.rd.Delta(desiredNoAnnotation, latest)
+	delta := r.rd.Delta(desired, latest)
 	if delta == nil {
 		return nil
 	}
@@ -526,8 +524,8 @@ func (r *resourceReconciler) driftedIgnoredPaths(
 // what protects a declared-set ignored field (e.g. an edited spec.tags) on a
 // late-init-configured resource.
 //
-// It deliberately does NOT use r.rd.Delta (which runs
-// FilterIgnoredDeltaDifferences) and instead compares each ignored path
+// It deliberately does NOT use r.filteredDelta (which strips ignored-path
+// differences via filterIgnoredDeltaDifferences) and instead compares each ignored path
 // directly via the unstructured converter, mirroring logIgnoredFieldDrift /
 // restoreIgnoredFields. It returns false (no-op) when the gate is disabled, the
 // resource carries no ignore-field-drift annotation, or either object cannot be

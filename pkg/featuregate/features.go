@@ -18,7 +18,6 @@ package featuregate
 
 import (
 	"fmt"
-	"sync"
 )
 
 const (
@@ -109,37 +108,6 @@ func (fg FeatureGates) GetFeatureNames() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// globalFeatureGates holds the process-wide feature gate configuration. It is
-// set once during controller startup (via SetGlobalFeatureGates, called from
-// the runtime's BindControllerManager) and read by generated, package-level
-// code that has no access to the controller's config object (e.g. the
-// per-resource newResourceDelta function). It defaults to the ACK default
-// feature gates so that code reading it before initialization sees sane,
-// disabled-by-default values.
-var (
-	globalFeatureGates     = GetDefaultFeatureGates()
-	globalFeatureGatesLock sync.RWMutex
-)
-
-// SetGlobalFeatureGates publishes the supplied feature gates as the process-wide
-// feature gate configuration. It is intended to be called exactly once, during
-// controller startup, before any reconciliation happens.
-func SetGlobalFeatureGates(fg FeatureGates) {
-	globalFeatureGatesLock.Lock()
-	defer globalFeatureGatesLock.Unlock()
-	globalFeatureGates = fg
-}
-
-// GetGlobalFeatureGates returns the process-wide feature gate configuration. It
-// is safe for concurrent use. Code that has access to the controller's
-// ackcfg.Config should prefer reading cfg.FeatureGates directly; this accessor
-// exists for generated, package-level code that cannot reach the config.
-func GetGlobalFeatureGates() FeatureGates {
-	globalFeatureGatesLock.RLock()
-	defer globalFeatureGatesLock.RUnlock()
-	return globalFeatureGates
 }
 
 // GetDefaultFeatureGates returns a new FeatureGates instance initialized with the default feature set.
