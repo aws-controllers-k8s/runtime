@@ -951,14 +951,14 @@ func (r *resourceReconciler) updateResource(
 		return latest, err
 	}
 
-	// If the SelectiveReconciliation feature is enabled and the resource carries
+	// If the IgnoreFieldDrift feature is enabled and the resource carries
 	// the ignore-field-drift annotation, merge the observed (latest) values for
 	// the ignored fields into a copy of desired. The merged copy is used for
 	// delta computation and the Update call so that drift on ignored fields does
 	// not drive an Update. The stored CR is never mutated.
 	reconcileDesired := desired
-	if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
-		HasSelectiveReconciliation(desired) {
+	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
+		HasIgnoreFieldDrift(desired) {
 		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
@@ -989,15 +989,15 @@ func (r *resourceReconciler) updateResource(
 		if err != nil {
 			return updated, err
 		}
-		// Selective reconciliation, RETAIN write-back: the anti-clobber merge
+		// Ignore-field-drift, RETAIN write-back: the anti-clobber merge
 		// above placed the AWS-observed value for each ignored field into the
 		// update request. Now that the Update has completed, copy the user's
 		// declared value for each ignored field back into `updated` so that the
 		// subsequent patch persists the declared value (not the AWS value) to
 		// the CR spec. This is a log-and-continue path: a restore error must not
 		// fail the reconcile.
-		if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
-			HasSelectiveReconciliation(desired) {
+		if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
+			HasIgnoreFieldDrift(desired) {
 			if rErr := restoreIgnoredFields(
 				updated, desired,
 				IgnoreFieldDriftPaths(desired),
@@ -1073,9 +1073,9 @@ func (r *resourceReconciler) lateInitializeResource(
 		// late-init paths onto the DECLARED `desired` so the patch base reflects
 		// the stored (unset) state and the MergeFrom diff carries the value.
 		base := latest
-		if r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) &&
+		if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 			ackcompare.IsNotNil(desired) &&
-			HasSelectiveReconciliation(desired) {
+			HasIgnoreFieldDrift(desired) {
 			rebased, rebaseErr := rebaseIgnoredFieldsForPersist(
 				latest, desired, lateInitializedLatest,
 				IgnoreFieldDriftPaths(desired),

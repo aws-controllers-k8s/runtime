@@ -58,9 +58,9 @@ func splitAnnotationPaths(res acktypes.AWSResource, annotation string) []string 
 	return paths
 }
 
-// HasSelectiveReconciliation returns true if the supplied resource carries any
+// HasIgnoreFieldDrift returns true if the supplied resource carries any
 // annotation that selectively scopes which fields the controller reconciles.
-func HasSelectiveReconciliation(res acktypes.AWSResource) bool {
+func HasIgnoreFieldDrift(res acktypes.AWSResource) bool {
 	return len(IgnoreFieldDriftPaths(res)) > 0
 }
 
@@ -73,14 +73,14 @@ func HasSelectiveReconciliation(res acktypes.AWSResource) bool {
 // the desired copy (or is removed if absent from latest), so the field compares
 // equal and never drives an Update.
 //
-// If the SelectiveReconciliation feature gate is disabled or the resource
+// If the IgnoreFieldDrift feature gate is disabled or the resource
 // carries no ignore-field-drift annotation, desired is returned unchanged.
 func applyIgnoredFields(
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 	featureGates featuregate.FeatureGates,
 ) (acktypes.AWSResource, error) {
-	if !featureGates.IsEnabled(featuregate.SelectiveReconciliation) {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
 		return desired, nil
 	}
 	ignorePaths := IgnoreFieldDriftPaths(desired)
@@ -126,7 +126,7 @@ func restoreIgnoredFields(
 	paths []string,
 	featureGates featuregate.FeatureGates,
 ) error {
-	if !featureGates.IsEnabled(featuregate.SelectiveReconciliation) {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
 		return nil
 	}
 	if len(paths) == 0 {
@@ -201,7 +201,7 @@ func rebaseIgnoredFieldsForPersist(
 	paths []string,
 	featureGates featuregate.FeatureGates,
 ) (acktypes.AWSResource, error) {
-	if !featureGates.IsEnabled(featuregate.SelectiveReconciliation) {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
 		return latest, nil
 	}
 	if len(paths) == 0 {
@@ -349,7 +349,7 @@ func (r *resourceReconciler) filteredDelta(
 // supplied delta that falls under a field path the resource has marked as
 // ignored via the services.k8s.aws/ignore-field-drift annotation.
 //
-// It is a no-op (delta is left untouched) when the SelectiveReconciliation
+// It is a no-op (delta is left untouched) when the IgnoreFieldDrift
 // feature gate is disabled or when the resource carries no ignore-field-drift
 // annotation, so resources that do not use the feature are unaffected.
 func filterIgnoredDeltaDifferences(
@@ -360,7 +360,7 @@ func filterIgnoredDeltaDifferences(
 	if delta == nil {
 		return
 	}
-	if !fg.IsEnabled(featuregate.SelectiveReconciliation) {
+	if !fg.IsEnabled(featuregate.IgnoreFieldDrift) {
 		return
 	}
 	ignorePaths := IgnoreFieldDriftPaths(res)
@@ -422,7 +422,7 @@ func (r *resourceReconciler) logIgnoredFieldDrift(
 
 	rlog := ackrtlog.FromContext(ctx)
 	rlog.Info(
-		"selective reconciliation: skipping drifted ignore-field-drift fields",
+		"ignore-field-drift: skipping drifted ignore-field-drift fields",
 		"skipped", true,
 		"fields", drifted,
 	)
@@ -447,7 +447,7 @@ func (r *resourceReconciler) warnMalformedIgnorePaths(
 
 	rlog := ackrtlog.FromContext(ctx)
 	rlog.Info(
-		"selective reconciliation: ignoring malformed ignore-field-drift paths; "+
+		"ignore-field-drift: ignoring malformed ignore-field-drift paths; "+
 			"these paths are not well-formed field paths and will have no effect",
 		"malformedPaths", bad,
 	)
@@ -535,7 +535,7 @@ func (r *resourceReconciler) ignoredFieldNeedsPersist(
 	base acktypes.AWSResource,
 	target acktypes.AWSResource,
 ) bool {
-	if !r.cfg.FeatureGates.IsEnabled(featuregate.SelectiveReconciliation) {
+	if !r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
 		return false
 	}
 	ignorePaths := IgnoreFieldDriftPaths(target)

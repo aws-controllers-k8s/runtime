@@ -100,6 +100,6 @@ const (
 	// declared value is retained in the CR spec rather than being replaced by
 	// the AWS-observed value. The field is still created from the Spec value as
 	// the baseline and is late-initialized normally. This annotation is only
-	// honored when the SelectiveReconciliation feature gate is enabled.
+	// honored when the IgnoreFieldDrift feature gate is enabled.
 	AnnotationIgnoreFieldDrift = AnnotationPrefix + "ignore-field-drift"
 )

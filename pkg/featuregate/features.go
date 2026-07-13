@@ -37,22 +37,22 @@ const (
 	// IAMRoleSelector is a feature gate for enabling the IAMRoleSelector feature and reconciler.
 	IAMRoleSelector = "IAMRoleSelector"
 
-	// SelectiveReconciliation is a feature gate for enabling selective field
+	// IgnoreFieldDrift is a feature gate for enabling selective field
 	// reconciliation via the services.k8s.aws/ignore-field-drift annotation. It
 	// alters reconciliation behavior, so it is disabled by default and must be
 	// explicitly enabled by the controller operator.
-	SelectiveReconciliation = "SelectiveReconciliation"
+	IgnoreFieldDrift = "IgnoreFieldDrift"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ResourceAdoption:        {Stage: Beta, Enabled: true},
-	ReadOnlyResources:       {Stage: Beta, Enabled: true},
-	TeamLevelCARM:           {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM:        {Stage: Alpha, Enabled: false},
-	IAMRoleSelector:         {Stage: Alpha, Enabled: false},
-	SelectiveReconciliation: {Stage: Alpha, Enabled: false},
+	ResourceAdoption:  {Stage: Beta, Enabled: true},
+	ReadOnlyResources: {Stage: Beta, Enabled: true},
+	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
+	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
+	IgnoreFieldDrift:  {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

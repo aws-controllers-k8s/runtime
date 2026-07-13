@@ -43,7 +43,7 @@ import (
 )
 
 // uResource is a minimal AWSResource backed by an *unstructured.Unstructured,
-// used to exercise the selective-reconciliation merge logic without depending
+// used to exercise the ignore-field-drift merge logic without depending
 // on a generated resource type.
 type uResource struct {
 	obj        *unstructured.Unstructured
@@ -121,12 +121,12 @@ func (r *uResource) DeepCopy() acktypes.AWSResource {
 	return &uResource{obj: r.obj.DeepCopy(), conditions: conds}
 }
 
-// gatesEnabled returns a FeatureGates instance with the SelectiveReconciliation
+// gatesEnabled returns a FeatureGates instance with the IgnoreFieldDrift
 // gate enabled, for tests that need the ignore-field-drift behavior active.
 func gatesEnabled(t *testing.T) featuregate.FeatureGates {
 	t.Helper()
 	gates, err := featuregate.GetFeatureGatesWithOverrides(
-		map[string]bool{featuregate.SelectiveReconciliation: true},
+		map[string]bool{featuregate.IgnoreFieldDrift: true},
 	)
 	require.NoError(t, err)
 	return gates
@@ -149,7 +149,7 @@ func TestApplyIgnoredFields_GateDisabled(t *testing.T) {
 	)
 	latest := newUResource(nil, map[string]interface{}{"description": "from-aws"})
 
-	// Default gates have SelectiveReconciliation disabled.
+	// Default gates have IgnoreFieldDrift disabled.
 	out, err := applyIgnoredFields(desired, latest, featuregate.GetDefaultFeatureGates())
 	require.NoError(t, err)
 	// Gate off -> desired returned unchanged.
@@ -301,7 +301,7 @@ func TestPathHelpers(t *testing.T) {
 	}, nil)
 
 	assert.Equal(t, []string{"spec.a", "spec.b"}, IgnoreFieldDriftPaths(desired))
-	assert.True(t, HasSelectiveReconciliation(desired))
+	assert.True(t, HasIgnoreFieldDrift(desired))
 	assert.Equal(t, "Spec.Tags", toDeltaPath("spec.tags"))
 }
 
@@ -492,7 +492,7 @@ func capFirst(s string) string {
 }
 
 // ignoreDriftReconcilerMocks builds a reconciler wired with mocked
-// collaborators and the SelectiveReconciliation feature gate set to
+// collaborators and the IgnoreFieldDrift feature gate set to
 // `gateEnabled`. The returned descriptor mock's Delta computes a real
 // spec-level delta via specDelta so the reconciler branches realistically.
 func ignoreDriftReconcilerMocks(
@@ -512,9 +512,9 @@ func ignoreDriftReconcilerMocks(
 
 	cfg := ackcfg.Config{
 		FeatureGates: featuregate.FeatureGates{
-			featuregate.ReadOnlyResources:       {Enabled: true},
-			featuregate.ResourceAdoption:        {Enabled: true},
-			featuregate.SelectiveReconciliation: {Enabled: gateEnabled},
+			featuregate.ReadOnlyResources: {Enabled: true},
+			featuregate.ResourceAdoption:  {Enabled: true},
+			featuregate.IgnoreFieldDrift:  {Enabled: gateEnabled},
 		},
 		ResourceTagKeys: []string{},
 	}
@@ -1274,7 +1274,7 @@ func TestIgnoreFieldDrift_Ignored_LateInitValuePersisted(t *testing.T) {
 }
 
 // =============================================================================
-// Gate off: annotation present but SelectiveReconciliation disabled.
+// Gate off: annotation present but IgnoreFieldDrift disabled.
 // Expectation: the annotation is ignored entirely -> behaves like row 1, i.e.
 // drift on the (would-be ignored) field is reconciled, so rm.Update IS called
 // and carries the declared value X.
