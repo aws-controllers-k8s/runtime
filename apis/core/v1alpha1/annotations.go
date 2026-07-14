@@ -75,11 +75,12 @@ const (
 	// resource manager will leave the AWS resource intact when the K8s resource
 	// is deleted.
 	AnnotationDeletionPolicy = AnnotationPrefix + "deletion-policy"
-	// AnnotationReadOnly is an annotation whose value is a boolean indicating
-	// whether the resource is read-only. If this annotation is set to true on a
-	// CR, that means the user is indicating to the ACK service controller that
-	// the resource is read-only and should not be created/patched/deleted by the
-	// ACK service controller.
+	// AnnotationReadOnly is an annotation indicating whether the resource is
+	// read-only. If this annotation is set to "true" on a CR, the resource
+	// is read-only and will not be created/patched/deleted in AWS, and its
+	// K8s Spec will not be synced. If the value is "always", it acts as
+	// read-only but the controller WILL patch the K8s Spec and Metadata to
+	// reflect the latest observed state from AWS.
 	AnnotationReadOnly = AnnotationPrefix + "read-only"
 	// AnnotationAdoptionPolicy is an annotation whose value is the identifier for whether
 	// we will attempt adoption only (value = adopt-only) or attempt a create if resource 

@@ -650,11 +650,23 @@ func (r *resourceReconciler) Sync(
 	} else if isReadOnly {
 		delta := r.rd.Delta(desired, latest)
 		if delta.DifferentAt("Spec") {
-			rlog.Info(
-				"desired resource state has changed, but resource is read-only - skipping update",
-				"skipped", true,
-				"diff", delta.Differences,
-			)
+			if IsReadOnlyAlwaysSync(desired) {
+				rlog.Info(
+					"desired resource state has changed, resource is read-only: always - syncing Spec",
+					"skipped", false,
+					"diff", delta.Differences,
+				)
+				latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
+				if err != nil {
+					return latest, err
+				}
+			} else {
+				rlog.Info(
+					"desired resource state has changed, but resource is read-only - skipping update",
+					"skipped", true,
+					"diff", delta.Differences,
+				)
+			}
 		}
 		return latest, nil
 	} else {
