@@ -192,6 +192,120 @@ func TestApplyIgnoredFields_IgnoreFieldAbsentInLatest(t *testing.T) {
 	assert.False(t, found)
 }
 
+func TestApplyIgnoredFields_NestedPath(t *testing.T) {
+	desired := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.network.vpc.cidr"},
+		map[string]interface{}{
+			"network": map[string]interface{}{
+				"vpc": map[string]interface{}{
+					"cidr":   "10.0.0.0/16",
+					"region": "us-west-2",
+				},
+			},
+			"name": "keep",
+		},
+	)
+	latest := newUResource(nil, map[string]interface{}{
+		"network": map[string]interface{}{
+			"vpc": map[string]interface{}{
+				"cidr":   "10.1.0.0/16",
+				"region": "us-west-2",
+			},
+		},
+		"name": "old",
+	})
+
+	out, err := applyIgnoredFields(desired, latest, gatesEnabled(t))
+	require.NoError(t, err)
+	spec := out.(*uResource).spec()
+	// The deeply nested ignored field takes the AWS value.
+	vpc := spec["network"].(map[string]interface{})["vpc"].(map[string]interface{})
+	assert.Equal(t, "10.1.0.0/16", vpc["cidr"])
+	// Sibling nested field keeps the desired value.
+	assert.Equal(t, "us-west-2", vpc["region"])
+	// Top-level non-ignored field keeps the desired value.
+	assert.Equal(t, "keep", spec["name"])
+}
+
+func TestApplyIgnoredFields_NestedPathAbsentInLatest(t *testing.T) {
+	desired := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.config.logging.level"},
+		map[string]interface{}{
+			"config": map[string]interface{}{
+				"logging": map[string]interface{}{
+					"level": "INFO",
+				},
+			},
+		},
+	)
+	// latest doesn't have the nested structure at all.
+	latest := newUResource(nil, map[string]interface{}{})
+
+	out, err := applyIgnoredFields(desired, latest, gatesEnabled(t))
+	require.NoError(t, err)
+	spec := out.(*uResource).spec()
+	// Nested field absent in latest -> removed from desired copy.
+	config, ok := spec["config"]
+	if ok {
+		logging, ok := config.(map[string]interface{})["logging"]
+		if ok {
+			_, found := logging.(map[string]interface{})["level"]
+			assert.False(t, found, "nested ignored field should be removed when absent in latest")
+		}
+	}
+}
+
+func TestRestoreIgnoredFields_NestedPath(t *testing.T) {
+	desired := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.network.vpc.cidr"},
+		map[string]interface{}{
+			"network": map[string]interface{}{
+				"vpc": map[string]interface{}{
+					"cidr":   "10.0.0.0/16",
+					"region": "us-west-2",
+				},
+			},
+		},
+	)
+	updated := newUResource(nil, map[string]interface{}{
+		"network": map[string]interface{}{
+			"vpc": map[string]interface{}{
+				"cidr":   "10.1.0.0/16",
+				"region": "us-west-2",
+			},
+		},
+	})
+
+	err := restoreIgnoredFields(updated, desired, []string{"spec.network.vpc.cidr"}, gatesEnabled(t))
+	require.NoError(t, err)
+	spec := updated.spec()
+	vpc := spec["network"].(map[string]interface{})["vpc"].(map[string]interface{})
+	// The declared nested value is restored.
+	assert.Equal(t, "10.0.0.0/16", vpc["cidr"])
+	// Sibling nested field left intact.
+	assert.Equal(t, "us-west-2", vpc["region"])
+}
+
+func TestFilterIgnoredDeltaDifferences_NestedPaths(t *testing.T) {
+	res := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.network.vpc.cidr"},
+		nil,
+	)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.Network.Vpc.Cidr", "10.0.0.0/16", "10.1.0.0/16")
+	delta.Add("Spec.Network.Vpc.Region", "us-west-2", "us-east-1")
+	delta.Add("Spec.Name", "a", "b")
+
+	filterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
+
+	// Only the ignored nested path is removed; sibling nested and top-level remain.
+	require.Len(t, delta.Differences, 2)
+	assert.True(t, delta.Differences[0].Path.Contains("Spec.Network.Vpc.Region") ||
+		delta.Differences[0].Path.Contains("Spec.Name"))
+	assert.True(t, delta.Differences[1].Path.Contains("Spec.Network.Vpc.Region") ||
+		delta.Differences[1].Path.Contains("Spec.Name"))
+}
+
 func TestRestoreIgnoredFields_RestoresDeclaredValue(t *testing.T) {
 	desired := newUResource(
 		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.description"},
@@ -1435,4 +1549,56 @@ func TestIgnoreFieldDrift_Ignored_CustomUpdateFromLatestIsAlsoSafe(t *testing.T)
 	assert.Equal(t, "E", sentToAWS[driftField],
 		"sourcing the ignored field from `latest` sends the observed value, "+
 			"which equals what AWS already has -- still a no-op, no clobber")
+}
+
+// =============================================================================
+// Malformed annotation path — the reconciler must return a terminal error
+// without proceeding to the Update call. This validates the fail-fast behavior:
+// if the user put a syntactically invalid path in the annotation, continuing
+// could silently mutate fields the user intended to protect.
+// =============================================================================
+func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
+	wireDescriptorCommon(rd)
+	wireManagerCommon(rm, scmd)
+
+	// Use a malformed path (contains a slash) alongside a well-formed one.
+	annotations := map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.description, spec/bad",
+	}
+	desired := newUResource(annotations, map[string]interface{}{
+		"description": "X",
+	})
+	desired.obj.SetNamespace("default")
+	desired.obj.SetName("mybook")
+	desired.obj.SetGeneration(1)
+	desired.obj.SetFinalizers([]string{"finalizers.bookstore.services.k8s.aws/Book"})
+
+	latest := newUResource(nil, map[string]interface{}{
+		"description": "E",
+	})
+	latest.obj.SetNamespace("default")
+	latest.obj.SetName("mybook")
+	latest.obj.SetGeneration(1)
+	latest.obj.SetFinalizers([]string{"finalizers.bookstore.services.k8s.aws/Book"})
+
+	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, r acktypes.AWSResource) acktypes.AWSResource { return r }, nil,
+	)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	_, err := rec.Sync(ctx, rm, desired)
+
+	// Must return a terminal error.
+	require.Error(err)
+	var termErr *ackerr.TerminalError
+	require.ErrorAs(err, &termErr)
+	assert.Contains(t, err.Error(), "malformed")
+
+	// Update must NOT have been called.
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

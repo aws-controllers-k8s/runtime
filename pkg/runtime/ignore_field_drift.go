@@ -178,8 +178,8 @@ func restoreIgnoredFields(
 //     actually configured for the resource and ran. This is the signal that the
 //     value on the ignored field is a late-initialized (service-defaulted)
 //     value rather than plain post-creation drift. It is precisely what
-//     distinguishes "late-init wins" (persist, matrix Row 6) from drift
-//     suppression on a non-late-init ignored field (do NOT persist, Row 5); AND
+//     distinguishes "late-init wins" (persist) from drift suppression on a
+//     non-late-init ignored field (do NOT persist); AND
 //   - the path is ABSENT (declared-unset) in the DECLARED `desired` spec.
 //     Late-init only ever fills fields the user left unset, so persisting a
 //     late-init value to the stored CR must fire ONLY for a declared-absent
@@ -306,10 +306,9 @@ func isValidFieldPath(p string) bool {
 
 // malformedIgnorePaths returns, sorted, the ignore-field-drift paths on the
 // resource that are not well-formed dotted field paths (see isValidFieldPath).
-// A malformed path is already a harmless no-op at every consumer -- it matches
-// no field in the merge, filter, or drift log -- so this is used only to WARN
-// the user (via warnMalformedIgnorePaths) that a path they set will silently
-// have no effect, most likely due to a typo or illegal character.
+// The reconciler uses this to fail fast before processing the annotation: a
+// malformed path means the user's intent is unclear and continuing could
+// mutate fields the user did not intend.
 func malformedIgnorePaths(res acktypes.AWSResource) []string {
 	var bad []string
 	for _, p := range IgnoreFieldDriftPaths(res) {
@@ -425,31 +424,6 @@ func (r *resourceReconciler) logIgnoredFieldDrift(
 		"ignore-field-drift: skipping drifted ignore-field-drift fields",
 		"skipped", true,
 		"fields", drifted,
-	)
-}
-
-// warnMalformedIgnorePaths emits a single WARN-level log line naming any
-// ignore-field-drift path on the resource that is not a well-formed dotted
-// field path (see isValidFieldPath). Such a path -- typically a typo or one
-// using illegal characters -- is a silent no-op at every consumer (it matches
-// no field in the merge, filter, or drift log), so the field the user meant to
-// ignore keeps being reconciled. This is a syntactic warning only; it does not
-// (and cannot, without the CRD schema) verify that a well-formed path actually
-// resolves to a field on the resource. No-op when there are no malformed paths.
-func (r *resourceReconciler) warnMalformedIgnorePaths(
-	ctx context.Context,
-	desired acktypes.AWSResource,
-) {
-	bad := malformedIgnorePaths(desired)
-	if len(bad) == 0 {
-		return
-	}
-
-	rlog := ackrtlog.FromContext(ctx)
-	rlog.Info(
-		"ignore-field-drift: ignoring malformed ignore-field-drift paths; "+
-			"these paths are not well-formed field paths and will have no effect",
-		"malformedPaths", bad,
 	)
 }
 

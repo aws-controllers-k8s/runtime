@@ -112,7 +112,10 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	).For(
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
-		predicate.GenerationChangedPredicate{},
+		predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		),
 	).WithOptions(
 		ctrlrtcontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
@@ -731,12 +734,6 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
-		// Note: rm.IsSynced (generated per-resource code) checks
-		// `synced.when` status conditions only and never consults the
-		// resource delta, so ignore-field-drift needs no suppression here.
-		// Drift on ignored fields is kept out of the synced determination
-		// upstream, where the reconciler's delta-driven decisions
-		// (update/requeue) go through filteredDelta.
 		rlog.Enter("rm.IsSynced")
 		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
 			condStatus = corev1.ConditionTrue
@@ -959,6 +956,12 @@ func (r *resourceReconciler) updateResource(
 	reconcileDesired := desired
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
+		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
+			return latest, ackerr.NewTerminalError(fmt.Errorf(
+				"ignore-field-drift annotation contains malformed paths %v; "+
+					"fix the annotation before reconciliation can proceed", bad,
+			))
+		}
 		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
@@ -970,9 +973,6 @@ func (r *resourceReconciler) updateResource(
 			reconcileDesired = merged
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
-		// Warn about any ignore-field-drift paths that are not well-formed field
-		// paths (typos / illegal characters); they silently have no effect.
-		r.warnMalformedIgnorePaths(ctx, desired)
 	}
 
 	// Check to see if the latest observed state already matches the
