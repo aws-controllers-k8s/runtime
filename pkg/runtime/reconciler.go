@@ -197,8 +197,10 @@ func (r *reconciler) SecretValueFromReference(
 		return "", ackerr.SecretNotFound
 	}
 
-	// Currently we have only Opaque secrets in scope.
-	if secret.Type != corev1.SecretTypeOpaque {
+	// ACK secret references support generic Opaque secrets and the standard
+	// kubernetes.io/tls Secret type. Callers remain responsible for selecting
+	// an appropriate data key (for example, tls.crt or tls.key).
+	if secret.Type != corev1.SecretTypeOpaque && secret.Type != corev1.SecretTypeTLS {
 		return "", ackerr.SecretTypeNotSupported
 	}
 
