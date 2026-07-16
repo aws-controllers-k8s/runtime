@@ -2524,11 +2524,12 @@ func secretReconciler(
 	return r, apiReader
 }
 
-// expectSecretGet wires the mocked apiReader to return an Opaque secret with
-// the supplied key/value for a Get against the given namespace/name.
-func expectSecretGet(
+// expectSecretGet wires the mocked apiReader to return a secret with the
+// supplied type and key/value for a Get against the given namespace/name.
+func expectSecretGetOfType(
 	apiReader *ctrlrtclientmock.Reader,
 	namespace, name, key, value string,
+	secretType corev1.SecretType,
 ) {
 	apiReader.On(
 		"Get", mock.Anything,
@@ -2536,9 +2537,20 @@ func expectSecretGet(
 		mock.AnythingOfType("*v1.Secret"),
 	).Run(func(args mock.Arguments) {
 		secret := args.Get(2).(*corev1.Secret)
-		secret.Type = corev1.SecretTypeOpaque
+		secret.Type = secretType
 		secret.Data = map[string][]byte{key: []byte(value)}
 	}).Return(nil)
+}
+
+func expectSecretGet(
+	apiReader *ctrlrtclientmock.Reader,
+	namespace, name, key, value string,
+) {
+	expectSecretGetOfType(
+		apiReader,
+		namespace, name, key, value,
+		corev1.SecretTypeOpaque,
+	)
 }
 
 func ctxWithNamespace(ns string) context.Context {
@@ -2589,6 +2601,24 @@ func TestSecretValueFromReference_ExplicitSameNamespace(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "value", val)
+}
+
+func TestSecretValueFromReference_TLSSecret(t *testing.T) {
+	r, apiReader := secretReconciler(false)
+	ctx := ctxWithNamespace("ns-a")
+	expectSecretGetOfType(
+		apiReader,
+		"ns-a", "sec", corev1.TLSCertKey, "certificate",
+		corev1.SecretTypeTLS,
+	)
+
+	val, err := r.SecretValueFromReference(
+		ctx,
+		newSecretRef("", "sec", corev1.TLSCertKey),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "certificate", val)
 }
 
 func TestSecretValueFromReference_CrossNamespace_FlagDisabled(t *testing.T) {
