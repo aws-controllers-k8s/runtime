@@ -234,6 +234,48 @@ func getAdoptionFields(res acktypes.AWSResource) string {
 	return ""
 }
 
+// HasAdoptionTagSelector returns true if the supplied AWSResource carries a
+// non-empty `adoption-tag-selector` annotation. Its presence is what triggers
+// the tag-based adoption path (resolving the ReadOne identifier from AWS tags),
+// as opposed to the `adoption-fields` path.
+func HasAdoptionTagSelector(res acktypes.AWSResource) bool {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("HasAdoptionTagSelector received resource with nil RuntimeObject")
+	}
+	selector, ok := mo.GetAnnotations()[ackv1alpha1.AnnotationAdoptionTagSelector]
+	return ok && strings.TrimSpace(selector) != ""
+}
+
+// ExtractAdoptionTagSelector parses the `adoption-tag-selector` annotation into
+// a map of tag key/value pairs. A resource matched by these tags must carry all
+// of them (AND semantics). It returns an error if the annotation is missing,
+// malformed, or resolves to an empty set of tags (an empty selector would match
+// every resource, so it is rejected).
+func ExtractAdoptionTagSelector(res acktypes.AWSResource) (map[string]string, error) {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("ExtractAdoptionTagSelector received resource with nil RuntimeObject")
+	}
+
+	selector, ok := mo.GetAnnotations()[ackv1alpha1.AnnotationAdoptionTagSelector]
+	if !ok || strings.TrimSpace(selector) == "" {
+		return nil, fmt.Errorf("missing or empty %s annotation", ackv1alpha1.AnnotationAdoptionTagSelector)
+	}
+
+	tags := map[string]string{}
+	if err := json.Unmarshal([]byte(selector), &tags); err != nil {
+		return nil, fmt.Errorf("unmarshalling %s annotation: %v", ackv1alpha1.AnnotationAdoptionTagSelector, err)
+	}
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("%s annotation must contain at least one tag", ackv1alpha1.AnnotationAdoptionTagSelector)
+	}
+
+	return tags, nil
+}
+
 // patchObject performs a patch operation using context.WithoutCancel to prevent
 // patch operations from being cancelled while preserving context values.
 // It automatically determines whether to patch spec/metadata or status based on operationType.

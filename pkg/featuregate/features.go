@@ -26,6 +26,14 @@ const (
 	// ReadOnlyResources is a feature gate for enabling ReadOnly resources annotation.
 	ReadOnlyResources = "ReadOnlyResources"
 
+	// AdoptResourcesByTags is a feature gate for enabling adoption of resources by
+	// tag. When enabled, and a resource carries the
+	// `services.k8s.aws/adoption-tag-selector` annotation, the controller resolves
+	// the resource's ReadOne identifier by matching AWS tags via the Resource
+	// Groups Tagging API at adoption time, instead of requiring the identifier in
+	// the `adoption-fields` annotation.
+	AdoptResourcesByTags = "AdoptResourcesByTags"
+
 	// TeamLevelCARM is a feature gate for enabling CARM for team-level resources.
 	TeamLevelCARM = "TeamLevelCARM"
 
@@ -39,11 +47,12 @@ const (
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ResourceAdoption:  {Stage: Beta, Enabled: true},
-	ReadOnlyResources: {Stage: Beta, Enabled: true},
-	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
-	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
+	ResourceAdoption:     {Stage: Beta, Enabled: true},
+	ReadOnlyResources:    {Stage: Beta, Enabled: true},
+	TeamLevelCARM:        {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:     {Stage: Alpha, Enabled: false},
+	IAMRoleSelector:      {Stage: Alpha, Enabled: false},
+	AdoptResourcesByTags: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

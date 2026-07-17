@@ -91,4 +91,11 @@ const (
 	// format of the requied fields to do a ReadOne when attempting to force-adopt
 	// a Resource
 	AnnotationAdoptionFields = AnnotationPrefix + "adoption-fields"
+	// AnnotationAdoptionTagSelector is an annotation whose value is a JSON object
+	// of tag key/value pairs. When present (together with an adoption-policy),
+	// the controller resolves the resource's ReadOne identifier by matching these
+	// tags (AND semantics) via the Resource Groups Tagging API, instead of
+	// reading identifier fields from the adoption-fields annotation. The lookup
+	// runs once, at adoption time.
+	AnnotationAdoptionTagSelector = AnnotationPrefix + "adoption-tag-selector"
 )

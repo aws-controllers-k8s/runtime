@@ -50,5 +50,17 @@ type AWSResource interface {
 	DeepCopy() AWSResource
 	// PopulateResourceFromAnnotation will set the Spec or Status field that user
 	// provided from annotations
-	PopulateResourceFromAnnotation(fields map[string]string) error 
+	PopulateResourceFromAnnotation(fields map[string]string) error
+	// IdentifierFieldsFromARN parses the supplied ARN into the same
+	// map[string]string of ReadOne identifier fields that
+	// PopulateResourceFromAnnotation consumes (i.e. using the keys that
+	// PopulateResourceFromAnnotation expects). It is used during tag-based
+	// adoption to derive the resource's identifier from the ARN returned by the
+	// Resource Groups Tagging API. It returns an error if this resource kind
+	// cannot derive its identifier from an ARN.
+	IdentifierFieldsFromARN(arn string) (map[string]string, error)
+	// ResourceTypeFilter returns the Resource Groups Tagging API resource-type
+	// filter for this kind (e.g. "ec2:vpc"), or an empty string if the kind does
+	// not support tag-based adoption.
+	ResourceTypeFilter() string
 }
