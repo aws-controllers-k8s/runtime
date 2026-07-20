@@ -118,3 +118,60 @@ func TestExtractAdoptionFields(t *testing.T) {
 	require.NoError(err)
 	require.Equal(expected, actual)
 }
+
+func resWithAnnotations(annotations map[string]string) *mocks.AWSResource {
+	res := &mocks.AWSResource{}
+	res.On("MetaObject").Return(&metav1.ObjectMeta{Annotations: annotations})
+	return res
+}
+
+func TestHasAdoptionTagSelector(t *testing.T) {
+	require := require.New(t)
+
+	require.True(HasAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionTagSelector: `{"Environment": "production"}`,
+	})))
+
+	// present but empty/whitespace -> not a trigger
+	require.False(HasAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionTagSelector: "   ",
+	})))
+
+	// absent
+	require.False(HasAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+	})))
+}
+
+func TestExtractAdoptionTagSelector(t *testing.T) {
+	require := require.New(t)
+
+	// happy path
+	actual, err := ExtractAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionTagSelector: `{
+			"Environment": "production",
+			"ManagedBy": "platform-team"
+		}`,
+	}))
+	require.NoError(err)
+	require.Equal(map[string]string{
+		"Environment": "production",
+		"ManagedBy":   "platform-team",
+	}, actual)
+
+	// missing annotation -> error
+	_, err = ExtractAdoptionTagSelector(resWithAnnotations(map[string]string{}))
+	require.Error(err)
+
+	// malformed JSON -> error
+	_, err = ExtractAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionTagSelector: `{"Environment": `,
+	}))
+	require.Error(err)
+
+	// empty object -> error (would match everything)
+	_, err = ExtractAdoptionTagSelector(resWithAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionTagSelector: `{}`,
+	}))
+	require.Error(err)
+}

@@ -110,16 +110,28 @@ func reconcilerMocks(
 	*ctrlrtclientmock.Client,
 	acktypes.ServiceControllerMetadata,
 ) {
+	return reconcilerMocksWithGates(rmf, featuregate.FeatureGates{
+		featuregate.ReadOnlyResources:    {Enabled: true},
+		featuregate.ResourceAdoption:     {Enabled: true},
+		featuregate.AdoptResourcesByTags: {Enabled: true},
+	})
+}
+
+func reconcilerMocksWithGates(
+	rmf acktypes.AWSResourceManagerFactory,
+	gates featuregate.FeatureGates,
+) (
+	acktypes.AWSResourceReconciler,
+	*ctrlrtclientmock.Client,
+	acktypes.ServiceControllerMetadata,
+) {
 	zapOptions := ctrlrtzap.Options{
 		Development: true,
 		Level:       zapcore.InfoLevel,
 	}
 	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
 	cfg := ackcfg.Config{
-		FeatureGates: featuregate.FeatureGates{
-			featuregate.ReadOnlyResources: {Enabled: true},
-			featuregate.ResourceAdoption:  {Enabled: true},
-		},
+		FeatureGates:    gates,
 		ResourceTagKeys: []string{},
 	}
 	metrics := ackmetrics.NewMetrics("bookstore")

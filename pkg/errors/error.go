@@ -16,6 +16,7 @@ package errors
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/smithy-go"
 )
@@ -65,6 +66,11 @@ var (
 	// ReadOneFailedAfterCreate is returned if a ReadOne call fails right after
 	// a create operation.
 	ReadOneFailedAfterCreate = fmt.Errorf("ReadOne call failed after a Create operation")
+	// MultipleResourcesMatched is returned during tag-based adoption when the
+	// supplied adoption-tag-selector matches more than one AWS resource. This is
+	// a terminal condition: the match count will not decrease on its own, so the
+	// user must narrow the selector until exactly one resource matches.
+	MultipleResourcesMatched = fmt.Errorf("multiple resources matched adoption tag selector")
 )
 
 // AWSError returns the type conversion for the supplied error to an aws-sdk-go
@@ -88,6 +94,12 @@ func AWSRequestFailure(err error) (smithy.APIError, bool) {
 // ReadOneFailedAfterCreate error if multiple ReadOne calls fails.
 func NewReadOneFailAfterCreate(numAttempts int) error {
 	return fmt.Errorf("%w: number of attempts: %d", ReadOneFailedAfterCreate, numAttempts)
+}
+
+// NewMultipleResourcesMatched returns a MultipleResourcesMatched error whose
+// message lists the ARNs that matched the adoption tag selector.
+func NewMultipleResourcesMatched(arns []string) error {
+	return fmt.Errorf("%w: %s", MultipleResourcesMatched, strings.Join(arns, ", "))
 }
 
 // HTTPStatusCode returns the HTTP status code from the supplied error by

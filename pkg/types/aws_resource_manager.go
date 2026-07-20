@@ -91,6 +91,16 @@ type AWSResourceManager interface {
 	// Eg. resources created with cloudformation have tags that cannot be
 	//removed by an ACK controller
 	FilterSystemTags(AWSResource, []string)
+	// ResolveARNsByTags returns the ARNs of AWS resources matching ALL of the
+	// supplied tag key/value pairs (AND semantics), scoped to the supplied
+	// Resource Groups Tagging API resource-type filter (e.g. "ec2:vpc"). It is
+	// used during tag-based adoption. It applies no count policy - the caller
+	// decides what zero, one, or more than one result mean.
+	ResolveARNsByTags(
+		ctx context.Context,
+		tagFilters map[string]string,
+		resourceTypeFilter string,
+	) ([]string, error)
 }
 
 // AWSResourceManagerFactory returns an AWSResourceManager that can be used to

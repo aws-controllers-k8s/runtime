@@ -59,6 +59,11 @@ const (
 	// resource if the CARM cache is not synced yet, or if the roleARN is not
 	// available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
+	// tagAdoptionRequeueDelay is the duration to requeue a resource being adopted
+	// by tag when the adoption-tag-selector matches no resource yet (with the
+	// `adopt` policy). The Resource Groups Tagging API is eventually consistent,
+	// so a resource that was just created or tagged may not be indexed yet.
+	tagAdoptionRequeueDelay = 15 * time.Second
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -505,6 +510,111 @@ func (r *resourceReconciler) handlePopulation(
 	return populated, nil
 }
 
+// resolveAdoptionByTags resolves the ReadOne identifier of a resource being
+// adopted by tag. It reads the adoption-tag-selector annotation, looks up the
+// matching AWS resource(s) via the Resource Groups Tagging API (through the
+// resource manager), and applies the match-count policy:
+//
+//   - exactly one match: parse the ARN into the identifier fields and populate
+//     `resolved` accordingly. Returns (populated, true, nil).
+//   - zero matches, `adopt` policy: recoverable, requeue and keep looking.
+//     Returns (resourceWithRecoverableCondition, false, RequeueNeededAfter).
+//   - zero matches, `adopt-or-create` policy: not an error. Returns
+//     (nil, false, nil) so the caller falls through to the create path using the
+//     user-authored spec.
+//   - more than one match: terminal. Returns
+//     (resourceWithTerminalCondition, false, ackerr.Terminal).
+//
+// A non-nil error is always accompanied by a resource carrying the condition
+// that explains it (except the eventually-consistent requeue, which carries a
+// recoverable condition). Malformed selectors and kinds that don't support
+// tag-based adoption are terminal.
+func (r *resourceReconciler) resolveAdoptionByTags(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	resolved acktypes.AWSResource,
+	adoptionPolicy AdoptionPolicy,
+) (acktypes.AWSResource, bool, error) {
+	var err error
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.resolveAdoptionByTags")
+	defer func() {
+		exit(err)
+	}()
+
+	tagFilters, err := ExtractAdoptionTagSelector(desired)
+	if err != nil {
+		return ackcondition.WithTerminalCondition(desired, err), false, ackerr.Terminal
+	}
+
+	typeFilter := desired.ResourceTypeFilter()
+	if typeFilter == "" {
+		err = ackerr.NewTerminalError(fmt.Errorf(
+			"kind %s does not support tag-based adoption",
+			r.rd.GroupVersionKind().Kind,
+		))
+		return ackcondition.WithTerminalCondition(desired, err), false, ackerr.Terminal
+	}
+
+	rlog.Enter("rm.ResolveARNsByTags")
+	arns, err := rm.ResolveARNsByTags(ctx, tagFilters, typeFilter)
+	rlog.Exit("rm.ResolveARNsByTags", err)
+	if err != nil {
+		// A transient AWS error: surface it so HandleReconcileError requeues.
+		return desired, false, err
+	}
+
+	switch {
+	case len(arns) == 0:
+		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+			// Fall through to the create path using the user-authored spec.
+			return nil, false, nil
+		}
+		// adopt: recoverable, requeue and keep looking (Tagging API is
+		// eventually consistent). Never create.
+		cp := desired.DeepCopy()
+		ackcondition.SetRecoverable(
+			cp, corev1.ConditionTrue,
+			&ackcondition.NoResourcesMatchedMessage,
+			&ackcondition.NoResourcesMatchedReason,
+		)
+		err = requeue.NeededAfter(nil, tagAdoptionRequeueDelay)
+		return cp, false, err
+	case len(arns) > 1:
+		err = ackerr.NewTerminalError(ackerr.NewMultipleResourcesMatched(arns))
+		cp := desired.DeepCopy()
+		ackcondition.SetTerminal(
+			cp, corev1.ConditionTrue,
+			ptr.To(err.Error()),
+			ptr.To(ackcondition.MultipleResourcesMatchedReason),
+		)
+		return cp, false, ackerr.Terminal
+	}
+
+	// Exactly one match: derive the identifier fields from the ARN and populate.
+	fields, err := desired.IdentifierFieldsFromARN(arns[0])
+	if err != nil {
+		err = ackerr.NewTerminalError(err)
+		return ackcondition.WithTerminalCondition(desired, err), false, ackerr.Terminal
+	}
+
+	populated := desired.DeepCopy()
+	if err = populated.PopulateResourceFromAnnotation(fields); err != nil {
+		err = ackerr.NewTerminalError(err)
+		return ackcondition.WithTerminalCondition(desired, err), false, ackerr.Terminal
+	}
+
+	if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+		// Mirror the adoption-fields path: the spec is user-authored, the
+		// resolved identifier goes onto the status.
+		out := resolved.DeepCopy()
+		out.SetStatus(populated)
+		return out, true, nil
+	}
+	return populated, true, nil
+}
+
 // reconcile either cleans up a deleted resource or ensures that the supplied
 // AWSResource's backing API resource matches the supplied desired state.
 //
@@ -578,6 +688,33 @@ func (r *resourceReconciler) Sync(
 	if err != nil {
 		return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 	}
+
+	// Validate tag-based adoption configuration up front, for resources that are
+	// not yet under ACK management. This surfaces misconfiguration as a clear
+	// terminal condition instead of silently falling back to create or
+	// adoption-fields behavior.
+	if HasAdoptionTagSelector(desired) && !r.rd.IsManaged(desired) && !isAdopted {
+		if !r.cfg.FeatureGates.IsEnabled(featuregate.AdoptResourcesByTags) {
+			tagErr := ackerr.NewTerminalError(fmt.Errorf(
+				"%s annotation is set but the %q feature gate is not enabled",
+				ackv1alpha1.AnnotationAdoptionTagSelector, featuregate.AdoptResourcesByTags,
+			))
+			return ackcondition.WithTerminalCondition(desired, tagErr), ackerr.Terminal
+		}
+		// The adoption-policy annotation is required: it determines the
+		// zero-match behavior (adopt keeps waiting, adopt-or-create creates), and
+		// the tag selector is ambiguous without it. We do not default it, so a
+		// missing policy can never silently create infrastructure.
+		if adoptionPolicy == "" {
+			tagErr := ackerr.NewTerminalError(fmt.Errorf(
+				"%s annotation requires the %s annotation to be set to %q or %q",
+				ackv1alpha1.AnnotationAdoptionTagSelector, ackv1alpha1.AnnotationAdoptionPolicy,
+				AdoptionPolicy_Adopt, AdoptionPolicy_AdoptOrCreate,
+			))
+			return ackcondition.WithTerminalCondition(desired, tagErr), ackerr.Terminal
+		}
+	}
+
 	if !needAdoption {
 		adoptionPolicy = ""
 	}
@@ -600,16 +737,38 @@ func (r *resourceReconciler) Sync(
 	}
 
 	if needAdoption {
-		populated, err := r.handlePopulation(ctx, desired)
-		if err != nil {
-			return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
-		}
-		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
-			// here we assume the spec fields are provided in the spec.
-			resolved = resolved.DeepCopy()
-			resolved.SetStatus(populated)
+		// Tag-based adoption: when the AdoptResourcesByTags feature gate is on and
+		// the resource carries an adoption-tag-selector annotation, resolve the
+		// ReadOne identifier from AWS tags instead of the adoption-fields
+		// annotation. This runs once, at adoption time.
+		if r.cfg.FeatureGates.IsEnabled(featuregate.AdoptResourcesByTags) && HasAdoptionTagSelector(desired) {
+			tagResolved, handled, tagErr := r.resolveAdoptionByTags(ctx, rm, desired, resolved, adoptionPolicy)
+			if tagErr != nil {
+				// tagResolved carries any condition set by the resolver (terminal
+				// or recoverable); assign to latest so the deferred
+				// ensureConditions and HandleReconcileError observe it.
+				latest = tagResolved
+				err = tagErr
+				return latest, err
+			}
+			// handled == false means zero matches under adopt-or-create: fall
+			// through with the user-authored `resolved` so the ReadOne -> NotFound
+			// -> createResource path below creates the resource.
+			if handled {
+				resolved = tagResolved
+			}
 		} else {
-			resolved = populated
+			populated, err := r.handlePopulation(ctx, desired)
+			if err != nil {
+				return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
+			}
+			if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
+				// here we assume the spec fields are provided in the spec.
+				resolved = resolved.DeepCopy()
+				resolved.SetStatus(populated)
+			} else {
+				resolved = populated
+			}
 		}
 	}
 

@@ -225,6 +225,36 @@ func (_m *AWSResourceManager) ReadOne(_a0 context.Context, _a1 types.AWSResource
 	return r0, r1
 }
 
+// ResolveARNsByTags provides a mock function with given fields: ctx, tagFilters, resourceTypeFilter
+func (_m *AWSResourceManager) ResolveARNsByTags(ctx context.Context, tagFilters map[string]string, resourceTypeFilter string) ([]string, error) {
+	ret := _m.Called(ctx, tagFilters, resourceTypeFilter)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResolveARNsByTags")
+	}
+
+	var r0 []string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, map[string]string, string) ([]string, error)); ok {
+		return rf(ctx, tagFilters, resourceTypeFilter)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, map[string]string, string) []string); ok {
+		r0 = rf(ctx, tagFilters, resourceTypeFilter)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, map[string]string, string) error); ok {
+		r1 = rf(ctx, tagFilters, resourceTypeFilter)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // ResolveReferences provides a mock function with given fields: _a0, _a1, _a2
 func (_m *AWSResourceManager) ResolveReferences(_a0 context.Context, _a1 client.Reader, _a2 types.AWSResource) (types.AWSResource, bool, error) {
 	ret := _m.Called(_a0, _a1, _a2)

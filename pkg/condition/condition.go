@@ -40,6 +40,15 @@ var (
 
 	IAMRoleSelectedReason  = "Selected"
 	IAMRoleSelectedMessage = "roleARN: %s, selectorName: %s, selectorResourceVersion: %s"
+
+	// MultipleResourcesMatchedReason is the terminal-condition reason set when a
+	// tag-based adoption selector matches more than one AWS resource.
+	MultipleResourcesMatchedReason = "MultipleResourcesMatched"
+	// NoResourcesMatchedReason is the recoverable-condition reason set when a
+	// tag-based adoption selector matches no AWS resource yet (with the `adopt`
+	// policy). The controller requeues and keeps looking.
+	NoResourcesMatchedReason  = "NoResourcesMatched"
+	NoResourcesMatchedMessage = "No resource matched adoption tag selector; will retry"
 )
 
 // Ready returns the Condition in the resource's Conditions collection that is

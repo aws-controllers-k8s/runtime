@@ -55,6 +55,36 @@ func (_m *AWSResource) DeepCopy() types.AWSResource {
 	return r0
 }
 
+// IdentifierFieldsFromARN provides a mock function with given fields: arn
+func (_m *AWSResource) IdentifierFieldsFromARN(arn string) (map[string]string, error) {
+	ret := _m.Called(arn)
+
+	if len(ret) == 0 {
+		panic("no return value specified for IdentifierFieldsFromARN")
+	}
+
+	var r0 map[string]string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (map[string]string, error)); ok {
+		return rf(arn)
+	}
+	if rf, ok := ret.Get(0).(func(string) map[string]string); ok {
+		r0 = rf(arn)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(arn)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Identifiers provides a mock function with no fields
 func (_m *AWSResource) Identifiers() types.AWSResourceIdentifiers {
 	ret := _m.Called()
@@ -134,6 +164,24 @@ func (_m *AWSResource) PopulateResourceFromAnnotation(fields map[string]string) 
 // ReplaceConditions provides a mock function with given fields: _a0
 func (_m *AWSResource) ReplaceConditions(_a0 []*v1alpha1.Condition) {
 	_m.Called(_a0)
+}
+
+// ResourceTypeFilter provides a mock function with no fields
+func (_m *AWSResource) ResourceTypeFilter() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResourceTypeFilter")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
 }
 
 // RuntimeObject provides a mock function with no fields
