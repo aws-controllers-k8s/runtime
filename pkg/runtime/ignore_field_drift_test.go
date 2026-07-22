@@ -255,6 +255,47 @@ func TestApplyIgnoredFields_NestedPathAbsentInLatest(t *testing.T) {
 	}
 }
 
+// TestApplyIgnoredFields_ParentAbsentInDesired covers the case raised in review:
+// the parent of an ignored path is absent in desired but present in latest
+// (ignore "spec.network.vpc.cidr", but desired only declares "spec.network.name").
+// The merge must create only the intermediate maps needed to reach the ignored
+// leaf and set that leaf from latest — it must NOT populate empty values for the
+// rest of the sibling structure under the created parent.
+func TestApplyIgnoredFields_ParentAbsentInDesired(t *testing.T) {
+	desired := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.network.vpc.cidr"},
+		map[string]interface{}{
+			"network": map[string]interface{}{
+				"name": "keep",
+			},
+		},
+	)
+	latest := newUResource(nil, map[string]interface{}{
+		"network": map[string]interface{}{
+			"name": "old",
+			"vpc": map[string]interface{}{
+				"cidr":   "10.1.0.0/16",
+				"region": "us-west-2",
+			},
+		},
+	})
+
+	out, err := applyIgnoredFields(desired, latest, gatesEnabled(t))
+	require.NoError(t, err)
+	spec := out.(*uResource).spec()
+	network := spec["network"].(map[string]interface{})
+	// Sibling that desired declared is preserved.
+	assert.Equal(t, "keep", network["name"])
+	// The intermediate "vpc" map is created to reach the leaf.
+	vpc := network["vpc"].(map[string]interface{})
+	// The ignored leaf takes the AWS value.
+	assert.Equal(t, "10.1.0.0/16", vpc["cidr"])
+	// Only the leaf is set: the sibling "region" that desired never declared is
+	// NOT copied over from latest (the merge is scoped to the ignored path).
+	_, hasRegion := vpc["region"]
+	assert.False(t, hasRegion, "only the ignored leaf should be set, not its siblings")
+}
+
 func TestRestoreIgnoredFields_NestedPath(t *testing.T) {
 	desired := newUResource(
 		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.network.vpc.cidr"},
@@ -304,6 +345,27 @@ func TestFilterIgnoredDeltaDifferences_NestedPaths(t *testing.T) {
 		delta.Differences[0].Path.Contains("Spec.Name"))
 	assert.True(t, delta.Differences[1].Path.Contains("Spec.Network.Vpc.Region") ||
 		delta.Differences[1].Path.Contains("Spec.Name"))
+}
+
+// TestFilterIgnoredDeltaDifferences_AcronymField proves the filter matches a
+// Go field name containing an acronym. The annotation carries the JSON/spec
+// name ("spec.kmsKeyID") while the generated Delta path uses the Go field name
+// ("Spec.KMSKeyID"); the runtime cannot reconstruct the acronym-aware Go name,
+// so matching is case-insensitive. A prior first-letter-only title-casing
+// ("Spec.KmsKeyID") would not match and would silently fail to suppress drift.
+func TestFilterIgnoredDeltaDifferences_AcronymField(t *testing.T) {
+	res := newUResource(
+		map[string]string{ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.kmsKeyID"},
+		nil,
+	)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.KMSKeyID", "key-a", "key-b")
+	delta.Add("Spec.Name", "a", "b")
+
+	filterIgnoredDeltaDifferences(delta, res, gatesEnabled(t))
+
+	require.Len(t, delta.Differences, 1)
+	assert.True(t, delta.Differences[0].Path.Contains("Spec.Name"))
 }
 
 func TestRestoreIgnoredFields_RestoresDeclaredValue(t *testing.T) {
@@ -416,7 +478,6 @@ func TestPathHelpers(t *testing.T) {
 
 	assert.Equal(t, []string{"spec.a", "spec.b"}, IgnoreFieldDriftPaths(desired))
 	assert.True(t, HasIgnoreFieldDrift(desired))
-	assert.Equal(t, "Spec.Tags", toDeltaPath("spec.tags"))
 }
 
 func TestIsValidFieldPath(t *testing.T) {

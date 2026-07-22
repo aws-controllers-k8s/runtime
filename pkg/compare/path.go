@@ -76,6 +76,31 @@ func (p Path) Contains(subject string) bool {
 	return true
 }
 
+// ContainsFold behaves like Contains but compares each segment
+// case-insensitively (via strings.EqualFold).
+//
+// It exists for callers that only know a field's JSON/spec name (e.g.
+// "spec.kmsKeyID") and cannot reconstruct the exact Go field name the Delta
+// paths use ("Spec.KMSKeyID"), because that mapping requires the
+// code-generator's acronym-aware name logic which is not available at runtime.
+// A case-insensitive segment match is unambiguous in practice: Go does not
+// permit two exported struct fields whose names differ only by case.
+func (p Path) ContainsFold(subject string) bool {
+	subjectSplit := strings.Split(subject, ".")
+
+	if len(subjectSplit) > len(p.parts) {
+		return false
+	}
+
+	for i, s := range subjectSplit {
+		if !strings.EqualFold(p.parts[i], s) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // NewPath returns a new Path struct pointer from a dotted-notation string,
 // e.g. "Author.Name"
 func NewPath(dotted string) Path {

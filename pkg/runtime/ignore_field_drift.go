@@ -102,7 +102,14 @@ func applyIgnoredFields(
 	for _, p := range ignorePaths {
 		parts := pathParts(p)
 		if v, found, err := unstructured.NestedFieldCopy(l, parts...); err == nil && found {
-			_ = unstructured.SetNestedField(d, v, parts...)
+			// SetNestedField only errors if an intermediate path element is not
+			// a map[string]interface{} (a value/type collision on the path). We
+			// surface it rather than swallow it: it signals the ignore path
+			// disagrees with the resource's actual structure, and silently
+			// dropping the merge would leave drift on the field unsuppressed.
+			if err := unstructured.SetNestedField(d, v, parts...); err != nil {
+				return desired, err
+			}
 		} else {
 			unstructured.RemoveNestedField(d, parts...)
 		}
@@ -146,7 +153,14 @@ func restoreIgnoredFields(
 	for _, p := range paths {
 		parts := pathParts(p)
 		if v, found, err := unstructured.NestedFieldCopy(d, parts...); err == nil && found {
-			_ = unstructured.SetNestedField(u, v, parts...)
+			// SetNestedField only errors on a path/type collision (an
+			// intermediate element that is not a map). Surface it rather than
+			// swallow it: a silent drop here would write the AWS-observed value
+			// back to the CR instead of the user's declared value, defeating the
+			// retain guarantee. The caller treats this as log-and-continue.
+			if err := unstructured.SetNestedField(u, v, parts...); err != nil {
+				return err
+			}
 		} else {
 			unstructured.RemoveNestedField(u, parts...)
 		}
@@ -242,7 +256,9 @@ func rebaseIgnoredFieldsForPersist(
 		// value and it is persisted once. `desired` does not set the path, so
 		// this removes it from the base.
 		if v, found, err := unstructured.NestedFieldCopy(d, parts...); err == nil && found {
-			_ = unstructured.SetNestedField(o, v, parts...)
+			if err := unstructured.SetNestedField(o, v, parts...); err != nil {
+				return latest, err
+			}
 		} else {
 			unstructured.RemoveNestedField(o, parts...)
 		}
@@ -367,21 +383,16 @@ func filterIgnoredDeltaDifferences(
 		return
 	}
 
-	// Convert the JSON-style annotation paths (e.g. "spec.tags") to the
-	// capitalized Go-field form the generated Delta paths use (e.g.
-	// "Spec.Tags"), matching the convention used elsewhere in this package.
-	deltaPaths := make([]string, 0, len(ignorePaths))
-	for _, p := range ignorePaths {
-		deltaPaths = append(deltaPaths, toDeltaPath(p))
-	}
-
 	filtered := delta.Differences[:0]
 	for _, diff := range delta.Differences {
 		ignored := false
-		for _, dp := range deltaPaths {
-			// Path.Contains reports whether the difference's path lies at or
-			// under the ignored path (exact, case-sensitive segment match).
-			if diff.Path.Contains(dp) {
+		for _, p := range ignorePaths {
+			// Path.ContainsFold reports whether the difference's path lies at or
+			// under the ignored path, matching each segment case-insensitively.
+			// The annotation carries JSON/spec names (e.g. "spec.kmsKeyID")
+			// while the Delta path uses the Go field name ("Spec.KMSKeyID"); the
+			// runtime cannot reconstruct the acronym-aware Go name, so we fold.
+			if diff.Path.ContainsFold(p) {
 				ignored = true
 				break
 			}
@@ -459,9 +470,8 @@ func (r *resourceReconciler) driftedIgnoredPaths(
 
 	drifted := []string{}
 	for _, p := range ignorePaths {
-		dp := toDeltaPath(p)
 		for _, diff := range delta.Differences {
-			if diff.Path.Contains(dp) {
+			if diff.Path.ContainsFold(p) {
 				drifted = append(drifted, p)
 				break
 			}
@@ -541,19 +551,4 @@ func (r *resourceReconciler) ignoredFieldNeedsPersist(
 		}
 	}
 	return false
-}
-
-// toDeltaPath converts a JSON-style annotation path (e.g. "spec.tags") into the
-// capitalized form used by the generated Delta paths (e.g. "Spec.Tags"). It
-// title-cases the first letter of each dotted segment, which is sufficient for
-// the top-level field paths these annotations target.
-func toDeltaPath(p string) string {
-	parts := strings.Split(p, ".")
-	for i, seg := range parts {
-		if seg == "" {
-			continue
-		}
-		parts[i] = strings.ToUpper(seg[:1]) + seg[1:]
-	}
-	return strings.Join(parts, ".")
 }
