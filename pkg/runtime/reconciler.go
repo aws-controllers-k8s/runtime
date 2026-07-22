@@ -107,15 +107,28 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	r.apiReader = mgr.GetAPIReader()
 	rd := r.rmf.ResourceDescriptor()
 	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
+
+	// By default only spec/generation changes trigger a reconcile. The
+	// ignore-field-drift feature is configured via an annotation, and changing
+	// (or removing) that annotation must trigger a reconcile so the new set of
+	// ignored fields takes effect promptly rather than waiting for the next
+	// resync or spec edit. We therefore add AnnotationChangedPredicate ONLY when
+	// the feature gate is enabled, so controllers that do not use the feature
+	// keep the prior (spec/generation-only) trigger behavior.
+	eventFilter := predicate.Predicate(predicate.GenerationChangedPredicate{})
+	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		eventFilter = predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		)
+	}
+
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
-		predicate.Or(
-			predicate.GenerationChangedPredicate{},
-			predicate.AnnotationChangedPredicate{},
-		),
+		eventFilter,
 	).WithOptions(
 		ctrlrtcontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
@@ -591,6 +604,22 @@ func (r *resourceReconciler) Sync(
 		rlog.WithValues("is_read_only", isReadOnly)
 	}
 
+	// Fail fast on a syntactically malformed ignore-field-drift annotation
+	// before any AWS call or mutation. A malformed path means the user's intent
+	// is unclear, and proceeding (create OR update) could reconcile a field the
+	// user meant to ignore. Returning a terminal error here surfaces the problem
+	// on the CR and stops the reconcile before create/update/read-only handling.
+	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
+		HasIgnoreFieldDrift(desired) {
+		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
+			err = ackerr.NewTerminalError(fmt.Errorf(
+				"ignore-field-drift annotation contains malformed paths %v; "+
+					"fix the annotation before reconciliation can proceed", bad,
+			))
+			return ackcondition.WithTerminalCondition(desired, err), err
+		}
+	}
+
 	rlog.Enter("rm.ResolveReferences")
 	resolved, hasReferences, err := rm.ResolveReferences(ctx, r.apiReader, desired)
 	rlog.Exit("rm.ResolveReferences", err)
@@ -953,15 +982,12 @@ func (r *resourceReconciler) updateResource(
 	// the ignored fields into a copy of desired. The merged copy is used for
 	// delta computation and the Update call so that drift on ignored fields does
 	// not drive an Update. The stored CR is never mutated.
+	// A malformed ignore-field-drift annotation is rejected as a terminal error
+	// earlier in Sync (before create/update), so by the time we reach here the
+	// paths are known syntactically valid; no need to re-check.
 	reconcileDesired := desired
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
-		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
-			return latest, ackerr.NewTerminalError(fmt.Errorf(
-				"ignore-field-drift annotation contains malformed paths %v; "+
-					"fix the annotation before reconciliation can proceed", bad,
-			))
-		}
 		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
