@@ -244,7 +244,7 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	exporterLogger := c.log.WithName("exporter")
 
 	if cfg.EnableFieldExportReconciler {
-		exporterInstalled, err := c.GetFieldExportInstalled(mgr)
+		exporterInstalled, err = c.GetFieldExportInstalled(mgr)
 		if err != nil {
 			exporterLogger.Error(err, "unable to determine if the FieldExport CRD is installed in the cluster")
 		} else if !exporterInstalled {
