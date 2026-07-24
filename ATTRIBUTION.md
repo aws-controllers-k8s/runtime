@@ -43,6 +43,7 @@ License version 2.0, we include the full text of the package's License below.
 * `k8s.io/klog/v2`
 * `k8s.io/utils`
 * `sigs.k8s.io/controller-runtime`
+* `sigs.k8s.io/yaml`
 
 ### github.com/aws/aws-sdk-go-v2
 
@@ -3270,3 +3271,5 @@ License Identifier: Apache-2.0
 #### sigs.k8s.io/apiserver-network-proxy/konnectivity-client
 
 License Identifier: Apache-2.0
+
+

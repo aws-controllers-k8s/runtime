@@ -16,7 +16,9 @@
 // optionally overridden.
 package featuregate
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const (
 	// ResourceAdoption is a feature gate for enabling forced adoption of resources
@@ -34,6 +36,12 @@ const (
 
 	// IAMRoleSelector is a feature gate for enabling the IAMRoleSelector feature and reconciler.
 	IAMRoleSelector = "IAMRoleSelector"
+
+	// IgnoreFieldDrift is a feature gate for enabling selective field
+	// reconciliation via the services.k8s.aws/ignore-field-drift annotation. It
+	// alters reconciliation behavior, so it is disabled by default and must be
+	// explicitly enabled by the controller operator.
+	IgnoreFieldDrift = "IgnoreFieldDrift"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
@@ -44,6 +52,7 @@ var defaultACKFeatureGates = FeatureGates{
 	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
 	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
 	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
+	IgnoreFieldDrift:  {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
