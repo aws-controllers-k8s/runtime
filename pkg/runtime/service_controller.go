@@ -16,19 +16,16 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	kubernetes "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	ctrlrt "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
@@ -100,53 +97,27 @@ func (c *serviceController) GetResourceManagerFactories() map[string]acktypes.AW
 	return c.rmFactories
 }
 
-// getResourceInstalled returns whether the given resource plural has been
-// installed into the cluster, and is accessible by the service controller.
-func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, resourcePlural string) (bool, error) {
-	clusterConfig := mgr.GetConfig()
-	clientSet, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
+// getResourceInstalled returns whether the given GVR is installed in the
+// cluster by querying the manager's REST mapper.
+func (c *serviceController) getResourceInstalled(mgr ctrlrt.Manager, gvr schema.GroupVersionResource) (bool, error) {
+	if _, err := mgr.GetRESTMapper().KindFor(gvr); err != nil {
+		if meta.IsNoMatchError(err) {
+			return false, nil
+		}
 		return false, err
 	}
-
-	gv := schema.GroupVersion{
-		Group:   ackv1alpha1.GroupVersion.Group,
-		Version: ackv1alpha1.GroupVersion.Version,
-	}
-
-	// Ensure GV is supported
-	if err = discovery.ServerSupportsVersion(clientSet, gv); err != nil {
-		return false, nil
-	}
-
-	httpClient, err := rest.HTTPClientFor(clusterConfig)
-	if err != nil {
-		return false, err
-	}
-
-	restMapperClient, err := apiutil.NewDynamicRESTMapper(clusterConfig, httpClient)
-	if err != nil {
-		return false, err
-	}
-
-	gvr := schema.GroupVersionResource{
-		Group:    ackv1alpha1.GroupVersion.Group,
-		Version:  ackv1alpha1.GroupVersion.Version,
-		Resource: strings.ToLower(resourcePlural),
-	}
-
-	// Ensure individual kind is supported
-	if _, err := restMapperClient.KindFor(gvr); meta.IsNoMatchError(err) {
-		return false, nil
-	}
-
 	return true, nil
 }
 
 // GetFieldExportInstalled returns whether the FieldExport CRD has been
 // installed into the cluster, and is accessible by the service controller.
 func (c *serviceController) GetFieldExportInstalled(mgr ctrlrt.Manager) (bool, error) {
-	return c.getResourceInstalled(mgr, "fieldexports")
+	gvr := schema.GroupVersionResource{
+		Group:    ackv1alpha1.GroupVersion.Group,
+		Version:  ackv1alpha1.GroupVersion.Version,
+		Resource: "fieldexports",
+	}
+	return c.getResourceInstalled(mgr, gvr)
 }
 
 // WithLogger sets up the service controller with the supplied logger
@@ -195,7 +166,7 @@ func (c *serviceController) WithResourceManagerFactories(
 // reconcilers within the service controller with that manager. The adoption
 // reconciler will only be started if the types have been registered in the
 // cluster.
-func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg.Config) error {
+func (c *serviceController) BindControllerManager(ctx context.Context, stop context.CancelCauseFunc, mgr ctrlrt.Manager, cfg ackcfg.Config) error {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 	c.cfg = cfg
@@ -298,23 +269,106 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	}
 
 	for _, rmf := range filteredRMFs {
-		rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, carmCache, irsCache)
-		if err := rec.BindControllerManager(mgr); err != nil {
-			return err
+		gvr := rmf.ResourceDescriptor().GroupVersionResource()
+		crdInstalled, err := c.getResourceInstalled(mgr, gvr)
+		if err != nil {
+			return fmt.Errorf("checking if CRD %s is installed: %w", gvr.Resource, err)
 		}
-		c.reconcilers = append(c.reconcilers, rec)
 
-		if cfg.EnableFieldExportReconciler && exporterInstalled {
-			rd := rmf.ResourceDescriptor()
-			feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, carmCache, rd)
-			if err := feRec.BindControllerManager(mgr); err != nil {
+		if crdInstalled || !cfg.LazyBindReconcilers {
+			if err := c.bindReconciler(mgr, rmf, cfg, carmCache, irsCache, exporterInstalled, exporterLogger); err != nil {
 				return err
 			}
-			c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
+			continue
 		}
+
+		c.log.Info("CRD not yet installed, will bind reconciler in background once available", "resource", gvr.Resource)
+		go c.lazyBindReconciler(ctx, stop, mgr, rmf, cfg, carmCache, irsCache, exporterInstalled, exporterLogger)
 	}
 
 	return nil
+}
+
+// bindReconciler creates and binds a reconciler (and optionally a field export
+// reconciler) for the given resource manager factory.
+func (c *serviceController) bindReconciler(
+	mgr ctrlrt.Manager,
+	rmf acktypes.AWSResourceManagerFactory,
+	cfg ackcfg.Config,
+	carmCache ackrtcache.Caches,
+	irsCache *iamroleselector.Cache,
+	exporterInstalled bool,
+	exporterLogger logr.Logger,
+) error {
+	rec := NewReconciler(c, rmf, c.log, cfg, c.metrics, carmCache, irsCache)
+	if err := rec.BindControllerManager(mgr); err != nil {
+		return err
+	}
+	c.reconcilers = append(c.reconcilers, rec)
+
+	if cfg.EnableFieldExportReconciler && exporterInstalled {
+		rd := rmf.ResourceDescriptor()
+		feRec := NewFieldExportReconcilerForAWSResource(c, exporterLogger, cfg, c.metrics, carmCache, rd)
+		if err := feRec.BindControllerManager(mgr); err != nil {
+			return err
+		}
+		c.resourceFieldExportReconcilers = append(c.resourceFieldExportReconcilers, feRec)
+	}
+	return nil
+}
+
+// lazyBindReconciler polls until a CRD becomes available in the cluster, then
+// binds the reconciler. Transient errors (e.g. checking CRD availability) are
+// logged and retried since this runs in a background goroutine. A failure to
+// bind the reconciler once the CRD is available is a permanent, deterministic
+// error, so it triggers a graceful shutdown via stop() rather than leaving the
+// controller running with a silently missing reconciler.
+func (c *serviceController) lazyBindReconciler(
+	ctx context.Context,
+	stop context.CancelCauseFunc,
+	mgr ctrlrt.Manager,
+	rmf acktypes.AWSResourceManagerFactory,
+	cfg ackcfg.Config,
+	carmCache ackrtcache.Caches,
+	irsCache *iamroleselector.Cache,
+	exporterInstalled bool,
+	exporterLogger logr.Logger,
+) {
+	gvr := rmf.ResourceDescriptor().GroupVersionResource()
+	log := c.log.WithValues("resource", gvr.Resource, "group", gvr.Group)
+
+	ticker := time.NewTicker(cfg.LazyBindRetryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("context cancelled, stopping CRD watch")
+			return
+		case <-ticker.C:
+			installed, err := c.getResourceInstalled(mgr, gvr)
+			if err != nil {
+				log.Error(err, "error checking if CRD is installed, will retry")
+				continue
+			}
+			if !installed {
+				log.V(1).Info("CRD not yet installed, will retry")
+				continue
+			}
+		}
+
+		log.Info("CRD is now installed, binding reconciler")
+
+		c.metaLock.Lock()
+		err := c.bindReconciler(mgr, rmf, cfg, carmCache, irsCache, exporterInstalled, exporterLogger)
+		c.metaLock.Unlock()
+
+		if err != nil {
+			log.Error(err, "failed to bind reconciler after CRD became available, initiating graceful shutdown")
+			stop(fmt.Errorf("binding reconciler for %s after CRD became available: %w", gvr.Resource, err))
+		}
+		return
+	}
 }
 
 // GetMetadata returns the metadata associated with the service controller.
