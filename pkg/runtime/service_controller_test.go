@@ -15,7 +15,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -31,16 +33,17 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtconfig "sigs.k8s.io/controller-runtime/pkg/config"
-	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	k8sscheme "sigs.k8s.io/controller-runtime/pkg/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	mocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
@@ -102,13 +105,25 @@ func (b *fakeBook) DeepCopy() *fakeBook              { return nil }
 func (b *fakeBook) DeepCopyInto(*fakeBook)           {}
 func (b *fakeBook) DeepCopyObject() runtime.Object   { return nil }
 
-type fakeManager struct{}
+type fakeManager struct {
+	// restCfg, when non-nil, is returned by GetConfig. It lets a test point
+	// the manager (and therefore the discovery/RESTMapper clients built from
+	// it) at a fake API server.
+	restCfg *rest.Config
+	// skipNameValidation, when true, makes GetControllerOptions disable
+	// controller-runtime's process-global unique-name validation so a test can
+	// bind reconcilers for the same GVK as other tests without collisions.
+	skipNameValidation bool
+}
 
 func (m *fakeManager) GetLogger() logr.Logger {
 	return logr.New(log.NullLogSink{})
 }
 
 func (m *fakeManager) GetControllerOptions() ctrlrtconfig.Controller {
+	if m.skipNameValidation {
+		return ctrlrtconfig.Controller{SkipNameValidation: ptr.To(true)}
+	}
 	return ctrlrtconfig.Controller{}
 }
 
@@ -123,7 +138,12 @@ func (m *fakeManager) AddMetricsExtraHandler(path string, handler http.Handler) 
 func (m *fakeManager) AddHealthzCheck(name string, check healthz.Checker) error       { return nil }
 func (m *fakeManager) AddReadyzCheck(name string, check healthz.Checker) error        { return nil }
 func (m *fakeManager) Start(ctx context.Context) error                                { return nil }
-func (m *fakeManager) GetConfig() *rest.Config                                        { return &rest.Config{} }
+func (m *fakeManager) GetConfig() *rest.Config {
+	if m.restCfg != nil {
+		return m.restCfg
+	}
+	return &rest.Config{}
+}
 func (m *fakeManager) GetScheme() *runtime.Scheme                                     { return scheme }
 func (m *fakeManager) GetClient() client.Client                                       { return nil }
 func (m *fakeManager) GetFieldIndexer() client.FieldIndexer                           { return nil }
@@ -226,4 +246,176 @@ func TestBindControllerManagerStashesCfg(t *testing.T) {
 	require.Nil(err)
 
 	require.Equal(7*time.Second, sc.cfg.HTTPClientTimeout)
+}
+
+// newFieldExportInstalledAPIServer starts an httptest server that serves the
+// minimal Kubernetes discovery documents needed for
+// (*serviceController).GetFieldExportInstalled to report the FieldExport CRD as
+// installed: the services.k8s.aws/v1alpha1 group must be discoverable and it
+// must contain the "fieldexports" resource. It returns a *rest.Config pointed at
+// the server so a fakeManager can hand it to the discovery/RESTMapper clients.
+func newFieldExportInstalledAPIServer(t *testing.T) *rest.Config {
+	t.Helper()
+
+	gv := ackv1alpha1.GroupVersion // services.k8s.aws/v1alpha1
+
+	writeJSON := func(w http.ResponseWriter, obj interface{}) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(obj); err != nil {
+			t.Errorf("encoding discovery response: %v", err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	// Legacy core discovery. Return an empty group list so the discovery client
+	// treats the server as reachable with no core resources.
+	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, &metav1.APIVersions{Versions: []string{}})
+	})
+	// Aggregated /apis discovery listing the services.k8s.aws group. This backs
+	// both discovery.ServerSupportsVersion and the dynamic RESTMapper's group
+	// lookup.
+	mux.HandleFunc("/apis", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, &metav1.APIGroupList{
+			Groups: []metav1.APIGroup{
+				{
+					Name: gv.Group,
+					Versions: []metav1.GroupVersionForDiscovery{
+						{GroupVersion: gv.String(), Version: gv.Version},
+					},
+					PreferredVersion: metav1.GroupVersionForDiscovery{
+						GroupVersion: gv.String(), Version: gv.Version,
+					},
+				},
+			},
+		})
+	})
+	// Per-group-version resource list containing the fieldexports resource, so
+	// RESTMapper.KindFor(fieldexports) resolves instead of returning a
+	// NoMatchError.
+	mux.HandleFunc("/apis/"+gv.String(), func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, &metav1.APIResourceList{
+			GroupVersion: gv.String(),
+			APIResources: []metav1.APIResource{
+				{
+					Name:       "fieldexports",
+					Namespaced: true,
+					Kind:       "FieldExport",
+					Group:      gv.Group,
+					Version:    gv.Version,
+				},
+			},
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	return &rest.Config{Host: server.URL}
+}
+
+// TestBindControllerManager_FieldExportReconcilersRegistered is a regression
+// test for the variable-shadowing bug fixed in
+// aws-controllers-k8s/community#2964: a `exporterInstalled, err :=` inside the
+// EnableFieldExportReconciler block shadowed the outer exporterInstalled, which
+// therefore stayed false, so the per-resource field-export.<kind> reconcilers
+// were never registered even when the FieldExport CRD was installed.
+//
+// The test points the manager at a fake API server that reports the FieldExport
+// CRD as installed and asserts that binding registers a per-resource
+// FieldExport reconciler. With the shadowing bug this slice stays empty.
+func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
+	require := require.New(t)
+
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Version: "v1alpha1",
+			Kind:    "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	zapOptions := ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "bookstore-fe",
+			ServiceAPIGroup: "bookstore.services.k8s.aws",
+		},
+		log: ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions)),
+	}
+	sc.WithResourceManagerFactories([]acktypes.AWSResourceManagerFactory{rmf})
+
+	mgr := &fakeManager{
+		restCfg:            newFieldExportInstalledAPIServer(t),
+		skipNameValidation: true,
+	}
+	cfg := ackcfg.Config{
+		EnableCARM:                  false,
+		EnableFieldExportReconciler: true,
+	}
+
+	err := sc.BindControllerManager(mgr, cfg)
+	require.Nil(err)
+
+	// The CRD-level FieldExport reconciler is registered inside the
+	// EnableFieldExportReconciler block regardless of the bug.
+	require.NotNil(sc.fieldExportReconciler)
+	// The per-resource field-export.<kind> reconcilers are what the shadowing
+	// bug disabled. They must be registered, one per reconciled resource.
+	require.NotEmpty(sc.resourceFieldExportReconcilers,
+		"per-resource FieldExport reconcilers were not registered; "+
+			"exporterInstalled likely shadowed in BindControllerManager")
+	require.Len(sc.resourceFieldExportReconcilers, len(sc.reconcilers))
+}
+
+// TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing
+// verifies the complementary path: when the FieldExport CRD is not installed,
+// neither the CRD-level nor the per-resource FieldExport reconcilers are
+// registered even though EnableFieldExportReconciler is true. The default
+// fakeManager returns an empty rest.Config, so discovery reports the CRD as
+// absent.
+func TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing(t *testing.T) {
+	require := require.New(t)
+
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Version: "v1alpha1",
+			Kind:    "fakeBook",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	zapOptions := ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "bookstore-nofe",
+			ServiceAPIGroup: "bookstore.services.k8s.aws",
+		},
+		log: ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions)),
+	}
+	sc.WithResourceManagerFactories([]acktypes.AWSResourceManagerFactory{rmf})
+
+	mgr := &fakeManager{skipNameValidation: true}
+	cfg := ackcfg.Config{
+		EnableCARM:                  false,
+		EnableFieldExportReconciler: true,
+	}
+
+	err := sc.BindControllerManager(mgr, cfg)
+	require.Nil(err)
+
+	require.Nil(sc.fieldExportReconciler)
+	require.Empty(sc.resourceFieldExportReconcilers)
 }
