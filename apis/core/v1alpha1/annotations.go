@@ -91,4 +91,8 @@ const (
 	// format of the requied fields to do a ReadOne when attempting to force-adopt
 	// a Resource
 	AnnotationAdoptionFields = AnnotationPrefix + "adoption-fields"
+	// AnnotationSecretResourceVersions is an annotation whose value is a JSON
+	// map of "namespace/secretName" to the Secret's metadata.resourceVersion.
+	// Used to detect when a referenced Secret's data has changed.
+	AnnotationSecretResourceVersions = AnnotationPrefix + "secret-resource-versions"
 )
