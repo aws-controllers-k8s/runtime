@@ -1,0 +1,554 @@
+// Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"). You may
+// not use this file except in compliance with the License. A copy of the
+// License is located at
+//
+//     http://aws.amazon.com/apache2.0/
+//
+// or in the "license" file accompanying this file. This file is distributed
+// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+// express or implied. See the License for the specific language governing
+// permissions and limitations under the License.
+
+package runtime
+
+import (
+	"context"
+	"regexp"
+	"sort"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8srt "k8s.io/apimachinery/pkg/runtime"
+
+	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
+	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
+	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
+)
+
+// IgnoreFieldDriftPaths returns the list of dotted, JSON-style field paths that
+// the supplied resource has marked as ignored via the
+// services.k8s.aws/ignore-field-drift annotation. Returns an empty slice if the
+// annotation is absent or empty.
+func IgnoreFieldDriftPaths(res acktypes.AWSResource) []string {
+	return splitAnnotationPaths(res, ackv1alpha1.AnnotationIgnoreFieldDrift)
+}
+
+// splitAnnotationPaths reads the named annotation from the resource and splits
+// its comma-separated value into a slice of trimmed, non-empty paths.
+func splitAnnotationPaths(res acktypes.AWSResource, annotation string) []string {
+	mo := res.MetaObject()
+	if mo == nil {
+		return nil
+	}
+	raw, ok := mo.GetAnnotations()[annotation]
+	if !ok {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	paths := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			paths = append(paths, trimmed)
+		}
+	}
+	return paths
+}
+
+// HasIgnoreFieldDrift returns true if the supplied resource carries any
+// annotation that selectively scopes which fields the controller reconciles.
+func HasIgnoreFieldDrift(res acktypes.AWSResource) bool {
+	return len(IgnoreFieldDriftPaths(res)) > 0
+}
+
+// applyIgnoredFields returns a deep copy of desired with the ignore-field-drift
+// annotation applied by merging observed (latest) values in. The returned
+// resource is used ONLY for delta computation and request building; the stored
+// CR is never mutated.
+//
+// For each ignored path the whole field value from latest replaces the value in
+// the desired copy (or is removed if absent from latest), so the field compares
+// equal and never drives an Update.
+//
+// If the IgnoreFieldDrift feature gate is disabled or the resource
+// carries no ignore-field-drift annotation, desired is returned unchanged.
+func applyIgnoredFields(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+	featureGates featuregate.FeatureGates,
+) (acktypes.AWSResource, error) {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return desired, nil
+	}
+	ignorePaths := IgnoreFieldDriftPaths(desired)
+	if len(ignorePaths) == 0 {
+		return desired, nil
+	}
+
+	out := desired.DeepCopy()
+	dObj := out.RuntimeObject()
+	d, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(dObj)
+	if err != nil {
+		return desired, err
+	}
+	l, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(latest.RuntimeObject())
+	if err != nil {
+		return desired, err
+	}
+
+	for _, p := range ignorePaths {
+		parts := pathParts(p)
+		if v, found, err := unstructured.NestedFieldCopy(l, parts...); err == nil && found {
+			// SetNestedField only errors if an intermediate path element is not
+			// a map[string]interface{} (a value/type collision on the path). We
+			// surface it rather than swallow it: it signals the ignore path
+			// disagrees with the resource's actual structure, and silently
+			// dropping the merge would leave drift on the field unsuppressed.
+			if err := unstructured.SetNestedField(d, v, parts...); err != nil {
+				return desired, err
+			}
+		} else {
+			unstructured.RemoveNestedField(d, parts...)
+		}
+	}
+
+	if err := k8srt.DefaultUnstructuredConverter.FromUnstructured(d, dObj); err != nil {
+		return desired, err
+	}
+	return out, nil
+}
+
+// restoreIgnoredFields copies, for each ignored path, the value from the
+// declared `desired` resource into `updated` in place, so the stored CR
+// retains the user's declared value rather than the AWS-observed value that
+// the anti-clobber merge placed into the update request. If the declared
+// `desired` does not set a path, that path is removed from `updated` so the
+// stored spec matches the declared (absent) state. No-op when the gate is
+// disabled or no paths are supplied. Used ONLY on the update write-back path.
+func restoreIgnoredFields(
+	updated, desired acktypes.AWSResource,
+	paths []string,
+	featureGates featuregate.FeatureGates,
+) error {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return nil
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+
+	uObj := updated.RuntimeObject()
+	u, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(uObj)
+	if err != nil {
+		return err
+	}
+	d, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(desired.RuntimeObject())
+	if err != nil {
+		return err
+	}
+
+	for _, p := range paths {
+		parts := pathParts(p)
+		if v, found, err := unstructured.NestedFieldCopy(d, parts...); err == nil && found {
+			// SetNestedField only errors on a path/type collision (an
+			// intermediate element that is not a map). Surface it rather than
+			// swallow it: a silent drop here would write the AWS-observed value
+			// back to the CR instead of the user's declared value, defeating the
+			// retain guarantee. The caller treats this as log-and-continue.
+			if err := unstructured.SetNestedField(u, v, parts...); err != nil {
+				return err
+			}
+		} else {
+			unstructured.RemoveNestedField(u, parts...)
+		}
+	}
+
+	return k8srt.DefaultUnstructuredConverter.FromUnstructured(u, uObj)
+}
+
+// rebaseIgnoredFieldsForPersist returns a deep copy of `latest` (the resource
+// passed into LateInitialize, used as the late-init patch base) in which, for
+// each ignored path that carries a late-initialized value the DECLARED CR left
+// unset, the base value is replaced by the DECLARED `desired` value (or removed
+// if `desired` leaves it unset). It mutates ONLY those paths; every other field
+// of the returned base is identical to `latest`.
+//
+// This is used by lateInitializeResource to implement "late-init wins" for an
+// ignore-field-drift field: when the user left the field unset and the AWS
+// service defaulted it, late-init surfaces that value and it must be persisted
+// to the stored CR exactly once. The normal MergeFrom(latest) base works for
+// non-ignored fields, but for an ignored field the read path may have already
+// populated `latest.Spec.X` from AWS, so a MergeFrom(latest) diff for the
+// ignored path collapses to empty and the value never reaches the stored CR.
+// Rebasing the path onto the declared (typically unset) value makes the
+// MergeFrom diff carry the value, so the patch persists it once.
+//
+// A path is rebased ONLY when BOTH:
+//
+//   - the resource carries an ACK.LateInitialized condition — i.e. late-init is
+//     actually configured for the resource and ran. This is the signal that the
+//     value on the ignored field is a late-initialized (service-defaulted)
+//     value rather than plain post-creation drift. It is precisely what
+//     distinguishes "late-init wins" (persist) from drift suppression on a
+//     non-late-init ignored field (do NOT persist); AND
+//   - the path is ABSENT (declared-unset) in the DECLARED `desired` spec.
+//     Late-init only ever fills fields the user left unset, so persisting a
+//     late-init value to the stored CR must fire ONLY for a declared-absent
+//     path. For a path the user DID declare (set to any value, including an
+//     edit), the normal retain path owns it: the stored CR keeps whatever the
+//     user declared and is never force-rebased against the AWS-observed value.
+//     The ACK.LateInitialized condition is a RESOURCE-level signal (set because
+//     SOME field is late-init) and says nothing about a specific ignored path,
+//     so this declared-absent check is what prevents clobbering a declared-set
+//     ignored field (e.g. a user-edited spec.tags) on a late-init-configured
+//     resource.
+//
+// No-op (returns latest unchanged) when the gate is disabled, no paths are
+// supplied, or the resource carries no ACK.LateInitialized condition. Gated
+// behind the ignore-field-drift annotation by its caller, so it never runs for
+// non-annotated (e.g. testify-mock) resources.
+func rebaseIgnoredFieldsForPersist(
+	latest, desired, lateInited acktypes.AWSResource,
+	paths []string,
+	featureGates featuregate.FeatureGates,
+) (acktypes.AWSResource, error) {
+	if !featureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return latest, nil
+	}
+	if len(paths) == 0 {
+		return latest, nil
+	}
+	// Only late-init-configured resources persist an ignored field's value.
+	// Without a late-init condition the ignored value is plain drift (Row 5)
+	// and must not be written back to the CR.
+	if !hasLateInitializedCondition(lateInited) {
+		return latest, nil
+	}
+
+	out := latest.DeepCopy()
+	oObj := out.RuntimeObject()
+	o, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(oObj)
+	if err != nil {
+		return latest, err
+	}
+	d, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(desired.RuntimeObject())
+	if err != nil {
+		return latest, err
+	}
+
+	for _, p := range paths {
+		parts := pathParts(p)
+		// Only rebase a path the user left UNSET in the declared spec. Late-init
+		// only fills declared-absent fields, so a declared-PRESENT ignored path
+		// (e.g. a user-edited spec.tags) is owned by the normal retain path and
+		// must never be force-rebased against the AWS-observed value. Skipping it
+		// here leaves the base equal to `latest` on that path, so the MergeFrom
+		// patch diff for the path collapses and the user's declared value is
+		// retained.
+		if _, dFound, _ := unstructured.NestedFieldNoCopy(d, parts...); dFound {
+			continue
+		}
+		// Declared-absent path that late-init filled: rebase the base onto the
+		// declared (unset) state so the MergeFrom diff carries the late-init
+		// value and it is persisted once. `desired` does not set the path, so
+		// this removes it from the base.
+		if v, found, err := unstructured.NestedFieldCopy(d, parts...); err == nil && found {
+			if err := unstructured.SetNestedField(o, v, parts...); err != nil {
+				return latest, err
+			}
+		} else {
+			unstructured.RemoveNestedField(o, parts...)
+		}
+	}
+
+	if err := k8srt.DefaultUnstructuredConverter.FromUnstructured(o, oObj); err != nil {
+		return latest, err
+	}
+	return out, nil
+}
+
+// hasLateInitializedCondition reports whether the resource carries an
+// ACK.LateInitialized condition, which the generated LateInitialize sets only
+// for resources that actually have late-init fields configured. It is used as
+// the signal that an ignored field's value is a late-initialized
+// (service-defaulted) value rather than plain drift.
+func hasLateInitializedCondition(res acktypes.AWSResource) bool {
+	cm, ok := res.(acktypes.ConditionManager)
+	if !ok {
+		return false
+	}
+	for _, c := range cm.Conditions() {
+		if c != nil && c.Type == ackv1alpha1.ConditionTypeLateInitialized {
+			return true
+		}
+	}
+	return false
+}
+
+// pathParts splits a dotted JSON-style path (e.g. "spec.tags") into its
+// component parts for use with the unstructured helpers.
+func pathParts(p string) []string {
+	return strings.Split(p, ".")
+}
+
+// fieldPathSegmentRegex matches a single, well-formed dotted path segment: a
+// JSON/CRD field name that starts with a letter and contains only letters,
+// digits, and underscores (e.g. "spec", "tags", "assumeRolePolicyDocument").
+// This is deliberately a SYNTACTIC check only -- it validates the shape of the
+// path string, not that the field actually exists on the resource schema
+// (which the runtime cannot see; see the design doc's validation follow-up).
+var fieldPathSegmentRegex = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
+// isValidFieldPath reports whether p is a well-formed dotted JSON-style field
+// path: one or more non-empty segments joined by ".", each matching
+// fieldPathSegmentRegex. It rejects malformed paths such as ones with illegal
+// characters (e.g. "spec/tags", "spec.tags!"), empty segments (e.g. "spec..tags",
+// ".spec", "spec."), array indices (e.g. "spec.tags[0]" -- sub-element ignore is
+// out of v1 scope), and the empty string.
+func isValidFieldPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	for _, seg := range strings.Split(p, ".") {
+		if !fieldPathSegmentRegex.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// malformedIgnorePaths returns, sorted, the ignore-field-drift paths on the
+// resource that are not well-formed dotted field paths (see isValidFieldPath).
+// The reconciler uses this to fail fast before processing the annotation: a
+// malformed path means the user's intent is unclear and continuing could
+// mutate fields the user did not intend.
+func malformedIgnorePaths(res acktypes.AWSResource) []string {
+	var bad []string
+	for _, p := range IgnoreFieldDriftPaths(res) {
+		if !isValidFieldPath(p) {
+			bad = append(bad, p)
+		}
+	}
+	sort.Strings(bad)
+	return bad
+}
+
+// filteredDelta computes the per-resource delta between a (desired) and b
+// (latest) via the generated resource descriptor, then removes any difference
+// that falls under a field path the desired resource has marked as ignored via
+// the services.k8s.aws/ignore-field-drift annotation. Every reconciler decision
+// that consumes a delta (should-I-update, requeue/synced, patch) goes through
+// this wrapper, so drift on an ignored field never marks a resource
+// out-of-sync.
+//
+// The filtering lives here in the runtime -- NOT in the generated
+// newResourceDelta -- because the runtime is the only production consumer of
+// the generated delta (controllers reach it solely through the descriptor's
+// Delta method, which the runtime invokes). Wrapping it here keeps the
+// generated code a pure comparison function and lets the filter read the
+// feature gates from the controller's own config instead of process-global
+// state.
+func (r *resourceReconciler) filteredDelta(
+	a acktypes.AWSResource,
+	b acktypes.AWSResource,
+) *ackcompare.Delta {
+	delta := r.rd.Delta(a, b)
+	filterIgnoredDeltaDifferences(delta, a, r.cfg.FeatureGates)
+	return delta
+}
+
+// filterIgnoredDeltaDifferences removes, in place, any difference in the
+// supplied delta that falls under a field path the resource has marked as
+// ignored via the services.k8s.aws/ignore-field-drift annotation.
+//
+// It is a no-op (delta is left untouched) when the IgnoreFieldDrift
+// feature gate is disabled or when the resource carries no ignore-field-drift
+// annotation, so resources that do not use the feature are unaffected.
+func filterIgnoredDeltaDifferences(
+	delta *ackcompare.Delta,
+	res acktypes.AWSResource,
+	fg featuregate.FeatureGates,
+) {
+	if delta == nil {
+		return
+	}
+	if !fg.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return
+	}
+	ignorePaths := IgnoreFieldDriftPaths(res)
+	if len(ignorePaths) == 0 {
+		return
+	}
+
+	filtered := delta.Differences[:0]
+	for _, diff := range delta.Differences {
+		ignored := false
+		for _, p := range ignorePaths {
+			// Path.ContainsFold reports whether the difference's path lies at or
+			// under the ignored path, matching each segment case-insensitively.
+			// The annotation carries JSON/spec names (e.g. "spec.kmsKeyID")
+			// while the Delta path uses the Go field name ("Spec.KMSKeyID"); the
+			// runtime cannot reconstruct the acronym-aware Go name, so we fold.
+			if diff.Path.ContainsFold(p) {
+				ignored = true
+				break
+			}
+		}
+		if !ignored {
+			filtered = append(filtered, diff)
+		}
+	}
+	delta.Differences = filtered
+}
+
+// logIgnoredFieldDrift emits a single log line naming any ignore-field-drift
+// field whose value on the AWS resource (latest) differs from the user's
+// declared value (desired) -- i.e. drift the user has asked the controller to
+// leave alone. v1 is LOG-ONLY: no condition is set and the ACK.ResourceSynced
+// condition is intentionally left untouched, since the user opted out of
+// managing these fields.
+//
+// Drift is detected via driftedIgnoredPaths, which uses the generated
+// per-resource Delta so that fields the code-generator compares SEMANTICALLY
+// (e.g. is_iam_policy / is_document fields, via IAMPolicyDocumentEqual /
+// DocumentEqual) are judged with the same comparator here. A naive byte
+// comparison would report perpetual "drift" on such fields, because AWS
+// canonicalizes the value on read (re-orders keys, collapses single-element
+// arrays, reindents) so the stored declared string is never byte-equal to the
+// value read back -- producing a spurious log line on every reconcile even when
+// the field never actually drifted.
+func (r *resourceReconciler) logIgnoredFieldDrift(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) {
+	drifted := r.driftedIgnoredPaths(desired, latest)
+	if len(drifted) == 0 {
+		return
+	}
+
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Info(
+		"ignore-field-drift: skipping drifted ignore-field-drift fields",
+		"skipped", true,
+		"fields", drifted,
+	)
+}
+
+// driftedIgnoredPaths returns the sorted list of ignore-field-drift paths (in
+// their original JSON-style annotation form, e.g. "spec.tags") whose value on
+// latest actually differs from desired, judged with the generated per-resource
+// comparators.
+//
+// It computes the difference with the RAW generated Delta (r.rd.Delta), NOT the
+// filteredDelta wrapper: the differences on ignored paths are exactly what this
+// function needs to inspect, so they must not be stripped. Using the generated
+// Delta (rather than a direct value compare) applies each field's real
+// comparator -- byte compare for plain scalars, but IAMPolicyDocumentEqual /
+// DocumentEqual for is_iam_policy / is_document fields -- so a field that
+// merely got canonicalized by AWS (and did not actually drift) produces no
+// difference and is not reported.
+//
+// A path is reported drifted if the delta contains any difference at or under
+// that path (Path.Contains, matching filterIgnoredDeltaDifferences).
+func (r *resourceReconciler) driftedIgnoredPaths(
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) []string {
+	ignorePaths := IgnoreFieldDriftPaths(desired)
+	if len(ignorePaths) == 0 {
+		return nil
+	}
+
+	delta := r.rd.Delta(desired, latest)
+	if delta == nil {
+		return nil
+	}
+
+	drifted := []string{}
+	for _, p := range ignorePaths {
+		for _, diff := range delta.Differences {
+			if diff.Path.ContainsFold(p) {
+				drifted = append(drifted, p)
+				break
+			}
+		}
+	}
+
+	if len(drifted) == 0 {
+		return nil
+	}
+	sort.Strings(drifted)
+	return drifted
+}
+
+// ignoredFieldNeedsPersist reports whether any ignore-field-drift field has a
+// value being newly ADDED on `target` (the to-be-persisted object) that is
+// ABSENT on `base` (the patch base) and therefore must be written through to
+// the CR spec.
+//
+// This is used by patchResourceMetadataAndSpec to decide whether to fire a
+// patch even when the generated (filtered) delta reports no difference. The
+// generated delta strips differences on ignored fields, which is correct for
+// the Update/IsSynced decisions but would otherwise cause a genuinely new value
+// produced by late-initialization (which fills a previously-unset field) to
+// never be persisted.
+//
+// It fires ONLY for a path that is ABSENT in `base` but PRESENT in `target` —
+// i.e. a value being newly added, the late-init "fill an unset field" case. It
+// deliberately does NOT fire when an existing value merely DIFFERS between base
+// and target: that is the "user edited a declared ignored field" case (the path
+// is present on both sides), which the normal retain path owns. Force-persisting
+// there would clobber the user's edit back to the AWS-observed value. A
+// late-init resource carries the RESOURCE-level ACK.LateInitialized condition
+// regardless of which field is late-init, so this present-on-both exclusion is
+// what protects a declared-set ignored field (e.g. an edited spec.tags) on a
+// late-init-configured resource.
+//
+// It deliberately does NOT use r.filteredDelta (which strips ignored-path
+// differences via filterIgnoredDeltaDifferences) and instead compares each ignored path
+// directly via the unstructured converter, mirroring logIgnoredFieldDrift /
+// restoreIgnoredFields. It returns false (no-op) when the gate is disabled, the
+// resource carries no ignore-field-drift annotation, or either object cannot be
+// converted to unstructured — so resources that do not use the feature, and the
+// testify-mock-backed reconciler tests, are unaffected.
+func (r *resourceReconciler) ignoredFieldNeedsPersist(
+	base acktypes.AWSResource,
+	target acktypes.AWSResource,
+) bool {
+	if !r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return false
+	}
+	ignorePaths := IgnoreFieldDriftPaths(target)
+	if len(ignorePaths) == 0 {
+		return false
+	}
+
+	b, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(base.RuntimeObject())
+	if err != nil {
+		return false
+	}
+	t, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(target.RuntimeObject())
+	if err != nil {
+		return false
+	}
+
+	for _, p := range ignorePaths {
+		parts := pathParts(p)
+		_, bFound, _ := unstructured.NestedFieldNoCopy(b, parts...)
+		_, tFound, _ := unstructured.NestedFieldNoCopy(t, parts...)
+		// A new value to persist exists ONLY when the ignored field is ABSENT in
+		// the patch base but PRESENT in the to-be-persisted object — i.e.
+		// late-init filled a previously-unset field. A path present on both sides
+		// (even with a differing value) is the user-edited-declared-field case,
+		// owned by the normal retain path; force-persisting it here would clobber
+		// the user's edit back to the AWS value, so we do NOT fire for it.
+		if !bFound && tFound {
+			return true
+		}
+	}
+	return false
+}
