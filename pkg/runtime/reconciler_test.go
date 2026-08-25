@@ -97,8 +97,10 @@ func resourceMocks() (
 	res.On("MetaObject").Return(metaObj)
 	res.On("RuntimeObject").Return(rtObj)
 	res.On("DeepCopy").Return(res)
-	// DoNothing on SetStatus call.
-	res.On("SetStatus", res).Return(func(res ackmocks.AWSResource) {})
+	// DoNothing on SetStatus call. Accept any argument: updateResource calls
+	// SetStatus(latest) on its copy of desired, so the argument is not always
+	// the receiver.
+	res.On("SetStatus", mock.Anything).Return()
 
 	return res, rtObj, metaObj
 }
@@ -2676,4 +2678,88 @@ func TestSecretValueFromReference_NilRef(t *testing.T) {
 	val, err := r.SecretValueFromReference(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, val)
+}
+
+// resourceMockReturningCopy builds an AWSResource mock whose DeepCopy returns
+// the supplied distinct mock. resourceMocks stubs DeepCopy to return the
+// receiver, which cannot express "was this resource copied?".
+func resourceMockReturningCopy(cp acktypes.AWSResource) *ackmocks.AWSResource {
+	objKind := &k8srtschemamocks.ObjectKind{}
+	objKind.On("GroupVersionKind").Return(
+		k8srtschema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Kind:    "Book",
+			Version: "v1alpha1",
+		},
+	)
+	rtObj := &ctrlrtclientmock.Object{}
+	rtObj.On("GetObjectKind").Return(objKind)
+	rtObj.On("DeepCopyObject").Return(rtObj)
+
+	metaObj := &k8sobj.Unstructured{}
+	metaObj.SetAnnotations(map[string]string{})
+	metaObj.SetNamespace("default")
+	metaObj.SetName("mybook")
+
+	res := &ackmocks.AWSResource{}
+	res.On("MetaObject").Return(metaObj)
+	res.On("RuntimeObject").Return(rtObj)
+	res.On("DeepCopy").Return(cp)
+	return res
+}
+
+// TestReconcilerUpdate_PassesCopyOfDesiredToUpdate is a regression test for
+// status writes being silently dropped.
+//
+// ACK permits a resource manager's Update to return the object it was given,
+// and hand-written customUpdate implementations do (ecr-controller's
+// customUpdateRepository, ec2-controller's customUpdateManagedPrefixList). If
+// that object were the stored `desired`, it would also be the base of the
+// status merge patch in patchResourceStatus -- base and target would be the
+// same object, the computed patch would be `{}`, and any status the manager
+// just set would never reach the API server.
+//
+// updateResource must therefore hand Update a copy, never `desired` itself.
+func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desiredCopy, _, _ := resourceMocks()
+	desired := resourceMockReturningCopy(desiredCopy)
+	latest, _, _ := resourceMocks()
+
+	// The copy is also given the observed status before Update sees it.
+	desiredCopy.On("SetStatus", latest).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	// Model a customUpdate that hands back the resource it was given.
+	rm.On("Update", ctx, mock.Anything, latest, delta).Return(desiredCopy, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", latest).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	updated, err := rr.updateResource(ctx, rm, desired, latest)
+	require.NoError(err)
+
+	// Update received the copy, not the stored desired.
+	rm.AssertCalled(t, "Update", ctx, desiredCopy, latest, delta)
+	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	// So a manager that returns its input cannot alias the patch base.
+	require.NotSame(acktypes.AWSResource(desired), updated)
+	// And the copy carries the observed status, not the last-persisted one.
+	desiredCopy.AssertCalled(t, "SetStatus", latest)
 }

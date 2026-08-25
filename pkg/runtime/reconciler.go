@@ -985,7 +985,14 @@ func (r *resourceReconciler) updateResource(
 	// A malformed ignore-field-drift annotation is rejected as a terminal error
 	// earlier in Sync (before create/update), so by the time we reach here the
 	// paths are known syntactically valid; no need to re-check.
-	reconcileDesired := desired
+	// Hand Update a copy, never the stored `desired` itself. ACK permits a
+	// resource manager's Update to return the object it was given, and several
+	// hand-written customUpdate implementations do exactly that. If that object
+	// were `desired`, it would also be the base of the status merge patch in
+	// patchResourceStatus -- base and target would be the same object, the
+	// computed patch would be empty, and any status the manager just set
+	// (conditions, observed state) would be silently dropped.
+	reconcileDesired := desired.DeepCopy()
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
 		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
@@ -1000,6 +1007,12 @@ func (r *resourceReconciler) updateResource(
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
 	}
+	// Carry the observed status onto the copy. `desired` holds the status last
+	// persisted to etcd; `latest` holds what the service reports now. An Update
+	// must reason about observed state, so the copy is given the observed
+	// status. This must run after the ignore-field-drift branch above, which
+	// replaces the copy with one derived from `desired`.
+	reconcileDesired.SetStatus(latest)
 
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
