@@ -1011,11 +1011,15 @@ func (r *resourceReconciler) updateResource(
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
 	}
-	// Carry the observed status onto the copy. `desired` holds the status last
-	// persisted to etcd; `latest` holds what the service reports now. An Update
-	// must reason about observed state, so the copy is given the observed
-	// status. This must run after the ignore-field-drift branch above, which
-	// may replace the copy.
+	// Apply the observed status to whichever copy we ended up with: `desired`
+	// carries the status last persisted to etcd, `latest` carries what the
+	// service reports now, and an Update should reason about observed state.
+	//
+	// Deliberately after the branch above rather than beside the DeepCopy, so
+	// this holds whatever applyIgnoredFields returns. Placing it earlier happens
+	// to work today only because that function derives from its first argument
+	// and round-trips the whole object, preserving status -- neither of which it
+	// promises.
 	reconcileDesired.SetStatus(latest)
 
 	// Check to see if the latest observed state already matches the
