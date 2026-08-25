@@ -1020,7 +1020,20 @@ func (r *resourceReconciler) updateResource(
 	// to work today only because that function derives from its first argument
 	// and round-trips the whole object, preserving status -- neither of which it
 	// promises.
+	//
+	// Conditions then have to be cleared. They live in Status, so copying the
+	// observed status also copies whatever conditions `latest` happens to carry,
+	// and a ReadOne hook may set one -- ec2-controller's VPCEndpoint marks
+	// Synced=False while the endpoint is pending, for instance. Carrying that
+	// forward defeats the condition lifecycle: resetConditions clears conditions
+	// at the top of Sync precisely so ensureConditions recomputes them, and
+	// ensureConditions only recomputes while Synced is nil. Clearing here is the
+	// same reset applied to the copy, and leaves the copy meaning what
+	// reconciling against observed state should mean: observed service state,
+	// freshly computed conditions. Conditions a manager sets during Update are
+	// unaffected, since those happen after this point.
 	reconcileDesired.SetStatus(latest)
+	ackcondition.Clear(reconcileDesired)
 
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource

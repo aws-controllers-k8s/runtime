@@ -2731,8 +2731,9 @@ func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
 	desired := resourceMockReturningCopy(desiredCopy)
 	latest, _, _ := resourceMocks()
 
-	// The copy is also given the observed status before Update sees it.
+	// The copy is given the observed status, then had its conditions cleared.
 	desiredCopy.On("SetStatus", latest).Return()
+	desiredCopy.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	// Model a customUpdate that hands back the resource it was given.
@@ -2762,4 +2763,8 @@ func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
 	require.NotSame(acktypes.AWSResource(desired), updated)
 	// And the copy carries the observed status, not the last-persisted one.
 	desiredCopy.AssertCalled(t, "SetStatus", latest)
+	// Conditions come along with the observed status, so they are cleared to
+	// keep the runtime's condition lifecycle intact: a condition set by a
+	// ReadOne hook on `latest` must not suppress ensureConditions.
+	desiredCopy.AssertCalled(t, "ReplaceConditions", []*ackv1alpha1.Condition{})
 }
