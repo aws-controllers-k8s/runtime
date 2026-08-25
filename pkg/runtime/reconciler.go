@@ -948,6 +948,24 @@ func (r *resourceReconciler) delayedReadOneAfterCreate(
 	return observed, nil
 }
 
+// setStatusWithoutConditions copies src's status onto dst, keeping dst's own
+// conditions.
+//
+// Status holds both service-reported state and ACK's conditions, and SetStatus
+// replaces the whole struct, so it cannot adopt observed state without also
+// adopting src's conditions. Neither side's conditions belong in the result:
+// adopting src's suppresses recomputation, since resetConditions clears
+// conditions each reconcile so ensureConditions can rebuild them and
+// ensureConditions only runs while Synced is nil; dropping dst's loses
+// conditions set after resetConditions, notably ACK.ReferencesResolved.
+//
+// src is deep-copied so the two do not share status pointers.
+func setStatusWithoutConditions(dst, src acktypes.AWSResource) {
+	conditions := dst.Conditions()
+	dst.SetStatus(src.DeepCopy())
+	dst.ReplaceConditions(conditions)
+}
+
 // updateResource calls one or more AWS APIs to modify the backend AWS resource
 // and patches the CR's Metadata and Spec back to the Kubernetes API.
 //
@@ -987,18 +1005,16 @@ func (r *resourceReconciler) updateResource(
 	// paths are known syntactically valid; no need to re-check.
 	// Hand Update a copy, never the stored `desired` itself. ACK permits a
 	// resource manager's Update to return the object it was given, and several
-	// hand-written customUpdate implementations do exactly that. If that object
-	// were `desired`, it would also be the base of the status merge patch in
-	// patchResourceStatus -- base and target would be the same object, the
-	// computed patch would be empty, and any status the manager just set
-	// (conditions, observed state) would be silently dropped.
+	// hand-written customUpdate implementations do. Were that object `desired`,
+	// it would also be the base of the status merge patch in
+	// patchResourceStatus: base and target identical, patch empty, and any
+	// status the manager just set silently dropped.
 	reconcileDesired := desired.DeepCopy()
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
-		// Transform the copy, not `desired`. applyIgnoredFields returns its
-		// first argument unchanged on several paths, so feeding it the copy
-		// keeps the "never hand Update the stored desired" invariant true here
-		// regardless of which path it takes, and avoids a second deep copy.
+		// Transform the copy, not `desired`: applyIgnoredFields returns its first
+		// argument unchanged on several paths, so passing the copy keeps the
+		// invariant above regardless of path, and avoids a second deep copy.
 		merged, mergeErr := applyIgnoredFields(reconcileDesired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
@@ -1011,29 +1027,11 @@ func (r *resourceReconciler) updateResource(
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
 	}
-	// Apply the observed status to whichever copy we ended up with: `desired`
-	// carries the status last persisted to etcd, `latest` carries what the
-	// service reports now, and an Update should reason about observed state.
-	//
-	// Deliberately after the branch above rather than beside the DeepCopy, so
-	// this holds whatever applyIgnoredFields returns. Placing it earlier happens
-	// to work today only because that function derives from its first argument
-	// and round-trips the whole object, preserving status -- neither of which it
-	// promises.
-	//
-	// Conditions then have to be cleared. They live in Status, so copying the
-	// observed status also copies whatever conditions `latest` happens to carry,
-	// and a ReadOne hook may set one -- ec2-controller's VPCEndpoint marks
-	// Synced=False while the endpoint is pending, for instance. Carrying that
-	// forward defeats the condition lifecycle: resetConditions clears conditions
-	// at the top of Sync precisely so ensureConditions recomputes them, and
-	// ensureConditions only recomputes while Synced is nil. Clearing here is the
-	// same reset applied to the copy, and leaves the copy meaning what
-	// reconciling against observed state should mean: observed service state,
-	// freshly computed conditions. Conditions a manager sets during Update are
-	// unaffected, since those happen after this point.
-	reconcileDesired.SetStatus(latest)
-	ackcondition.Clear(reconcileDesired)
+	// Reconcile against observed state: `desired` carries the status last
+	// persisted to etcd, `latest` what the service reports now. After the branch
+	// above so it holds whatever applyIgnoredFields returned; that function
+	// preserves status today but does not promise to.
+	setStatusWithoutConditions(reconcileDesired, latest)
 
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource

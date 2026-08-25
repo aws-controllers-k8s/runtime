@@ -183,6 +183,7 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -694,6 +695,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -782,6 +784,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -870,6 +873,7 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -959,6 +963,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1048,6 +1053,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1132,6 +1138,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1217,6 +1224,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1311,6 +1319,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1382,6 +1391,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1532,6 +1542,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1622,6 +1633,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1820,6 +1832,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2731,9 +2744,13 @@ func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
 	desired := resourceMockReturningCopy(desiredCopy)
 	latest, _, _ := resourceMocks()
 
-	// The copy is given the observed status, then had its conditions cleared.
-	desiredCopy.On("SetStatus", latest).Return()
-	desiredCopy.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	// The copy adopts the observed status but keeps its own conditions. Stand in
+	// for a condition the reconcile already set, e.g. ACK.ReferencesResolved.
+	inFlight := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeReferencesResolved, Status: corev1.ConditionTrue},
+	}
+	desiredCopy.On("Conditions").Return(inFlight)
+	desiredCopy.On("ReplaceConditions", inFlight).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	// Model a customUpdate that hands back the resource it was given.
@@ -2762,9 +2779,10 @@ func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
 	// So a manager that returns its input cannot alias the patch base.
 	require.NotSame(acktypes.AWSResource(desired), updated)
 	// And the copy carries the observed status, not the last-persisted one.
+	// resourceMocks' DeepCopy returns the receiver, so the argument is `latest`.
 	desiredCopy.AssertCalled(t, "SetStatus", latest)
-	// Conditions come along with the observed status, so they are cleared to
-	// keep the runtime's condition lifecycle intact: a condition set by a
-	// ReadOne hook on `latest` must not suppress ensureConditions.
-	desiredCopy.AssertCalled(t, "ReplaceConditions", []*ackv1alpha1.Condition{})
+	// ...while keeping its own conditions rather than adopting latest's, so a
+	// condition set by a ReadOne hook cannot suppress ensureConditions and
+	// ACK.ReferencesResolved is not lost.
+	desiredCopy.AssertCalled(t, "ReplaceConditions", inFlight)
 }
