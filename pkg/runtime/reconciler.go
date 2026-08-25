@@ -995,7 +995,11 @@ func (r *resourceReconciler) updateResource(
 	reconcileDesired := desired.DeepCopy()
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
-		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
+		// Transform the copy, not `desired`. applyIgnoredFields returns its
+		// first argument unchanged on several paths, so feeding it the copy
+		// keeps the "never hand Update the stored desired" invariant true here
+		// regardless of which path it takes, and avoids a second deep copy.
+		merged, mergeErr := applyIgnoredFields(reconcileDesired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
 				"failed to apply ignore-field-drift annotation; "+
@@ -1011,7 +1015,7 @@ func (r *resourceReconciler) updateResource(
 	// persisted to etcd; `latest` holds what the service reports now. An Update
 	// must reason about observed state, so the copy is given the observed
 	// status. This must run after the ignore-field-drift branch above, which
-	// replaces the copy with one derived from `desired`.
+	// may replace the copy.
 	reconcileDesired.SetStatus(latest)
 
 	// Check to see if the latest observed state already matches the
