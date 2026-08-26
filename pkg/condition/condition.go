@@ -293,7 +293,7 @@ func SetIAMRoleSelected(
 ) {
 	allConds := subject.Conditions()
 	var c *ackv1alpha1.Condition
-	if c = ReferencesResolved(subject); c == nil {
+	if c = IAMRoleSelected(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeIAMRoleSelected,
 		}
