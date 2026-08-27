@@ -948,6 +948,24 @@ func (r *resourceReconciler) delayedReadOneAfterCreate(
 	return observed, nil
 }
 
+// setStatusWithoutConditions copies src's status onto dst, keeping dst's own
+// conditions.
+//
+// Status holds both service-reported state and ACK's conditions, and SetStatus
+// replaces the whole struct, so it cannot adopt observed state without also
+// adopting src's conditions. Neither side's conditions belong in the result:
+// adopting src's suppresses recomputation, since resetConditions clears
+// conditions each reconcile so ensureConditions can rebuild them and
+// ensureConditions only runs while Synced is nil; dropping dst's loses
+// conditions set after resetConditions, notably ACK.ReferencesResolved.
+//
+// src is deep-copied so the two do not share status pointers.
+func setStatusWithoutConditions(dst, src acktypes.AWSResource) {
+	conditions := dst.Conditions()
+	dst.SetStatus(src.DeepCopy())
+	dst.ReplaceConditions(conditions)
+}
+
 // updateResource calls one or more AWS APIs to modify the backend AWS resource
 // and patches the CR's Metadata and Spec back to the Kubernetes API.
 //
@@ -985,10 +1003,19 @@ func (r *resourceReconciler) updateResource(
 	// A malformed ignore-field-drift annotation is rejected as a terminal error
 	// earlier in Sync (before create/update), so by the time we reach here the
 	// paths are known syntactically valid; no need to re-check.
-	reconcileDesired := desired
+	// Hand Update a copy, never the stored `desired` itself. ACK permits a
+	// resource manager's Update to return the object it was given, and several
+	// hand-written customUpdate implementations do. Were that object `desired`,
+	// it would also be the base of the status merge patch in
+	// patchResourceStatus: base and target identical, patch empty, and any
+	// status the manager just set silently dropped.
+	reconcileDesired := desired.DeepCopy()
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
-		merged, mergeErr := applyIgnoredFields(desired, latest, r.cfg.FeatureGates)
+		// Transform the copy, not `desired`: applyIgnoredFields returns its first
+		// argument unchanged on several paths, so passing the copy keeps the
+		// invariant above regardless of path, and avoids a second deep copy.
+		merged, mergeErr := applyIgnoredFields(reconcileDesired, latest, r.cfg.FeatureGates)
 		if mergeErr != nil {
 			rlog.Info(
 				"failed to apply ignore-field-drift annotation; "+
@@ -1000,6 +1027,11 @@ func (r *resourceReconciler) updateResource(
 			r.logIgnoredFieldDrift(ctx, desired, latest)
 		}
 	}
+	// Reconcile against observed state: `desired` carries the status last
+	// persisted to etcd, `latest` what the service reports now. After the branch
+	// above so it holds whatever applyIgnoredFields returned; that function
+	// preserves status today but does not promise to.
+	setStatusWithoutConditions(reconcileDesired, latest)
 
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource

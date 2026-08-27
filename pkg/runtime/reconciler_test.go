@@ -97,8 +97,10 @@ func resourceMocks() (
 	res.On("MetaObject").Return(metaObj)
 	res.On("RuntimeObject").Return(rtObj)
 	res.On("DeepCopy").Return(res)
-	// DoNothing on SetStatus call.
-	res.On("SetStatus", res).Return(func(res ackmocks.AWSResource) {})
+	// DoNothing on SetStatus call. Accept any argument: updateResource calls
+	// SetStatus(latest) on its copy of desired, so the argument is not always
+	// the receiver.
+	res.On("SetStatus", mock.Anything).Return()
 
 	return res, rtObj, metaObj
 }
@@ -181,6 +183,7 @@ func TestReconcilerCreate_BackoffRetries(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -692,6 +695,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -780,6 +784,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -868,6 +873,7 @@ func TestReconcilerUpdate(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -957,6 +963,7 @@ func TestReconcilerUpdate_ResourceNotSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1046,6 +1053,7 @@ func TestReconcilerUpdate_NoDelta_ResourceNotSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1130,6 +1138,7 @@ func TestReconcilerUpdate_NoDelta_ResourceSynced(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1215,6 +1224,7 @@ func TestReconcilerUpdate_IsSyncedError(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1309,6 +1319,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInMetadata(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1380,6 +1391,7 @@ func TestReconcilerUpdate_PatchMetadataAndSpec_DiffInSpec(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1530,6 +1542,7 @@ func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1620,6 +1633,7 @@ func TestReconcilerUpdate_ResourceNotManaged(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -1818,6 +1832,7 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 
 	desired, _, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2676,4 +2691,98 @@ func TestSecretValueFromReference_NilRef(t *testing.T) {
 	val, err := r.SecretValueFromReference(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, val)
+}
+
+// resourceMockReturningCopy builds an AWSResource mock whose DeepCopy returns
+// the supplied distinct mock. resourceMocks stubs DeepCopy to return the
+// receiver, which cannot express "was this resource copied?".
+func resourceMockReturningCopy(cp acktypes.AWSResource) *ackmocks.AWSResource {
+	objKind := &k8srtschemamocks.ObjectKind{}
+	objKind.On("GroupVersionKind").Return(
+		k8srtschema.GroupVersionKind{
+			Group:   "bookstore.services.k8s.aws",
+			Kind:    "Book",
+			Version: "v1alpha1",
+		},
+	)
+	rtObj := &ctrlrtclientmock.Object{}
+	rtObj.On("GetObjectKind").Return(objKind)
+	rtObj.On("DeepCopyObject").Return(rtObj)
+
+	metaObj := &k8sobj.Unstructured{}
+	metaObj.SetAnnotations(map[string]string{})
+	metaObj.SetNamespace("default")
+	metaObj.SetName("mybook")
+
+	res := &ackmocks.AWSResource{}
+	res.On("MetaObject").Return(metaObj)
+	res.On("RuntimeObject").Return(rtObj)
+	res.On("DeepCopy").Return(cp)
+	return res
+}
+
+// TestReconcilerUpdate_PassesCopyOfDesiredToUpdate is a regression test for
+// status writes being silently dropped.
+//
+// ACK permits a resource manager's Update to return the object it was given,
+// and hand-written customUpdate implementations do (ecr-controller's
+// customUpdateRepository, ec2-controller's customUpdateManagedPrefixList). If
+// that object were the stored `desired`, it would also be the base of the
+// status merge patch in patchResourceStatus -- base and target would be the
+// same object, the computed patch would be `{}`, and any status the manager
+// just set would never reach the API server.
+//
+// updateResource must therefore hand Update a copy, never `desired` itself.
+func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desiredCopy, _, _ := resourceMocks()
+	desired := resourceMockReturningCopy(desiredCopy)
+	latest, _, _ := resourceMocks()
+
+	// The copy adopts the observed status but keeps its own conditions. Stand in
+	// for a condition the reconcile already set, e.g. ACK.ReferencesResolved.
+	inFlight := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeReferencesResolved, Status: corev1.ConditionTrue},
+	}
+	desiredCopy.On("Conditions").Return(inFlight)
+	desiredCopy.On("ReplaceConditions", inFlight).Return()
+
+	rm := &ackmocks.AWSResourceManager{}
+	// Model a customUpdate that hands back the resource it was given.
+	rm.On("Update", ctx, mock.Anything, latest, delta).Return(desiredCopy, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", latest).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	updated, err := rr.updateResource(ctx, rm, desired, latest)
+	require.NoError(err)
+
+	// Update received the copy, not the stored desired.
+	rm.AssertCalled(t, "Update", ctx, desiredCopy, latest, delta)
+	rm.AssertNotCalled(t, "Update", ctx, desired, latest, delta)
+	// So a manager that returns its input cannot alias the patch base.
+	require.NotSame(acktypes.AWSResource(desired), updated)
+	// And the copy carries the observed status, not the last-persisted one.
+	// resourceMocks' DeepCopy returns the receiver, so the argument is `latest`.
+	desiredCopy.AssertCalled(t, "SetStatus", latest)
+	// ...while keeping its own conditions rather than adopting latest's, so a
+	// condition set by a ReadOne hook cannot suppress ensureConditions and
+	// ACK.ReferencesResolved is not lost.
+	desiredCopy.AssertCalled(t, "ReplaceConditions", inFlight)
 }
