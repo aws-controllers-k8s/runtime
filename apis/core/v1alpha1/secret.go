@@ -27,10 +27,10 @@ type SecretKeyReference struct {
 	Key string `json:"key"`
 }
 
-// SecretReference identifies a Secret without selecting a specific data key.
-// It is used when the consumer owns the key convention, such as
-// kubernetes.io/tls Secrets with tls.crt and tls.key entries.
-type SecretReference struct {
+// TlsSecretReference identifies a kubernetes.io/tls Secret without selecting
+// a specific data key. The consumer owns the key convention (tls.crt and
+// tls.key).
+type TlsSecretReference struct {
 	// Empty JSON tag with "inline" attribute is required to properly inline the
 	// field in JSON output due to k8s apimachinery constraints.
 	k8scorev1.SecretReference `json:",inline"`

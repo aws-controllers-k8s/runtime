@@ -19,8 +19,8 @@ import (
 	"testing"
 )
 
-func TestSecretReferenceDoesNotContainKey(t *testing.T) {
-	ref := SecretReference{}
+func TestTlsSecretReferenceDoesNotContainKey(t *testing.T) {
+	ref := TlsSecretReference{}
 	ref.Name = "tls-secret"
 
 	data, err := json.Marshal(ref)
