@@ -495,7 +495,7 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 			}
 			hasTerminal = true
 			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Contains(*condition.Message, "unmarshalling adoption-fields annotation")
+			assert.Contains(*condition.Message, "failed to parse services.k8s.aws/adoption-fields annotation as JSON")
 		}
 		assert.True(hasTerminal)
 	}).Once()
