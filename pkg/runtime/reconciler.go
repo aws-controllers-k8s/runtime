@@ -856,9 +856,28 @@ func (r *resourceReconciler) createResource(
 		}
 	}
 
+	// Hand Create a copy, never `desired` itself, so that `desired` remains a
+	// record of what the user declared. Generated sdkCreate only deep-copies the
+	// resource it is given partway through: a `custom_implementation` returns
+	// before that point and a sdk_create_pre_build_request hook runs before it, so
+	// either can mutate the object it receives. This mirrors updateResource, which
+	// hands Update `reconcileDesired` for the same reason.
+	//
+	// Taken after the block above, so the copy carries the finalizer and the
+	// controller tags that setResourceManaged and EnsureTags just applied.
+	reconcileDesired := desired.DeepCopy()
+
 	rlog.Enter("rm.Create")
-	latest, err = rm.Create(ctx, desired)
+	latest, err = rm.Create(ctx, reconcileDesired)
 	rlog.Exit("rm.Create", err)
+
+	// Restore the references before inspecting the error. A resource manager is
+	// free to return a non-nil resource alongside a requeue error while an
+	// asynchronous create is in flight, and many do; that object is handed back to
+	// the caller either way, so it should carry the declared references on every
+	// path rather than only the success one.
+	latest = r.ensureReferences(rm, desired, latest)
+
 	if err != nil {
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
@@ -966,6 +985,43 @@ func setStatusWithoutConditions(dst, src acktypes.AWSResource) {
 	dst.ReplaceConditions(conditions)
 }
 
+// ensureReferences restores, onto an object a resource manager built from an AWS
+// API response, the cross-resource reference (*Ref) fields it is missing, taking
+// them from the declared resource. Only reference fields are written; every
+// concrete value still comes from the service.
+//
+// A nested *Ref is dropped when the manager rebuilds its containing struct, which
+// disables ClearResolvedReferences and lets the spec patch delete the declared
+// *Ref and store the resolved value in its place. The next apply of the manifest
+// puts the *Ref back beside that value, a pair validateReferenceFields rejects,
+// stopping reconciliation. See acktypes.ReferenceEnsurer and
+// aws-controllers-k8s/community#2361 and #2431.
+//
+// Called after Create and after Update rather than at the spec-patch chokepoint,
+// because only on those paths is `desired` the user's declared, reference-resolved
+// spec: the late-initialization patch uses the AWS-observed object as its base.
+//
+// Only references reached through structs are restored; see
+// acktypes.ReferenceEnsurer for the list case and for the ReadOne-derived paths
+// this does not cover.
+//
+// Returns `latest` unchanged when the resource manager does not implement the
+// optional interface, which is every controller generated before it existed.
+func (r *resourceReconciler) ensureReferences(
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) acktypes.AWSResource {
+	if ackcompare.IsNil(desired) || ackcompare.IsNil(latest) {
+		return latest
+	}
+	e, ok := rm.(acktypes.ReferenceEnsurer)
+	if !ok {
+		return latest
+	}
+	return e.EnsureReferences(desired, latest)
+}
+
 // updateResource calls one or more AWS APIs to modify the backend AWS resource
 // and patches the CR's Metadata and Spec back to the Kubernetes API.
 //
@@ -1044,6 +1100,15 @@ func (r *resourceReconciler) updateResource(
 		rlog.Enter("rm.Update")
 		updated, err = rm.Update(ctx, reconcileDesired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
+
+		// Source the references from `desired`, not `reconcileDesired`: the latter
+		// was handed to Update, and a manager may mutate what it is given --
+		// apigateway's ApiKey sdkUpdate assigns desired.ko.Spec.StageKeys straight
+		// from the response -- so it is no longer a record of what the user
+		// declared. Restored before the error is inspected, for the same reason as
+		// on the create path.
+		updated = r.ensureReferences(rm, desired, updated)
+
 		if err != nil {
 			return updated, err
 		}
