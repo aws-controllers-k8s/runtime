@@ -2786,3 +2786,573 @@ func TestReconcilerUpdate_PassesCopyOfDesiredToUpdate(t *testing.T) {
 	// ACK.ReferencesResolved is not lost.
 	desiredCopy.AssertCalled(t, "ReplaceConditions", inFlight)
 }
+
+// referenceEnsuringRM decorates a mocked resource manager with the optional
+// acktypes.ReferenceEnsurer interface, which generated references.go implements
+// for a resource carrying a nested cross-resource reference. The generated mocks
+// are built from AWSResourceManager and so do not carry the method, which is what
+// keeps controllers generated before it existed working unchanged.
+type referenceEnsuringRM struct {
+	*ackmocks.AWSResourceManager
+
+	calls   []ensureCall
+	returns acktypes.AWSResource
+}
+
+type ensureCall struct {
+	from acktypes.AWSResource
+	to   acktypes.AWSResource
+}
+
+func (rm *referenceEnsuringRM) EnsureReferences(
+	from acktypes.AWSResource,
+	to acktypes.AWSResource,
+) acktypes.AWSResource {
+	rm.calls = append(rm.calls, ensureCall{from: from, to: to})
+	if rm.returns != nil {
+		return rm.returns
+	}
+	return to
+}
+
+// TestReconcilerUpdate_EnsuresReferencesAfterUpdate verifies the restoration runs
+// immediately after rm.Update returns, is handed the DECLARED resource as its
+// source, and that the object it returns is what goes on to be patched.
+//
+// The source matters: `reconcileDesired` is what Update is given, and a manager
+// may mutate what it is handed -- apigateway's ApiKey sdkUpdate assigns
+// desired.ko.Spec.StageKeys straight from the response -- so only `desired` is a
+// reliable record of what the user declared.
+func TestReconcilerUpdate_EnsuresReferencesAfterUpdate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, _, _ := resourceMocks()
+	latest, _, _ := resourceMocks()
+	// updateResource deep-copies desired and transplants the observed status onto
+	// the copy; resourceMocks' DeepCopy returns the receiver, so wire these here.
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	// What rm.Update hands back: rebuilt from the response, nested refs dropped.
+	updatedByAWS, _, _ := resourceMocks()
+	// What the generated method returns: the above, with references restored.
+	restored, _, _ := resourceMocks()
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("Update", ctx, mock.Anything, latest, delta).Return(updatedByAWS, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner, returns: restored}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.updateResource(ctx, rm, desired, latest)
+	require.NoError(err)
+
+	require.Len(rm.calls, 1, "restoration must run once, right after Update")
+	require.Same(acktypes.AWSResource(desired), rm.calls[0].from,
+		"source must be the declared resource, not the copy handed to Update")
+	require.Same(acktypes.AWSResource(updatedByAWS), rm.calls[0].to,
+		"target must be the object Update returned")
+
+	// The restored object is what gets cleaned and patched; otherwise the
+	// restoration would be computed and thrown away.
+	inner.AssertCalled(t, "ClearResolvedReferences", acktypes.AWSResource(restored))
+	inner.AssertNotCalled(t, "ClearResolvedReferences", acktypes.AWSResource(updatedByAWS))
+	require.Same(acktypes.AWSResource(restored), out)
+}
+
+// TestReconcilerUpdate_LateInitializeIsNotAffectedByEnsureReferences pins why the
+// restoration lives on the Create and Update paths rather than in
+// patchResourceMetadataAndSpec.
+//
+// lateInitializeResource patches with the AWS-observed object as its BASE, not the
+// declared resource. Hooked into the shared patch path the restoration would have
+// been handed a source carrying no references at all, so it must never run there.
+func TestReconcilerUpdate_LateInitializeIsNotAffectedByEnsureReferences(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+	latest, _, _ := resourceMocks()
+	lateInited, _, _ := resourceMocks()
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("LateInitialize", ctx, latest).Return(lateInited, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.lateInitializeResource(ctx, rm, desired, latest)
+	require.NoError(err)
+
+	require.Empty(rm.calls,
+		"reference restoration must not run on the late-init patch")
+	require.Same(acktypes.AWSResource(lateInited), out,
+		"the late-initialized object must survive to be patched")
+}
+
+// TestReconcilerCreate_EnsuresReferencesAfterCreate verifies the same restoration
+// on the create path, where the corruption is otherwise introduced on the very
+// first reconcile.
+func TestReconcilerCreate_EnsuresReferencesAfterCreate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+	createdByAWS, _, _ := resourceMocks()
+	observed, _, _ := resourceMocks()
+	restored, _, _ := resourceMocks()
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("Create", ctx, desired).Return(createdByAWS, nil)
+	inner.On("ReadOne", ctx, mock.Anything).Return(observed, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner, returns: restored}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, createdByAWS)
+	// Already managed, so createResource goes straight to rm.Create.
+	rd.On("IsManaged", mock.Anything).Return(true)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	_, err := rr.createResource(ctx, rm, desired)
+	require.NoError(err)
+
+	require.Len(rm.calls, 1, "restoration must run once, right after Create")
+	// resourceMocks wires DeepCopy to return the receiver, so this cannot tell a
+	// copy from the original; TestReconcilerCreate_PassesCopyToCreate pins that
+	// separately.
+	require.Same(acktypes.AWSResource(desired), rm.calls[0].from)
+	require.Same(acktypes.AWSResource(createdByAWS), rm.calls[0].to)
+}
+
+// TestReconcilerUpdate_WithoutEnsurerIsUnaffected verifies the type assertion
+// degrades cleanly: a manager that does not implement the optional interface --
+// every controller generated before it existed -- takes the original path, with
+// the object Update returned flowing through untouched.
+func TestReconcilerUpdate_WithoutEnsurerIsUnaffected(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, _, _ := resourceMocks()
+	latest, _, _ := resourceMocks()
+	// updateResource deep-copies desired and transplants the observed status onto
+	// the copy; resourceMocks' DeepCopy returns the receiver, so wire these here.
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	updatedByAWS, _, _ := resourceMocks()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("Update", ctx, mock.Anything, latest, delta).Return(updatedByAWS, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.updateResource(ctx, rm, desired, latest)
+	require.NoError(err)
+
+	rm.AssertCalled(t, "ClearResolvedReferences", acktypes.AWSResource(updatedByAWS))
+	require.Same(acktypes.AWSResource(updatedByAWS), out)
+}
+
+// TestReconcilerCreate_PassesCopyToCreate pins that createResource hands Create a
+// copy and keeps `desired` as the reference source, mirroring updateResource.
+//
+// Generated sdkCreate only deep-copies the resource it is given partway through: a
+// `custom_implementation` returns before that point and a
+// sdk_create_pre_build_request hook runs before it, so either can mutate the object
+// it receives. Two controllers use the first route and ten the second. None of
+// those resources has a struct-nested reference today, so none gets a generated
+// EnsureReferences, but the restoration must not depend on that continuing to hold.
+func TestReconcilerCreate_PassesCopyToCreate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	// A distinct copy, so "which object went where?" is answerable.
+	desiredCopy, _, _ := resourceMocks()
+	desired := resourceMockReturningCopy(desiredCopy)
+	createdByAWS, _, _ := resourceMocks()
+	observed, _, _ := resourceMocks()
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("Create", ctx, desiredCopy).Return(createdByAWS, nil)
+	inner.On("ReadOne", ctx, mock.Anything).Return(observed, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, createdByAWS)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	_, err := rr.createResource(ctx, rm, desired)
+	require.NoError(err)
+
+	// Create gets the copy, never the stored object.
+	inner.AssertCalled(t, "Create", ctx, acktypes.AWSResource(desiredCopy))
+	inner.AssertNotCalled(t, "Create", ctx, acktypes.AWSResource(desired))
+
+	// The reference source is the untouched `desired`.
+	require.Len(rm.calls, 1)
+	require.Same(acktypes.AWSResource(desired), rm.calls[0].from,
+		"references must be sourced from `desired`, which Create never saw")
+}
+
+// TestReconcilerCreate_EnsuresReferencesOnCreateError pins that the restoration runs
+// even when Create returns an error.
+//
+// A resource manager may hand back a non-nil resource alongside a requeue error while
+// an asynchronous create is in flight, and many do. That object reaches the caller
+// either way, so it should carry the declared references on the error path too.
+func TestReconcilerCreate_EnsuresReferencesOnCreateError(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+	partial, _, _ := resourceMocks()
+	restored, _, _ := resourceMocks()
+
+	createErr := requeue.NeededAfter(errors.New("still creating"), time.Second)
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("Create", ctx, mock.Anything).Return(partial, createErr)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner, returns: restored}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, partial)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.createResource(ctx, rm, desired)
+	require.Error(err)
+
+	require.Len(rm.calls, 1,
+		"restoration must run even though Create returned an error")
+	require.Same(acktypes.AWSResource(desired), rm.calls[0].from)
+	require.Same(acktypes.AWSResource(partial), rm.calls[0].to)
+	require.Same(acktypes.AWSResource(restored), out,
+		"the restored object must be what is handed back on the error path")
+
+	// ReadOne is never reached, so the error short-circuit still holds.
+	inner.AssertNotCalled(t, "ReadOne", mock.Anything, mock.Anything)
+}
+
+// TestReconcilerUpdate_EnsuresReferencesOnUpdateError is the update-path counterpart
+// of TestReconcilerCreate_EnsuresReferencesOnCreateError, and holds for the same
+// reason.
+func TestReconcilerUpdate_EnsuresReferencesOnUpdateError(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, _, _ := resourceMocks()
+	latest, _, _ := resourceMocks()
+	// updateResource deep-copies desired and transplants the observed status onto
+	// the copy; resourceMocks' DeepCopy returns the receiver, so wire these here.
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	// A partially-updated object handed back alongside a requeue error.
+	partial, _, _ := resourceMocks()
+	restored, _, _ := resourceMocks()
+
+	updateErr := requeue.NeededAfter(errors.New("still updating"), time.Second)
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("Update", ctx, mock.Anything, latest, delta).Return(partial, updateErr)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner, returns: restored}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.updateResource(ctx, rm, desired, latest)
+	require.Error(err)
+
+	require.Len(rm.calls, 1,
+		"restoration must run even though Update returned an error")
+	require.Same(acktypes.AWSResource(desired), rm.calls[0].from,
+		"source must be the declared resource, not the copy handed to Update")
+	require.Same(acktypes.AWSResource(partial), rm.calls[0].to)
+	require.Same(acktypes.AWSResource(restored), out,
+		"the restored object must be what is handed back on the error path")
+
+	// The spec patch is never reached, so the error short-circuit still holds.
+	inner.AssertNotCalled(t, "ClearResolvedReferences", mock.Anything)
+}
+
+// TestReconcilerUpdate_EnsureReferencesToleratesNilLatest pins the nil guard.
+//
+// A resource manager is permitted to return (nil, err), and the generated
+// EnsureReferences dereferences both objects unconditionally
+// (rm.concreteResource(latest).ko), so reaching it with a nil resource would
+// panic. The guard in r.ensureReferences is what prevents that, and without a
+// test it is the one nil-dereference surface this feature introduces.
+func TestReconcilerUpdate_EnsureReferencesToleratesNilLatest(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", "val1", "val2")
+
+	desired, _, _ := resourceMocks()
+	latest, _, _ := resourceMocks()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+
+	updateErr := errors.New("update failed outright")
+
+	inner := &ackmocks.AWSResourceManager{}
+	// Nothing handed back at all, only an error.
+	inner.On("Update", ctx, mock.Anything, latest, delta).Return(nil, updateErr)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	// The assertion is that this returns rather than panicking.
+	out, err := rr.updateResource(ctx, rm, desired, latest)
+	require.Error(err)
+	require.True(ackcompare.IsNil(out), "a nil resource must pass straight through")
+	require.Empty(rm.calls,
+		"the generated method must not be invoked with a nil resource")
+}
+
+// TestReconcilerAdopt_DoesNotEnsureReferences pins that AdoptionPolicy_Adopt
+// deliberately does NOT restore references.
+//
+// Under this policy the spec is populated from the observed AWS resource, so a
+// declared spec is expected to be replaced rather than preserved, and a declared
+// *Ref is replaced along with every other declared field. Singling the reference
+// out would make it the one exception.
+//
+// The behaviour is easy to reintroduce by accident: moving the restoration into
+// patchResourceMetadataAndSpec picks this branch up automatically, because its
+// patch base is the declared resource. Hence the assertion.
+//
+// AdoptionPolicy_AdoptOrCreate is different and does preserve references -- see
+// TestReconcilerAdoptOrCreate_PreservesReferences.
+func TestReconcilerAdopt_DoesNotEnsureReferences(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	adoptionFieldsString := `{"arn": "my-adopt-book-arn"}`
+	adoptionFields := map[string]string{"arn": "my-adopt-book-arn"}
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
+
+	// What ReadOne hands back: built from the response, nested refs dropped.
+	observed, _, observedMetaObj := resourceMocks()
+	observed.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	observed.On("ReplaceConditions", mock.Anything).Return()
+	observed.On("Identifiers").Return(&ackmocks.AWSResourceIdentifiers{})
+	observedMetaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+	// What the generated method returns: the above, with references restored.
+	restored, _, _ := resourceMocks()
+	restored.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	restored.On("ReplaceConditions", mock.Anything).Return()
+	restored.On("Identifiers").Return(&ackmocks.AWSResourceIdentifiers{})
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("ResolveReferences", ctx, nil, mock.Anything).Return(desired, false, nil)
+	inner.On("EnsureTags", ctx, mock.Anything, mock.Anything).Return(nil)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	inner.On("ReadOne", ctx, mock.Anything).Return(observed, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("LateInitialize", ctx, mock.Anything).Return(restored, nil)
+	inner.On("IsSynced", ctx, mock.Anything).Return(true, nil)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner, returns: restored}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, observed)
+	rd.On("IsManaged", mock.Anything).Return(false).Once()
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("MarkAdopted", mock.Anything).Return()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	_, err := rr.Sync(ctx, rm, desired)
+	require.NoError(err)
+
+	require.Empty(rm.calls,
+		"adoption must not restore references; the observed spec is authoritative")
+
+	// The ReadOne-derived object is what gets cleaned and patched, unmodified.
+	inner.AssertCalled(t, "ClearResolvedReferences", acktypes.AWSResource(observed))
+}
+
+// TestReconcilerAdoptOrCreate_PreservesReferences pins the other half of the
+// adoption distinction: AdoptionPolicy_AdoptOrCreate keeps a declared reference,
+// where AdoptionPolicy_Adopt replaces it.
+//
+// It holds for a structural reason rather than because the restoration runs. When
+// the resource already exists, this branch marks it managed and adopted and
+// requeues; that patch's base is a DeepCopy of its own target, so it carries no
+// spec diff. Nothing ever patches the spec with the declared resource as the base,
+// so the declared reference in the stored CR is never written over.
+//
+// Asserted because it is invisible from the call sites: nothing here mentions
+// references, and a future change that gave this branch a spec patch against
+// `desired` would silently start clobbering them.
+func TestReconcilerAdoptOrCreate_PreservesReferences(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	adoptionFieldsString := `{"arn": "my-adopt-book-arn"}`
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	desired.On("PopulateResourceFromAnnotation", map[string]string{
+		"arn": "my-adopt-book-arn",
+	}).Return(nil)
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+
+	// The resource already exists in AWS, so ReadOne succeeds and this becomes an
+	// adoption rather than a create.
+	observed, _, observedMetaObj := resourceMocks()
+	observed.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	observed.On("ReplaceConditions", mock.Anything).Return()
+	observed.On("Identifiers").Return(&ackmocks.AWSResourceIdentifiers{})
+	observedMetaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+
+	inner := &ackmocks.AWSResourceManager{}
+	inner.On("ResolveReferences", ctx, nil, mock.Anything).Return(desired, false, nil)
+	inner.On("EnsureTags", ctx, mock.Anything, mock.Anything).Return(nil)
+	inner.On("FilterSystemTags", mock.Anything, mock.Anything)
+	inner.On("ReadOne", ctx, mock.Anything).Return(observed, nil)
+	inner.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	inner.On("IsSynced", ctx, mock.Anything).Return(true, nil)
+	rm := &referenceEnsuringRM{AWSResourceManager: inner}
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, observed)
+	rd.On("IsManaged", mock.Anything).Return(false).Once()
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("MarkAdopted", mock.Anything).Return()
+	rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	// Requeues so the status is patched; that is this branch's normal outcome.
+	_, err := rr.Sync(ctx, rm, desired)
+	require.Error(err)
+
+	// No spec patch is taken against the declared resource, so nothing can
+	// overwrite a declared reference and no restoration is needed.
+	inner.AssertNotCalled(t, "ClearResolvedReferences", acktypes.AWSResource(desired))
+	require.Empty(rm.calls,
+		"no restoration is needed when the declared spec is never the patch base")
+}

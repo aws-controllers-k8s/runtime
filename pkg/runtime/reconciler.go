@@ -671,6 +671,10 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
+		// References are deliberately NOT restored here. Under this policy the spec
+		// is populated from the observed AWS resource, so a declared spec --
+		// references included -- is expected to be replaced rather than preserved.
+		// Restoring a *Ref would make that one field an exception to the rule.
 		rm.FilterSystemTags(latest, r.cfg.ResourceTagKeys)
 		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
 			return latest, err
@@ -856,9 +860,24 @@ func (r *resourceReconciler) createResource(
 		}
 	}
 
+	// Hand Create a copy, never `desired` itself, so that `desired` remains a
+	// record of what the user declared. Generated sdkCreate only deep-copies the
+	// resource it is given partway through: a `custom_implementation` returns
+	// before that point and a sdk_create_pre_build_request hook runs before it, so
+	// either can mutate the object it receives. This mirrors updateResource, which
+	// hands Update `reconcileDesired` for the same reason.
+	//
+	// Taken after the block above, so the copy carries the finalizer and the
+	// controller tags that setResourceManaged and EnsureTags just applied.
+	reconcileDesired := desired.DeepCopy()
+
 	rlog.Enter("rm.Create")
-	latest, err = rm.Create(ctx, desired)
+	latest, err = rm.Create(ctx, reconcileDesired)
 	rlog.Exit("rm.Create", err)
+
+	// `desired`, not `reconcileDesired`; before the error check. See ensureReferences.
+	latest = r.ensureReferences(ctx, rm, desired, latest)
+
 	if err != nil {
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
@@ -966,6 +985,53 @@ func setStatusWithoutConditions(dst, src acktypes.AWSResource) {
 	dst.ReplaceConditions(conditions)
 }
 
+// ensureReferences restores onto `latest` the cross-resource reference (*Ref)
+// fields it is missing, taking them from `desired`. Only reference fields are
+// written; every concrete value still comes from the service. See
+// acktypes.ReferenceEnsurer for why they go missing and which shapes are covered.
+//
+// Called on what a resource manager returns from Create and from Update: the two
+// paths where the object about to be patched back was rebuilt from an API response
+// while the patch base is still the resource the user declared.
+//
+// The source is `desired`, never the copy handed to the manager, because a manager
+// may mutate what it is given -- apigateway's ApiKey sdkUpdate assigns
+// desired.ko.Spec.StageKeys straight from the response. It runs before the error is
+// inspected, because a manager may return a resource alongside a requeue error
+// while an asynchronous operation is in flight, and that object reaches the caller
+// either way.
+//
+// Deliberately not called on AdoptionPolicy_Adopt (see that branch), nor on the
+// late-initialization patch, whose base is the AWS-observed object and carries no
+// references, nor in deleteResource, where the CR is removed immediately afterwards.
+//
+// Returns `latest` unchanged when either object is nil, or when the resource
+// manager does not implement the optional interface -- which is every controller
+// generated before it existed.
+func (r *resourceReconciler) ensureReferences(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) acktypes.AWSResource {
+	rlog := ackrtlog.FromContext(ctx)
+	if ackcompare.IsNil(desired) || ackcompare.IsNil(latest) {
+		return latest
+	}
+	e, ok := rm.(acktypes.ReferenceEnsurer)
+	if !ok {
+		// Logged so a reference that was expected to be restored and was not can be
+		// told apart from one the generated method deliberately skips.
+		rlog.Debug("resource manager does not implement ReferenceEnsurer; " +
+			"skipping reference restoration")
+		return latest
+	}
+	rlog.Enter("rm.EnsureReferences")
+	out := e.EnsureReferences(desired, latest)
+	rlog.Exit("rm.EnsureReferences", nil)
+	return out
+}
+
 // updateResource calls one or more AWS APIs to modify the backend AWS resource
 // and patches the CR's Metadata and Spec back to the Kubernetes API.
 //
@@ -1044,6 +1110,10 @@ func (r *resourceReconciler) updateResource(
 		rlog.Enter("rm.Update")
 		updated, err = rm.Update(ctx, reconcileDesired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
+
+		// `desired`, not `reconcileDesired`; before the error check. See ensureReferences.
+		updated = r.ensureReferences(ctx, rm, desired, updated)
+
 		if err != nil {
 			return updated, err
 		}
