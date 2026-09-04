@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"k8s.io/utils/ptr"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcond "github.com/aws-controllers-k8s/runtime/pkg/condition"
@@ -348,7 +349,8 @@ func TestConditionSetters(t *testing.T) {
 	)
 	ackcond.SetReady(r, corev1.ConditionTrue, nil, nil)
 
-	// IAMRoleSelected condition
+	// IAMRoleSelected condition - a list of Conditions with nothing matching IAMRoleSelected should add
+	// a new Condition.
 	r = &ackmocks.AWSResource{}
 	r.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	r.On(
@@ -362,4 +364,28 @@ func TestConditionSetters(t *testing.T) {
 		}),
 	)
 	ackcond.SetIAMRoleSelected(r, corev1.ConditionTrue, nil, nil)
+
+	// IAMRoleSelected condition - a list of Conditions with IAMRoleSelected already in it must be replaced
+	// instead of adding one more.
+	r = &ackmocks.AWSResource{}
+	r.On("Conditions").Return([]*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeIAMRoleSelected,
+			Status:  corev1.ConditionFalse,
+			Message: ptr.To("this is the original"),
+		},
+	})
+	replacementMsg := "this is the replacement"
+	r.On(
+		"ReplaceConditions",
+		mock.MatchedBy(func(subject []*ackv1alpha1.Condition) bool {
+			if len(subject) != 1 {
+				return false
+			}
+			return (subject[0].Type == ackv1alpha1.ConditionTypeIAMRoleSelected &&
+				subject[0].Status == corev1.ConditionTrue &&
+				*subject[0].Message == replacementMsg)
+		}),
+	)
+	ackcond.SetIAMRoleSelected(r, corev1.ConditionTrue, &replacementMsg, nil)
 }
