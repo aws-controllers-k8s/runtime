@@ -13,7 +13,7 @@ SCRIPTS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 ROOT_DIR="$SCRIPTS_DIR/.."
 BIN_DIR="$ROOT_DIR/bin"
 
-VERSION=v2.53.3
+VERSION=v2.53.7
 
 if [[ ! -f $BIN_DIR/mockery ]]; then
     echo -n "Installing mockery into bin/mockery ... "
