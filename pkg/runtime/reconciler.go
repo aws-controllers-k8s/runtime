@@ -879,6 +879,16 @@ func (r *resourceReconciler) createResource(
 	latest = r.ensureReferences(ctx, rm, desired, latest)
 
 	if err != nil {
+		// The resource was created before this error occurred, so keep the
+		// finalizer. Unmanaging here would orphan it: the next reconciliation
+		// finds an existing resource with no finalizer and terminally
+		// conditions it as not managed by ACK.
+		//
+		// Must precede the AWS error check below, which a PostCreateError also
+		// satisfies.
+		if ackerr.IsPostCreateError(err) {
+			return latest, err
+		}
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
 		// that we're only managing (put finalizer) the resources
