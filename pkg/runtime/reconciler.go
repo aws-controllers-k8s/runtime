@@ -662,10 +662,10 @@ func (r *resourceReconciler) Sync(
 			return latest, err
 		}
 		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
-			return nil, ackerr.AdoptedResourceNotFound
+			return ackcondition.WithRecoverableCondition(desired, ackerr.AdoptedResourceNotFound), ackerr.AdoptedResourceNotFound
 		}
 		if isReadOnly {
-			return nil, ackerr.ReadOnlyResourceNotFound
+			return ackcondition.WithRecoverableCondition(desired, ackerr.ReadOnlyResourceNotFound), ackerr.ReadOnlyResourceNotFound
 		}
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err
