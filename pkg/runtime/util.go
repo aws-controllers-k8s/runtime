@@ -98,7 +98,24 @@ func IsReadOnly(res acktypes.AWSResource) bool {
 	}
 	for k, v := range mo.GetAnnotations() {
 		if k == ackv1alpha1.AnnotationReadOnly {
-			return strings.ToLower(v) == "true"
+			val := strings.ToLower(v)
+			return val == "true" || val == "always"
+		}
+	}
+	return false
+}
+
+// IsReadOnlyAlwaysSync returns true if the supplied AWSResource has the
+// read-only annotation set to "always".
+func IsReadOnlyAlwaysSync(res acktypes.AWSResource) bool {
+	mo := res.MetaObject()
+	if mo == nil {
+		// Should never happen... if it does, it's buggy code.
+		panic("IsReadOnlyAlwaysSync received resource with nil RuntimeObject")
+	}
+	for k, v := range mo.GetAnnotations() {
+		if k == ackv1alpha1.AnnotationReadOnly {
+			return strings.ToLower(v) == "always"
 		}
 	}
 	return false
