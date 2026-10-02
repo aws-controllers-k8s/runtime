@@ -162,7 +162,7 @@ func (cfg *Config) BindFlags() {
 	)
 	flag.BoolVar(
 		&cfg.EnableCrossNamespace, flagEnableCrossNamespace,
-		true,
+		false,
 		"Enable cross-namespace behavior (resource references, secret references, "+
 			"field exports). When false, the controller rejects any operation that "+
 			"crosses namespace boundaries.",
