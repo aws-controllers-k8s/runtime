@@ -661,11 +661,22 @@ func (r *resourceReconciler) Sync(
 		if err != ackerr.NotFound {
 			return latest, err
 		}
+		// The controller does not create a resource that the CR adopts or only
+		// reads. Without a status patch the CR keeps the conditions an earlier
+		// reconcile wrote, and those can say the resource is synced.
+		// HandleReconcileError patches status only when Sync returns a resource,
+		// so Sync returns a copy of resolved with a Recoverable condition that
+		// names the error. The deferred ensureConditions then sets ResourceSynced
+		// and Ready from the same error.
 		if adoptionPolicy == AdoptionPolicy_Adopt || isAdopted {
-			return nil, ackerr.AdoptedResourceNotFound
+			err = ackerr.AdoptedResourceNotFound
+			latest = ackcondition.WithRecoverableCondition(resolved, err)
+			return latest, err
 		}
 		if isReadOnly {
-			return nil, ackerr.ReadOnlyResourceNotFound
+			err = ackerr.ReadOnlyResourceNotFound
+			latest = ackcondition.WithRecoverableCondition(resolved, err)
+			return latest, err
 		}
 		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
 			return latest, err

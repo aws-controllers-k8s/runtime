@@ -395,6 +395,22 @@ func WithTerminalCondition(
 	return ko
 }
 
+// WithRecoverableCondition returns a copy of resource with a True
+// ConditionTypeRecoverable whose message is err. When err is nil the copy has
+// no new condition.
+func WithRecoverableCondition(
+	resource acktypes.AWSResource,
+	err error,
+) acktypes.AWSResource {
+	ko := resource.DeepCopy()
+
+	if err != nil {
+		errString := err.Error()
+		SetRecoverable(ko, corev1.ConditionTrue, &errString, nil)
+	}
+	return ko
+}
+
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
 // False status means that resource has LateInitializationConfig but has not been completely
 // late initialized yet.

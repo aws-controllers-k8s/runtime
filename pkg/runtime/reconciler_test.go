@@ -417,6 +417,112 @@ func TestReconcilerAdoptResource(t *testing.T) {
 	rm.AssertNotCalled(t, "Delta", 0)
 }
 
+func TestReconcilerAdoptedResourceNotFound_RecoverableCondition(t *testing.T) {
+	assertNotFoundSetsRecoverableCondition(t, map[string]string{
+		ackv1alpha1.AnnotationAdopted: "true",
+	}, true, ackerr.AdoptedResourceNotFound)
+}
+
+func TestReconcilerAdoptPolicyResourceNotFound_RecoverableCondition(t *testing.T) {
+	assertNotFoundSetsRecoverableCondition(t, map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
+		ackv1alpha1.AnnotationAdoptionFields: "{\"arn\": \"my-adopt-book-arn\"}",
+	}, false, ackerr.AdoptedResourceNotFound)
+}
+
+func TestReconcilerReadOnlyResourceNotFound_RecoverableCondition(t *testing.T) {
+	assertNotFoundSetsRecoverableCondition(t, map[string]string{
+		ackv1alpha1.AnnotationReadOnly: "true",
+	}, true, ackerr.ReadOnlyResourceNotFound)
+}
+
+// assertNotFoundSetsRecoverableCondition runs Sync on a CR with the given
+// annotations while ReadOne reports its AWS resource as not found. Sync must
+// return wantErr and a copy of the CR whose conditions are Recoverable True
+// with wantErr as the message, ResourceSynced Unknown and Ready False. It must
+// leave the CR passed in without conditions and create nothing. Then
+// HandleReconcileError must patch the copy's status.
+func assertNotFoundSetsRecoverableCondition(
+	t *testing.T,
+	annotations map[string]string,
+	isManaged bool,
+	wantErr error,
+) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+
+	// copied is returned for every deep copy of desired. It keeps the
+	// conditions written to it, so the condition getters read the final set.
+	copied, copiedRTObj, _ := resourceMocks()
+	var copiedConditions []*ackv1alpha1.Condition
+	copied.On("Conditions").Return(func() []*ackv1alpha1.Condition {
+		return copiedConditions
+	})
+	copied.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		copiedConditions = args.Get(0).([]*ackv1alpha1.Condition)
+	})
+	copied.On("PopulateResourceFromAnnotation", mock.Anything).Return(nil)
+
+	desired, _, metaObj := resourceMocks()
+	metaObj.SetAnnotations(annotations)
+	for _, call := range desired.ExpectedCalls {
+		if call.Method == "DeepCopy" {
+			call.Unset()
+			break
+		}
+	}
+	desired.On("DeepCopy").Return(copied)
+	var desiredConditions []*ackv1alpha1.Condition
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition {
+		return desiredConditions
+	})
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return().Run(func(args mock.Arguments) {
+		desiredConditions = args.Get(0).([]*ackv1alpha1.Condition)
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ReadOne", ctx, mock.Anything).Return(nil, ackerr.NotFound).Once()
+	rm.On("IsSynced", ctx, mock.Anything).Return(false, nil)
+	rmf, _ := managerFactoryMocks(desired, desired, isManaged)
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, mock.Anything, scmd).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", withoutCancelContextMatcher, copiedRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	latest, err := r.Sync(ctx, rm, desired)
+	assert.Equal(wantErr, err)
+	require.Same(copied, latest)
+	assert.Empty(desiredConditions)
+	rm.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+
+	recoverable := ackcondition.Recoverable(copied)
+	require.NotNil(recoverable)
+	assert.Equal(corev1.ConditionTrue, recoverable.Status)
+	assert.Equal(wantErr.Error(), *recoverable.Message)
+	synced := ackcondition.Synced(copied)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(copied)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionFalse, ready.Status)
+	assert.Equal(string(ackv1alpha1.ConditionTypeRecoverable), *ready.Reason)
+
+	_, err = r.HandleReconcileError(ctx, desired, latest, err)
+	assert.Equal(wantErr, err)
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, copiedRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+}
+
 func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
