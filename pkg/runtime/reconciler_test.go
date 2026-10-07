@@ -368,8 +368,8 @@ func TestReconcilerCreate_KeepManagedOnPostCreateError(t *testing.T) {
 
 // TestReconcilerCreate_PostCreateErrorFinishesCreate pins what createResource
 // still does after a post-create error, before returning it: read the resource
-// back, keep the conditions Create set for the error rather than those ReadOne
-// reports, and patch the spec and metadata the Create response produced.
+// back, take the observed status, and patch the spec and metadata the Create
+// response produced.
 //
 // Returning straight away would skip the spec patch, and HandleReconcileError
 // patches only the status, so values the Create response set in the spec --
@@ -381,18 +381,6 @@ func TestReconcilerCreate_PostCreateErrorFinishesCreate(t *testing.T) {
 	desired, _, _ := resourceMocks()
 	created, createdRTObj, _ := resourceMocks()
 	observed, _, _ := resourceMocks()
-
-	// What generated onError sets on the resource Create returns. ReadOne starts
-	// from a copy of that resource and reports success, which flips this
-	// condition to False.
-	msg := "api error UnauthorizedOperation"
-	createdConditions := []*ackv1alpha1.Condition{{
-		Type:    ackv1alpha1.ConditionTypeRecoverable,
-		Status:  corev1.ConditionTrue,
-		Message: &msg,
-	}}
-	created.On("Conditions").Return(createdConditions)
-	created.On("ReplaceConditions", mock.Anything).Return()
 
 	postCreateErr := ackerr.WrapPostCreateError(awsError{})
 
@@ -424,9 +412,7 @@ func TestReconcilerCreate_PostCreateErrorFinishesCreate(t *testing.T) {
 	require.Same(acktypes.AWSResource(created), out)
 
 	rm.AssertCalled(t, "ReadOne", ctx, created)
-	// Observed status is taken, then Create's conditions are put back.
 	created.AssertCalled(t, "SetStatus", observed)
-	created.AssertCalled(t, "ReplaceConditions", createdConditions)
 	// The spec and metadata from the Create response are patched.
 	kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, createdRTObj,
 		mock.AnythingOfType("*client.mergeFromPatch"))

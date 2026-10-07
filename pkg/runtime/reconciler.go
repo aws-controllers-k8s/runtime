@@ -935,14 +935,7 @@ func (r *resourceReconciler) createResource(
 	}
 
 	// Take the status from the latest ReadOne
-	if postCreateErr != nil {
-		// Keep the conditions Create set for its error. ReadOne starts from a
-		// copy of latest and reports success, which clears the Recoverable
-		// condition carrying that error.
-		setStatusWithoutConditions(latest, observed)
-	} else {
-		latest.SetStatus(observed)
-	}
+	latest.SetStatus(observed)
 
 	// Ensure that we are patching any changes to the annotations/metadata and
 	// the Spec that may have been set by the resource manager's successful
