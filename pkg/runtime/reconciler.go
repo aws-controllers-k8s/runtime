@@ -845,6 +845,27 @@ func (r *resourceReconciler) createResource(
 	// `desired`, not `reconcileDesired`; before the error check. See ensureReferences.
 	latest = r.ensureReferences(ctx, rm, desired, latest)
 
+	// Set when the resource was created but a later call in the same Create
+	// failed. The post-create steps below still run, and this error is
+	// returned once they have.
+	var postCreateErr error
+
+	if err != nil && ackerr.IsPostCreateError(err) {
+		// The resource exists in AWS, so keep the finalizer. Unmanaging here
+		// would orphan it: the next reconciliation finds an existing resource
+		// with no finalizer and terminally conditions it as not managed by ACK.
+		//
+		// Finish the post-create steps rather than returning: HandleReconcileError
+		// patches only the status, so returning now would drop whatever the
+		// Create response set in the spec and metadata, such as AWS-assigned
+		// defaults.
+		//
+		// Must precede the AWS error check below, which a PostCreateError also
+		// satisfies.
+		postCreateErr = err
+		err = nil
+	}
+
 	if err != nil {
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
@@ -888,6 +909,11 @@ func (r *resourceReconciler) createResource(
 	// Create call above.
 	latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
 	if err != nil {
+		return latest, err
+	}
+	if postCreateErr != nil {
+		// Requeue so the update path retries what failed after the create.
+		err = postCreateErr
 		return latest, err
 	}
 	rlog.Info("created new resource")

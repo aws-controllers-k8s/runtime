@@ -296,6 +296,189 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 	rd.AssertCalled(t, "MarkManaged", desired)
 }
 
+// TestReconcilerCreate_KeepManagedOnPostCreateError is the counterpart to
+// TestReconcilerCreate_UnmanageResourceOnAWSErrors: when the resource was
+// created before the error occurred, the finalizer must be retained even though
+// the error is an AWS API error, and the post-create ReadOne still runs.
+// See https://github.com/aws-controllers-k8s/community/issues/2849.
+func TestReconcilerCreate_KeepManagedOnPostCreateError(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	// What a resource manager returns when a call after the create itself fails.
+	postCreateErr := ackerr.WrapPostCreateError(awsError{})
+	require.True(ackerr.IsPostCreateError(postCreateErr))
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, ackerr.NotFound,
+	).Once()
+	rm.On("Create", ctx, desired).Return(
+		latest, postCreateErr,
+	)
+	rm.On("ReadOne", ctx, latest).Return(latest, nil)
+	rm.On("IsSynced", ctx, latest).Return(false, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(false).Twice()
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkUnmanaged", desired)
+	rd.On("MarkManaged", desired)
+	rd.On("ResourceFromRuntimeObject", desiredRTObj).Return(desired)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+	rd.On("Delta", desired, latest).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	_, err := r.Sync(ctx, rm, desired)
+
+	// The error is still surfaced, so the reconciliation is requeued.
+	require.NotNil(err)
+	require.True(ackerr.IsPostCreateError(err))
+	// Once to find nothing exists, once to read back what Create made.
+	rm.AssertNumberOfCalls(t, "ReadOne", 2)
+	rm.AssertCalled(t, "ReadOne", ctx, latest)
+	rd.AssertCalled(t, "MarkManaged", desired)
+	rd.AssertNotCalled(t, "MarkUnmanaged", desired)
+}
+
+// TestReconcilerCreate_PostCreateErrorFinishesCreate pins what createResource
+// still does after a post-create error, before returning it: read the resource
+// back, take the observed status, and patch the spec and metadata the Create
+// response produced.
+//
+// Returning straight away would skip the spec patch, and HandleReconcileError
+// patches only the status, so values the Create response set in the spec --
+// AWS-assigned defaults, for instance -- would not be persisted.
+func TestReconcilerCreate_PostCreateErrorFinishesCreate(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired, _, _ := resourceMocks()
+	created, createdRTObj, _ := resourceMocks()
+	observed, _, _ := resourceMocks()
+
+	postCreateErr := ackerr.WrapPostCreateError(awsError{})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("Create", ctx, desired).Return(created, postCreateErr)
+	rm.On("ReadOne", ctx, created).Return(observed, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, created)
+	// Already managed, so createResource goes straight to rm.Create.
+	rd.On("IsManaged", mock.Anything).Return(true)
+	// The Create response set a spec field the user left unset.
+	delta := ackcompare.NewDelta()
+	delta.Add("Spec.A", nil, "aws-default")
+	rd.On("Delta", mock.Anything, mock.Anything).Return(delta)
+
+	r, kc, _ := reconcilerMocks(rmf)
+	kc.On("Patch", withoutCancelContextMatcher, createdRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	rr, ok := r.(*resourceReconciler)
+	require.True(ok)
+
+	out, err := rr.createResource(ctx, rm, desired)
+
+	require.Same(postCreateErr, err,
+		"the post-create error must be returned once the create is finished")
+	require.Same(acktypes.AWSResource(created), out)
+
+	rm.AssertCalled(t, "ReadOne", ctx, created)
+	created.AssertCalled(t, "SetStatus", observed)
+	// The spec and metadata from the Create response are patched.
+	kc.AssertCalled(t, "Patch", withoutCancelContextMatcher, createdRTObj,
+		mock.AnythingOfType("*client.mergeFromPatch"))
+	rd.AssertNotCalled(t, "MarkUnmanaged", mock.Anything)
+}
+
+// TestReconcilerCreate_UnmanageOnAWSErrorWithoutPostCreateMarker asserts a plain
+// AWS API error from Create still unmanages the resource, which is what lets the
+// adoption logic run on subsequent reconciliations.
+// See https://github.com/aws-controllers-k8s/runtime/pull/185.
+func TestReconcilerCreate_UnmanageOnAWSErrorWithoutPostCreateMarker(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+
+	// A requeue carrying no AWS error is not wrapped, so it must not be mistaken
+	// for a post-create failure.
+	createErr := requeue.NeededAfter(
+		fmt.Errorf("resource already exists"), time.Second,
+	)
+	require.False(ackerr.IsPostCreateError(createErr))
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(
+		desired, false, nil,
+	).Times(2)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(
+		latest, ackerr.NotFound,
+	).Once()
+	rm.On("Create", ctx, desired).Return(latest, awsError{})
+	rm.On("IsSynced", ctx, latest).Return(false, nil)
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(false).Twice()
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkUnmanaged", desired)
+	rd.On("MarkManaged", desired)
+	rd.On("ResourceFromRuntimeObject", desiredRTObj).Return(desired)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
+	kc.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err)
+	rd.AssertCalled(t, "MarkUnmanaged", desired)
+}
+
 func TestReconcilerReadOnlyResource(t *testing.T) {
 	require := require.New(t)
 
