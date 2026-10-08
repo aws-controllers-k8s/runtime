@@ -154,26 +154,10 @@ func (r *fieldExportReconciler) Sync(
 	}()
 
 	// Validate cross-namespace access for the field export target
-	resolvedNamespace, isCrossNamespace, nsErr := r.validateFieldExportNamespace(&desired)
+	resolvedNamespace, _, nsErr := r.validateFieldExportNamespace(&desired)
 	if nsErr != nil {
 		return desired, r.onError(ctx, &desired, ackerr.NewTerminalError(nsErr))
 	}
-	if isCrossNamespace {
-		targetName := ""
-		if desired.Spec.To != nil && desired.Spec.To.Name != nil {
-			targetName = *desired.Spec.To.Name
-		}
-		r.log.V(0).Info(
-			"cross-namespace field export detected; this behavior will be "+
-				"disabled by default in a future release. Set --enable-cross-namespace "+
-				"to preserve this behavior.",
-			"fieldExportNamespace", desired.Namespace,
-			"targetNamespace", resolvedNamespace,
-			"targetName", targetName,
-		)
-		r.setCrossNsOptInRequiredCondition(&desired)
-	}
-
 	// Get the field from the resource
 	value, err := r.getSourcePathFromResource(from, *desired.Spec.From.Path)
 	if err != nil {
@@ -227,22 +211,6 @@ func (r *fieldExportReconciler) getTargetNamespace(
 		return *desired.Spec.To.Namespace
 	}
 	return desired.Namespace
-}
-
-// setCrossNsOptInRequiredCondition sets the cross-namespace deprecation
-// ACK.Advisory condition (Reason: CrossNamespaceOptInRequired) on the
-// FieldExport resource to notify users that cross-namespace behavior will
-// require explicit opt-in in a future release.
-func (r *fieldExportReconciler) setCrossNsOptInRequiredCondition(
-	desired *ackv1alpha1.FieldExport,
-) {
-	message := "Cross-namespace field export detected: FieldExport in namespace \"" +
-		desired.Namespace + "\" targets namespace \"" + r.getTargetNamespace(desired) +
-		"\". Cross-namespace behavior will require explicit opt-in in a future release. " +
-		"Set --enable-cross-namespace=true to preserve this behavior."
-	desired.Status.Conditions = SetCrossNamespaceOptInRequired(
-		desired.Status.Conditions, message,
-	)
 }
 
 // cleanup removes the finalizer from FieldExport so that k8s object can

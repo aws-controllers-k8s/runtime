@@ -33,7 +33,6 @@ import (
 // Return values:
 //   - resolvedNamespace: the namespace to pass to apiReader.Get
 //   - isCrossNamespace: true if the reference targets a different namespace
-//     (callers should emit a deprecation warning when flag=true)
 //   - err: nil on success; a ResourceReferenceCrossNamespaceNotAllowed
 //     error when cross-namespace refs are disabled and the reference
 //     targets a different namespace

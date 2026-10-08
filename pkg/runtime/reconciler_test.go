@@ -2567,21 +2567,6 @@ func newSecretRef(namespace, name, key string) *ackv1alpha1.SecretKeyReference {
 	return ref
 }
 
-// fakeConditionManager is a minimal in-memory acktypes.ConditionManager used
-// to assert that SecretValueFromReference sets conditions on the resource
-// stashed in the context.
-type fakeConditionManager struct {
-	conditions []*ackv1alpha1.Condition
-}
-
-func (f *fakeConditionManager) Conditions() []*ackv1alpha1.Condition {
-	return f.conditions
-}
-
-func (f *fakeConditionManager) ReplaceConditions(conds []*ackv1alpha1.Condition) {
-	f.conditions = conds
-}
-
 func TestSecretValueFromReference_SameNamespace(t *testing.T) {
 	r, apiReader := secretReconciler(false)
 	ctx := ctxWithNamespace("ns-a")
@@ -2628,56 +2613,6 @@ func TestSecretValueFromReference_CrossNamespace_FlagEnabled(t *testing.T) {
 	r, apiReader := secretReconciler(true)
 	ctx := ctxWithNamespace("ns-a")
 	// With the flag enabled the secret is fetched from the target namespace.
-	expectSecretGet(apiReader, "ns-b", "sec", "pw", "value")
-
-	val, err := r.SecretValueFromReference(ctx, newSecretRef("ns-b", "sec", "pw"))
-
-	require.NoError(t, err)
-	assert.Equal(t, "value", val)
-}
-
-func TestSecretValueFromReference_CrossNamespace_FlagEnabled_SetsCondition(t *testing.T) {
-	r, apiReader := secretReconciler(true)
-	cm := &fakeConditionManager{}
-	ctx := WithConditionManager(ctxWithNamespace("ns-a"), cm)
-	expectSecretGet(apiReader, "ns-b", "sec", "pw", "value")
-
-	val, err := r.SecretValueFromReference(ctx, newSecretRef("ns-b", "sec", "pw"))
-
-	require.NoError(t, err)
-	assert.Equal(t, "value", val)
-	// The deprecation notice should be set as an ACK.Advisory condition on the
-	// resource stashed in the context.
-	require.Len(t, cm.conditions, 1)
-	assert.Equal(t, ackv1alpha1.ConditionTypeAdvisory, cm.conditions[0].Type)
-	require.NotNil(t, cm.conditions[0].Reason)
-	assert.Equal(t,
-		CrossNamespaceOptInRequiredReason,
-		*cm.conditions[0].Reason,
-	)
-	require.NotNil(t, cm.conditions[0].Message)
-	assert.Contains(t, *cm.conditions[0].Message, "secret reference")
-	assert.Contains(t, *cm.conditions[0].Message, "--enable-cross-namespace")
-}
-
-func TestSecretValueFromReference_SameNamespace_NoCondition(t *testing.T) {
-	r, apiReader := secretReconciler(true)
-	cm := &fakeConditionManager{}
-	ctx := WithConditionManager(ctxWithNamespace("ns-a"), cm)
-	expectSecretGet(apiReader, "ns-a", "sec", "pw", "value")
-
-	_, err := r.SecretValueFromReference(ctx, newSecretRef("ns-a", "sec", "pw"))
-
-	require.NoError(t, err)
-	// Same-namespace refs must not set the deprecation condition.
-	assert.Empty(t, cm.conditions)
-}
-
-func TestSecretValueFromReference_CrossNamespace_FlagEnabled_NoConditionManager(t *testing.T) {
-	// When no ConditionManager is stashed in the context, resolution still
-	// succeeds and does not panic.
-	r, apiReader := secretReconciler(true)
-	ctx := ctxWithNamespace("ns-a")
 	expectSecretGet(apiReader, "ns-b", "sec", "pw", "value")
 
 	val, err := r.SecretValueFromReference(ctx, newSecretRef("ns-b", "sec", "pw"))
