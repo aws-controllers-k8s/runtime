@@ -34,7 +34,35 @@ import (
 
 const (
 	testNamespace1 = "production"
+
+	// cacheSyncTimeout bounds how long a test waits for the namespace
+	// informer to deliver an event into the cache.
+	cacheSyncTimeout = 30 * time.Second
+	// cacheSyncPoll is how often that condition is re-checked.
+	cacheSyncPoll = 20 * time.Millisecond
 )
+
+// requireCachedRegion waits until the cache reports want as the default region
+// for namespace, instead of sleeping for a fixed budget. A fixed sleep fails on
+// any builder that delivers the informer event more slowly than the budget.
+func requireCachedRegion(t *testing.T, c *ackrtcache.NamespaceCache, namespace, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		got, ok := c.GetDefaultRegion(namespace)
+		return ok && got == want
+	}, cacheSyncTimeout, cacheSyncPoll,
+		"namespace cache never reported default region %q for %q", want, namespace)
+}
+
+// requireNamespaceEvicted waits until the cache no longer knows namespace.
+func requireNamespaceEvicted(t *testing.T, c *ackrtcache.NamespaceCache, namespace string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, ok := c.GetDefaultRegion(namespace)
+		return !ok
+	}, cacheSyncTimeout, cacheSyncPoll,
+		"namespace cache never evicted %q", namespace)
+}
 
 func TestNamespaceCache(t *testing.T) {
 	// create a fake k8s client and fake watcher
@@ -72,7 +100,7 @@ func TestNamespaceCache(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireCachedRegion(t, namespaceCache, "production", "us-west-2")
 
 	defaultRegion, ok := namespaceCache.GetDefaultRegion("production")
 	require.True(t, ok)
@@ -103,7 +131,7 @@ func TestNamespaceCache(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireCachedRegion(t, namespaceCache, "production", "us-est-1")
 
 	defaultRegion, ok = namespaceCache.GetDefaultRegion("production")
 	require.True(t, ok)
@@ -125,7 +153,7 @@ func TestNamespaceCache(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireNamespaceEvicted(t, namespaceCache, testNamespace1)
 
 	_, ok = namespaceCache.GetDefaultRegion(testNamespace1)
 	require.False(t, ok)
@@ -167,7 +195,7 @@ func TestNamespaceCacheWithRoleARN(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireCachedRegion(t, namespaceCache, "production", "us-west-2")
 
 	defaultRegion, ok := namespaceCache.GetDefaultRegion("production")
 	require.True(t, ok)
@@ -198,7 +226,7 @@ func TestNamespaceCacheWithRoleARN(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireCachedRegion(t, namespaceCache, "production", "us-est-1")
 
 	defaultRegion, ok = namespaceCache.GetDefaultRegion("production")
 	require.True(t, ok)
@@ -220,7 +248,7 @@ func TestNamespaceCacheWithRoleARN(t *testing.T) {
 	)
 	require.Nil(t, err)
 
-	time.Sleep(time.Second)
+	requireNamespaceEvicted(t, namespaceCache, testNamespace1)
 
 	_, ok = namespaceCache.GetDefaultRegion(testNamespace1)
 	require.False(t, ok)

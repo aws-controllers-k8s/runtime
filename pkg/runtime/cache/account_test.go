@@ -15,6 +15,7 @@ package cache_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -40,6 +41,28 @@ const (
 	testAccount3    = "321987654321"
 	testAccountARN3 = ""
 )
+
+// requireCachedValue waits until the CARM cache resolves key to want, instead
+// of sleeping for a fixed budget. A fixed sleep fails on any builder that
+// delivers the informer event more slowly than the budget.
+func requireCachedValue(t *testing.T, c *ackrtcache.CARMMap, key, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		got, err := c.GetValue(key)
+		return err == nil && got == want
+	}, cacheSyncTimeout, cacheSyncPoll,
+		"CARM cache never resolved %q to %q", key, want)
+}
+
+// requireCachedError waits until looking up key fails with want.
+func requireCachedError(t *testing.T, c *ackrtcache.CARMMap, key string, want error) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, err := c.GetValue(key)
+		return errors.Is(err, want)
+	}, cacheSyncTimeout, cacheSyncPoll,
+		"CARM cache never returned %v for %q", want, key)
+}
 
 func TestAccountCache(t *testing.T) {
 	accountsMap1 := map[string]string{
@@ -111,7 +134,7 @@ func TestAccountCache(t *testing.T) {
 		metav1.CreateOptions{},
 	)
 
-	time.Sleep(time.Second)
+	requireCachedValue(t, accountCache, testAccount1, testAccountARN1)
 
 	// Test with non existing account
 	_, err = accountCache.GetValue("random-account-not-exist")
@@ -141,7 +164,7 @@ func TestAccountCache(t *testing.T) {
 		metav1.UpdateOptions{},
 	)
 
-	time.Sleep(time.Second)
+	requireCachedValue(t, accountCache, testAccount2, testAccountARN2)
 
 	// Test with non existing account
 	_, err = accountCache.GetValue("random-account-not-exist")
@@ -169,7 +192,7 @@ func TestAccountCache(t *testing.T) {
 		metav1.DeleteOptions{},
 	)
 
-	time.Sleep(time.Second)
+	requireCachedError(t, accountCache, testAccount1, ackrtcache.ErrCARMConfigMapNotFound)
 
 	// Test that accounts ware removed
 	_, err = accountCache.GetValue(testAccount1)
