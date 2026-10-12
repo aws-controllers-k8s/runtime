@@ -124,3 +124,49 @@ func (e TerminalError) Unwrap() error {
 }
 
 var _ error = &TerminalError{}
+
+// PostCreateError wraps an error that occurred after the backend AWS resource
+// was successfully created, when a later call in the same Create operation
+// failed. It tells the reconciler the resource exists in AWS, so the ACK
+// finalizer must be retained.
+type PostCreateError struct {
+	err error
+}
+
+func (e *PostCreateError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return "post-create failure: " + e.err.Error()
+}
+
+func (e *PostCreateError) Unwrap() error {
+	return e.err
+}
+
+var _ error = &PostCreateError{}
+
+// WrapPostCreateError marks err as a post-create failure, returning it
+// unchanged if it is not an AWS API error.
+//
+// Only AWS API errors cause the reconciler to unmanage a resource, so wrapping
+// anything else would change no behaviour while hiding sentinels such as
+// NotFound and the ackrequeue signals from the identity comparisons callers
+// perform on them. The check unwraps, so an AWS error carried inside another
+// error is still wrapped -- it already triggers the unmanage path today.
+func WrapPostCreateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := AWSError(err); !ok {
+		return err
+	}
+	return &PostCreateError{err: err}
+}
+
+// IsPostCreateError returns true if the backend AWS resource was created before
+// the supplied error occurred.
+func IsPostCreateError(err error) bool {
+	var postCreateErr *PostCreateError
+	return errors.As(err, &postCreateErr)
+}
