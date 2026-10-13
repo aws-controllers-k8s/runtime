@@ -2811,6 +2811,82 @@ func TestSecretValueFromReference_NilRef(t *testing.T) {
 	assert.Empty(t, val)
 }
 
+// secretWriteReconciler adds a kube client mock accepting any Patch.
+func secretWriteReconciler(
+	enableCrossNamespace bool,
+) (*reconciler, *ctrlrtclientmock.Reader, *ctrlrtclientmock.Client) {
+	r, apiReader := secretReconciler(enableCrossNamespace)
+	kc := &ctrlrtclientmock.Client{}
+	kc.On("Patch", mock.Anything, mock.AnythingOfType("*v1.Secret"), mock.Anything).Return(nil)
+	r.kc = kc
+	return r, apiReader, kc
+}
+
+// assertSecretPatched asserts that exactly one Patch carried key=value. The
+// target namespace is pinned by the NamespacedName given to expectSecretGet.
+func assertSecretPatched(
+	t *testing.T,
+	kc *ctrlrtclientmock.Client,
+	key, value string,
+) {
+	t.Helper()
+	kc.AssertNumberOfCalls(t, "Patch", 1)
+	secret := kc.Calls[0].Arguments.Get(1).(*corev1.Secret)
+	assert.Equal(t, value, string(secret.Data[key]))
+}
+
+func TestWriteToSecret_EmptyNamespace(t *testing.T) {
+	r, apiReader, kc := secretWriteReconciler(false)
+	ctx := ctxWithNamespace("ns-a")
+	expectSecretGet(apiReader, "ns-a", "sec", "old", "x")
+
+	// Empty namespace falls back to the owner namespace.
+	err := r.WriteToSecret(ctx, "value", "", "sec", "tls.crt")
+
+	require.NoError(t, err)
+	assertSecretPatched(t, kc, "tls.crt", "value")
+}
+
+func TestWriteToSecret_ExplicitSameNamespace(t *testing.T) {
+	r, apiReader, kc := secretWriteReconciler(false)
+	ctx := ctxWithNamespace("ns-a")
+	expectSecretGet(apiReader, "ns-a", "sec", "old", "x")
+
+	err := r.WriteToSecret(ctx, "value", "ns-a", "sec", "tls.crt")
+
+	require.NoError(t, err)
+	assertSecretPatched(t, kc, "tls.crt", "value")
+}
+
+func TestWriteToSecret_CrossNamespace_FlagDisabled(t *testing.T) {
+	r, apiReader, kc := secretWriteReconciler(false)
+	ctx := ctxWithNamespace("ns-a")
+
+	err := r.WriteToSecret(ctx, "value", "ns-b", "sec", "tls.crt")
+
+	require.Error(t, err)
+	var termErr *ackerr.TerminalError
+	assert.True(t, errors.As(err, &termErr),
+		"expected a terminal error, got %T", err)
+	assert.True(t,
+		errors.Is(err, ackerr.ResourceReferenceCrossNamespaceNotAllowed),
+		"error should wrap the cross-namespace sentinel: %v", err)
+	// The target Secret is neither read nor written.
+	apiReader.AssertNotCalled(t, "Get", mock.Anything, mock.Anything, mock.Anything)
+	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestWriteToSecret_CrossNamespace_FlagEnabled(t *testing.T) {
+	r, apiReader, kc := secretWriteReconciler(true)
+	ctx := ctxWithNamespace("ns-a")
+	expectSecretGet(apiReader, "ns-b", "sec", "old", "x")
+
+	err := r.WriteToSecret(ctx, "value", "ns-b", "sec", "tls.crt")
+
+	require.NoError(t, err)
+	assertSecretPatched(t, kc, "tls.crt", "value")
+}
+
 // resourceMockReturningCopy builds an AWSResource mock whose DeepCopy returns
 // the supplied distinct mock. resourceMocks stubs DeepCopy to return the
 // receiver, which cannot express "was this resource copied?".
