@@ -105,7 +105,17 @@ func (r *uResource) MetaObject() metav1.Object {
 }
 func (r *uResource) SetObjectMeta(meta metav1.ObjectMeta)             {}
 func (r *uResource) SetIdentifiers(*ackv1alpha1.AWSIdentifiers) error { return nil }
-func (r *uResource) SetStatus(acktypes.AWSResource)                   {}
+func (r *uResource) SetStatus(src acktypes.AWSResource) {
+	u, ok := src.RuntimeObject().(*unstructured.Unstructured)
+	if !ok {
+		return
+	}
+	if s, found, _ := unstructured.NestedMap(u.Object, "status"); found {
+		_ = unstructured.SetNestedMap(r.obj.Object, s, "status")
+		return
+	}
+	delete(r.obj.Object, "status")
+}
 func (r *uResource) PopulateResourceFromAnnotation(map[string]string) error {
 	return nil
 }

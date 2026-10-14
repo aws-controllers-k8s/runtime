@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -1711,6 +1713,53 @@ func TestReconcilerHandleReconcilerError_NoPatchStatus_NoLatest(t *testing.T) {
 	// even though there is a change to the annotations we expect no call to
 	// patch the spec/metadata...
 	kc.AssertNotCalled(t, "Patch")
+}
+
+// TestReconcilerHandleReconcilerError_PatchStatus_StatusAndResourceVersionOnly
+// pins that the status patch carries the status and the resourceVersion and
+// nothing else. desired and latest disagree on metadata by design:
+// setResourceManaged adds the ACK finalizer to desired in place and
+// setResourceUnmanaged removes it from latest. A patch computed from desired
+// to latest would carry that disagreement as "finalizers": null.
+func TestReconcilerHandleReconcilerError_PatchStatus_StatusAndResourceVersionOnly(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	arn := "arn:aws:bookstore:us-east-1:123456789012:book/mybook"
+
+	desired := newUResource(nil, map[string]interface{}{"name": "mybook"})
+	desired.obj.SetNamespace("default")
+	desired.obj.SetName("mybook")
+	desired.obj.SetResourceVersion("1")
+	desired.obj.SetFinalizers([]string{"finalizers.bookstore.services.k8s.aws/Book"})
+
+	latest := desired.DeepCopy().(*uResource)
+	latest.obj.SetResourceVersion("2")
+	latest.obj.SetFinalizers(nil)
+	latest.obj.SetAnnotations(map[string]string{"services.k8s.aws/adopted": "true"})
+	require.NoError(k8sobj.SetNestedField(latest.obj.Object, arn, "status", "ackResourceMetadata", "arn"))
+
+	rmf, _ := managedResourceManagerFactoryMocks(desired, latest)
+	r, kc, _ := reconcilerMocks(rmf)
+
+	var body map[string]interface{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Run(
+		func(args mock.Arguments) {
+			data, err := args.Get(2).(client.Patch).Data(args.Get(1).(client.Object))
+			require.NoError(err)
+			require.NoError(json.Unmarshal(data, &body))
+		},
+	).Return(nil)
+
+	_, err := r.HandleReconcileError(ctx, desired, latest, nil)
+	require.NoError(err)
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch"))
+
+	require.Equal(map[string]interface{}{"resourceVersion": "2"}, body["metadata"])
+	got, _, _ := k8sobj.NestedString(body, "status", "ackResourceMetadata", "arn")
+	require.Equal(arn, got)
 }
 
 func TestReconcilerUpdate_ErrorInLateInitialization(t *testing.T) {

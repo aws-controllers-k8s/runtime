@@ -1355,7 +1355,13 @@ func (r *resourceReconciler) patchResourceStatus(
 	}()
 
 	rlog.Enter("kc.Patch (status)")
-	dobj := desired.DeepCopy().RuntimeObject()
+	// Base the patch on a copy of latest carrying desired's status and
+	// resourceVersion, so metadata differences between desired and latest
+	// (for example the finalizer added in place by setResourceManaged) stay out.
+	base := latest.DeepCopy()
+	base.SetStatus(desired)
+	base.MetaObject().SetResourceVersion(desired.MetaObject().GetResourceVersion())
+	dobj := base.RuntimeObject()
 	lobj := latest.DeepCopy().RuntimeObject()
 	patch := client.MergeFrom(dobj)
 
