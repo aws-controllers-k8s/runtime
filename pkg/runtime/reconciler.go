@@ -200,7 +200,7 @@ func (r *reconciler) SecretValueFromReference(
 }
 
 // WriteToSecret writes a value to a Secret given the namespace, name,
-// and key of the Secret
+// and key of the Secret. An empty namespace means the resource's namespace.
 func (r *reconciler) WriteToSecret(
 	ctx context.Context,
 	sourceValue string,
@@ -209,14 +209,34 @@ func (r *reconciler) WriteToSecret(
 	key string,
 ) error {
 
+	ownerNamespace := ""
+	ctxResourceNamespace := ctx.Value("resourceNamespace")
+	if ctxResourceNamespace != nil {
+		if ctxNamespace, ok := ctxResourceNamespace.(string); ok {
+			ownerNamespace = ctxNamespace
+		}
+	}
+
+	// Apply the same cross-namespace policy as SecretValueFromReference, so
+	// every caller that exports a value is covered.
+	namespace, _, err := ValidateCrossNamespaceReferenceString(
+		r.cfg.EnableCrossNamespace,
+		ownerNamespace,
+		namespace,
+		name,
+	)
+	if err != nil {
+		return ackerr.NewTerminalError(err)
+	}
+
 	// Get the initial secret
 	nsn := types.NamespacedName{
-		Name: name,
+		Namespace: namespace,
+		Name:      name,
 	}
-	nsn.Namespace = namespace
 
 	secret := &corev1.Secret{}
-	err := r.apiReader.Get(ctx, nsn, secret)
+	err = r.apiReader.Get(ctx, nsn, secret)
 	if err != nil {
 		return ackerr.SecretNotFound
 	}
