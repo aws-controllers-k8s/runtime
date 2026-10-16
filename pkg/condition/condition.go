@@ -395,6 +395,21 @@ func WithTerminalCondition(
 	return ko
 }
 
+// WithRecoverableCondition returns a new AWSResource with the
+// ConditionTypeRecoverable set based on the err parameter
+func WithRecoverableCondition(
+	resource acktypes.AWSResource,
+	err error,
+) acktypes.AWSResource {
+	ko := resource.DeepCopy()
+
+	if err != nil {
+		errString := err.Error()
+		SetRecoverable(ko, corev1.ConditionTrue, &errString, nil)
+	}
+	return ko
+}
+
 // LateInitializationInProgress return true if ConditionTypeLateInitialized has "False" status
 // False status means that resource has LateInitializationConfig but has not been completely
 // late initialized yet.
