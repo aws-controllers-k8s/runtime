@@ -663,7 +663,7 @@ func (r *resourceReconciler) Sync(
 		// references included -- is expected to be replaced rather than preserved.
 		// Restoring a *Ref would make that one field an exception to the rule.
 		rm.FilterSystemTags(latest, r.cfg.ResourceTagKeys)
-		if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
+		if err = r.setResourceManagedAndAdopted(ctx, rm, desired, latest); err != nil {
 			return latest, err
 		}
 		latest, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, latest)
@@ -684,7 +684,7 @@ func (r *resourceReconciler) Sync(
 		if adoptionPolicy == AdoptionPolicy_AdoptOrCreate {
 			// set adopt-or-create resource as managed
 			// and requeue to ensure status is patched
-			if err = r.setResourceManagedAndAdopted(ctx, rm, latest); err != nil {
+			if err = r.setResourceManagedAndAdopted(ctx, rm, desired, latest); err != nil {
 				return latest, err
 			}
 			err = requeue.Needed(fmt.Errorf("adopted resource, requeuing to check for updates"))
@@ -1547,9 +1547,18 @@ func (r *resourceReconciler) setResourceManaged(
 // setResourceManagedAndAdopted marks the underlying CR in the supplied AWSResource with
 // a finalizer and adopted annotation that indicates the object is under ACK management and will not
 // be deleted until that finalizer is removed (in setResourceUnmanaged())
+//
+// The observed Status (from ReadOne) is persisted BEFORE the finalizer and
+// adopted annotation. Metadata and status are separate subresources, so the
+// two writes cannot be atomic; ordering status first means a failure or
+// crash between them leaves the resource unadopted, and the next reconcile
+// re-enters the adoption path and retries. The reverse order can persist
+// adopted=true with an empty Status, after which NeedAdoption is false and
+// the discovered Status is never recovered.
 func (r *resourceReconciler) setResourceManagedAndAdopted(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
+	desired acktypes.AWSResource,
 	res acktypes.AWSResource,
 ) error {
 	if r.rd.IsManaged(res) {
@@ -1561,6 +1570,10 @@ func (r *resourceReconciler) setResourceManagedAndAdopted(
 	defer func() {
 		exit(err)
 	}()
+
+	if err = r.patchResourceStatus(ctx, desired, res); err != nil {
+		return err
+	}
 
 	orig := res.DeepCopy().RuntimeObject()
 	r.rd.MarkManaged(res)
