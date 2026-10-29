@@ -870,6 +870,130 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 	rm.AssertNumberOfCalls(t, "Create", 0)
 }
 
+// adoptPathMocks wires an adopt-or-create reconcile where ReadOne finds the
+// AWS resource and the CR is not yet managed, so Sync reaches
+// setResourceManagedAndAdopted and runs both the status patch and the
+// metadata+spec patch.
+func adoptPathMocks(ctx context.Context) (
+	acktypes.AWSResourceReconciler,
+	*ackmocks.AWSResourceManager,
+	*ackmocks.AWSResourceDescriptor,
+	*ackmocks.AWSResource, // desired
+	*ackmocks.AWSResource, // latest (ReadOne result)
+	*ctrlrtclientmock.Client,
+	*ctrlrtclientmock.SubResourceWriter,
+) {
+	adoptionFieldsString := "{\"arn\": \"my-adopt-book-arn\"}"
+	adoptionFields := map[string]string{
+		"arn": "my-adopt-book-arn",
+	}
+
+	desired, _, metaObj := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("PopulateResourceFromAnnotation", adoptionFields).Return(nil)
+	metaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	latest, latestRTObj, latestMetaObj := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	latest.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Return()
+	// patchWithRetry logs the object key on patch failure.
+	latestRTObj.On("GetNamespace").Return("default")
+	latestRTObj.On("GetName").Return("mybook")
+	latestMetaObj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
+		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(latest, nil).Once()
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+
+	rmf, rd := managerFactoryMocks(desired, latest, false)
+	rd.On("IsManaged", desired).Return(false)
+	rd.On("ResourceFromRuntimeObject", latestRTObj).Return(latest)
+	specDelta := ackcompare.NewDelta()
+	specDelta.Add("Spec", "val1", "val2")
+	rd.On("Delta", latest, latest).Return(specDelta)
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+
+	return r, rm, rd, desired, latest, kc, statusWriter
+}
+
+// The observed Status must be persisted before the adopted annotation is
+// written. If the order were reversed, a failure between the two writes would
+// leave adopted=true with an empty Status, NeedAdoption would be false on the
+// next reconcile, and the Status would never be recovered.
+func TestReconcilerAdoptOrCreateResource_Adopt_PersistsStatusBeforeAdoptedAnnotation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx := context.TODO()
+	r, rm, rd, desired, latest, kc, statusWriter := adoptPathMocks(ctx)
+
+	var order []string
+	statusWriter.On(
+		"Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch"),
+	).Return(nil).Run(func(mock.Arguments) { order = append(order, "status") })
+	rd.On("MarkManaged", latest).Return().Run(func(mock.Arguments) { order = append(order, "managed") })
+	rd.On("MarkAdopted", latest).Return().Run(func(mock.Arguments) { order = append(order, "adopted") })
+	kc.On(
+		"Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch"),
+	).Return(nil).Run(func(mock.Arguments) { order = append(order, "metadata") })
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.NotNil(err) // requeue.Needed from the adopt-or-create branch
+
+	require.GreaterOrEqual(len(order), 4, "expected status, managed, adopted and metadata writes, got %v", order)
+	assert.Equal("status", order[0], "status must be persisted first, got %v", order)
+	assert.Contains(order[1:], "managed")
+	assert.Contains(order[1:], "adopted")
+	assert.Contains(order[1:], "metadata")
+}
+
+// If persisting the observed Status fails, the resource must stay unmanaged
+// and unadopted so that the next reconcile re-enters the adoption path.
+func TestReconcilerAdoptOrCreateResource_Adopt_StatusPatchFailureLeavesUnadopted(t *testing.T) {
+	require := require.New(t)
+
+	ctx := context.TODO()
+	r, rm, rd, desired, latest, kc, statusWriter := adoptPathMocks(ctx)
+
+	statusErr := errors.New("status patch failed")
+	statusWriter.On(
+		"Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch"),
+	).Return(statusErr)
+	rd.On("MarkManaged", latest).Return().Maybe()
+	rd.On("MarkAdopted", latest).Return().Maybe()
+	kc.On(
+		"Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch"),
+	).Return(nil).Maybe()
+
+	_, err := r.Sync(ctx, rm, desired)
+	require.ErrorIs(err, statusErr)
+
+	rd.AssertNotCalled(t, "MarkManaged", mock.Anything)
+	rd.AssertNotCalled(t, "MarkAdopted", mock.Anything)
+	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNumberOfCalls(t, "Create", 0)
+}
+
 func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testing.T) {
 	require := require.New(t)
 
