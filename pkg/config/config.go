@@ -57,6 +57,8 @@ const (
 	flagUnsafeAWSEndpointURLs           = "allow-unsafe-aws-endpoint-urls"
 	flagAWSEndpointUsePathStyle         = "aws-endpoint-use-path-style"
 	flagHTTPClientTimeout               = "http-client-timeout"
+	flagSDKMaxTPS                       = "sdk-max-tps"
+	flagSDKMaxBurst                     = "sdk-max-burst"
 	flagLogLevel                        = "log-level"
 	flagResourceTags                    = "resource-tags"
 	flagWatchNamespace                  = "watch-namespace"
@@ -104,6 +106,8 @@ type Config struct {
 	AllowUnsafeEndpointURL          bool
 	UsePathStyle                    bool
 	HTTPClientTimeout               time.Duration
+	SDKMaxTPS                       float64
+	SDKMaxBurst                     int
 	LogLevel                        string
 	ResourceTags                    []string
 	ResourceTagKeys                 []string
@@ -223,6 +227,17 @@ func (cfg *Config) BindFlags() {
 		&cfg.HTTPClientTimeout, flagHTTPClientTimeout,
 		60*time.Second,
 		"Timeout for HTTP requests made by the AWS SDK client. Set to 0 to disable.",
+	)
+	flag.Float64Var(
+		&cfg.SDKMaxTPS, flagSDKMaxTPS,
+		0,
+		"Maximum AWS SDK requests per second (client-side rate limit). Set to 0 to disable. "+
+			"Useful for services with low account-level API rate limits (e.g. Route53 at 5 req/s).",
+	)
+	flag.IntVar(
+		&cfg.SDKMaxBurst, flagSDKMaxBurst,
+		5,
+		"Maximum burst size for SDK rate limiting. Only used when --sdk-max-tps is set.",
 	)
 	flag.StringVar(
 		&cfg.LogLevel, flagLogLevel,
@@ -406,6 +421,13 @@ func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 	}
 	if cfg.ReconcileDefaultMaxConcurrency < 1 {
 		return fmt.Errorf("invalid value for flag '%s': max concurrency default must be greater than 0", flagReconcileDefaultMaxConcurrency)
+	}
+
+	if cfg.SDKMaxTPS < 0 {
+		return fmt.Errorf("invalid value for flag '%s': must be >= 0", flagSDKMaxTPS)
+	}
+	if cfg.SDKMaxTPS > 0 && cfg.SDKMaxBurst < 1 {
+		return fmt.Errorf("invalid value for flag '%s': must be >= 1 when --%s is set", flagSDKMaxBurst, flagSDKMaxTPS)
 	}
 
 	featureGatesMap, err := parseFeatureGates(cfg.featureGatesRaw)
