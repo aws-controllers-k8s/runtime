@@ -60,6 +60,7 @@ type dfSpec struct {
 	CreatedAfter *metav1.Time                               `json:"createdAfter,omitempty"`
 	Ignored      *string                                    `json:"-"`
 	Policy       *string                                    `json:"policy,omitempty"`
+	Type         *string                                    `json:"type_,omitempty"`
 }
 
 type dfCR struct {
@@ -110,16 +111,17 @@ func TestDeclaredSpecPaths_Typed(t *testing.T) {
 		CreatedAfter: &metav1.Time{},
 		Ignored:      strp("never recorded"),
 	}}}
+	// Go field names, matching delta paths ("Logging" is "loggingConfiguration" in JSON).
 	assert.Equal(t, []string{
-		"createdAfter", // has its own JSON encoding: a leaf
-		"enabled",
-		"env",                  // map keys are not recorded
-		"inlinedField",         // embedded struct fields are inlined
-		"loggingConfiguration", // structs are descended into...
-		"loggingConfiguration.level",
-		"name",
-		"subnetIDs",
-		"subnetRefs", // ...lists are not
+		"CreatedAfter", // has its own JSON encoding: a leaf
+		"Enabled",
+		"Env",          // map keys are not recorded
+		"InlinedField", // embedded struct fields are inlined
+		"Logging",      // structs are descended into...
+		"Logging.Level",
+		"Name",
+		"SubnetIDs",
+		"SubnetRefs", // ...lists are not
 	}, declaredSpecPaths(res))
 }
 
@@ -189,7 +191,7 @@ func TestDeclaredFieldsEntry(t *testing.T) {
 	rec.seedDeclaredFields(res)
 	got, ok := rec.declaredFieldsEntry(res)
 	require.True(t, ok)
-	assert.Equal(t, map[string]struct{}{"name": {}}, got, "seeded from the current spec")
+	assert.Equal(t, map[string]struct{}{"Name": {}}, got, "seeded from the current spec")
 }
 
 // --- filterUnsetUnmanagedDifferences -----------------------------------------
@@ -417,7 +419,7 @@ func TestUnsetFieldsUnmanaged_RemovalAfterRestartIsSentOnce(t *testing.T) {
 }
 
 func TestNextDeclaredPaths(t *testing.T) {
-	previous := map[string]struct{}{"name": {}, "kmsKeyID": {}, "description": {}}
+	previous := map[string]struct{}{"Name": {}, "KMSKeyID": {}, "Description": {}}
 	declared := &tResource{obj: &dfCR{Spec: dfSpec{Name: strp("a"), Enabled: boolp(true)}}}
 	observed := &tResource{obj: &dfCR{Spec: dfSpec{
 		Name:     strp("a"),
@@ -426,10 +428,10 @@ func TestNextDeclaredPaths(t *testing.T) {
 		Logging:  &dfLogging{},         // never declared: not added
 		// description: removed and no longer reported: dropped
 	}}}
-	assert.Equal(t, []string{"enabled", "kmsKeyID", "name"}, nextDeclaredPaths(declared, observed, previous))
+	assert.Equal(t, []string{"Enabled", "KMSKeyID", "Name"}, nextDeclaredPaths(declared, observed, previous))
 	// Without an observation (create path) or an entry, the record is what is set now.
-	assert.Equal(t, []string{"enabled", "name"}, nextDeclaredPaths(declared, nil, previous))
-	assert.Equal(t, []string{"enabled", "name"}, nextDeclaredPaths(declared, observed, nil))
+	assert.Equal(t, []string{"Enabled", "Name"}, nextDeclaredPaths(declared, nil, previous))
+	assert.Equal(t, []string{"Enabled", "Name"}, nextDeclaredPaths(declared, observed, nil))
 }
 
 func TestUnsetFieldsUnmanaged_RecreatedObjectIsNotTrusted(t *testing.T) {
@@ -516,4 +518,21 @@ func TestUnsetFieldsUnmanaged_DescriptorReportsFalse(t *testing.T) {
 		newUnsetRes(map[string]interface{}{"name": "a"}),
 		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// A field whose JSON name differs from its Go name by more than case (ACK
+// names a "type" field Type with JSON "type_") must still match its delta
+// path, or removing it would be treated as never set.
+func TestFilterUnsetUnmanaged_GoNameDiffersFromJSON(t *testing.T) {
+	before := &tResource{obj: &dfCR{Spec: dfSpec{Name: strp("a"), Type: strp("EXPRESS")}}}
+	record := map[string]struct{}{}
+	for _, p := range declaredSpecPaths(before) {
+		record[p] = struct{}{}
+	}
+	assert.Contains(t, record, "Type")
+
+	var nilStr *string
+	d := deltaOf([3]interface{}{"Spec.Type", nilStr, strp("EXPRESS")})
+	assert.Empty(t, filterUnsetUnmanagedDifferences(d, record, nil), "the removal is kept")
+	assert.Len(t, d.Differences, 1)
 }

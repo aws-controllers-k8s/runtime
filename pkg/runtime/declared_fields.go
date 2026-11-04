@@ -49,8 +49,10 @@ import (
 // cost is one Update per such CR, on its first sync after a restart; a CR
 // created by this process gets its entry from the create and pays nothing.
 
-// declaredSpecPaths returns the dotted, JSON-style paths (relative to spec)
-// of every field set on the resource's spec. It descends through structs only:
+// declaredSpecPaths returns the dotted paths (relative to spec) of every
+// field set on the resource's spec. A typed resource's paths use Go field
+// names, the same names as the delta paths they are matched against; JSON
+// names can differ by more than case (a field named Type is "type_"). It descends through structs only:
 // list elements and map keys are not recorded, because the generated delta
 // compares lists and maps as a whole. A typed resource is walked by
 // reflection; an unstructured one by walking its spec map.
@@ -114,8 +116,8 @@ func walkTyped(v reflect.Value, prefix string, paths *[]string) {
 		if sf.PkgPath != "" && !(sf.Anonymous && derefType(sf.Type).Kind() == reflect.Struct) {
 			continue
 		}
-		name, inline := jsonFieldName(sf)
-		if name == "-" {
+		jsonName, inline := jsonFieldName(sf)
+		if jsonName == "-" {
 			continue
 		}
 		fv := v.Field(i)
@@ -126,9 +128,9 @@ func walkTyped(v reflect.Value, prefix string, paths *[]string) {
 		if !isSetValue(fv) {
 			continue
 		}
-		p := name
+		p := sf.Name
 		if prefix != "" {
-			p = prefix + "." + name
+			p = prefix + "." + sf.Name
 		}
 		*paths = append(*paths, p)
 		if isLeafType(fv.Type()) {
