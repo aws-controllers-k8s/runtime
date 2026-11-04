@@ -30,9 +30,9 @@ import (
 // bitset over the interned paths: an entry costs a few machine words no
 // matter how large the field values are.
 //
-// The store is empty after a controller restart or a leader change, and every
-// CR's entry is rebuilt from its spec on its next successful sync. See
-// declared_fields.go for what that means for removals.
+// The store is empty after a controller restart or a leader change. A CR with
+// no entry keeps today's behavior for one sync, and its entry is seeded from
+// its spec on that sync. See declared_fields.go.
 type declaredFieldsStore struct {
 	mu      sync.Mutex
 	index   map[string]int

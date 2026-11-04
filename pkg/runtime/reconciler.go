@@ -1137,10 +1137,18 @@ func (r *resourceReconciler) updateResource(
 	// patch gate in patchResourceMetadataAndSpec must still see such
 	// differences so that late-initialized values are persisted.
 	if r.unsetFieldsUnmanaged() {
-		if dropped := filterUnsetUnmanagedDifferences(
-			delta, r.declaredFieldsForFilter(desired), r.unsetMeansEmptyPaths(),
-		); len(dropped) > 0 {
-			rlog.Debug("ignoring differences on spec fields this resource does not set", "paths", dropped)
+		if declared, ok := r.declaredFieldsEntry(desired); ok {
+			if dropped := filterUnsetUnmanagedDifferences(
+				delta, declared, r.unsetMeansEmptyPaths(),
+			); len(dropped) > 0 {
+				rlog.Debug("ignoring differences on spec fields this resource does not set", "paths", dropped)
+			}
+		} else {
+			// No entry: what the user set before is unknown (for example
+			// after a controller restart), so keep today's behavior for this
+			// sync and seed the entry for the next one.
+			rlog.Debug("no declared-fields entry; not filtering differences on this sync")
+			r.seedDeclaredFields(desired)
 		}
 	}
 	if delta.DifferentAt("Spec") {

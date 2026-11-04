@@ -16,6 +16,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -173,16 +174,22 @@ func TestDeclaredFieldsStore(t *testing.T) {
 	assert.False(t, ok, "a nil store records nothing")
 }
 
-func TestDeclaredFieldsForFilter_FallsBackToCurrentSpec(t *testing.T) {
+func TestDeclaredFieldsEntry(t *testing.T) {
 	rec := &resourceReconciler{declared: newDeclaredFieldsStore()}
 	res := &tResource{obj: &dfCR{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "a", UID: "uid-1"},
 		Spec:       dfSpec{Name: strp("a")},
 	}}
-	assert.Equal(t, map[string]struct{}{"name": {}}, rec.declaredFieldsForFilter(res), "no entry")
-	// An entry left by an earlier object with the same name is ignored.
+	_, ok := rec.declaredFieldsEntry(res)
+	assert.False(t, ok, "no entry")
+	// An entry left by an earlier object with the same name is not used.
 	rec.declared.set(k8stypes.NamespacedName{Namespace: "ns", Name: "a"}, "uid-old", []string{"name", "description"})
-	assert.Equal(t, map[string]struct{}{"name": {}}, rec.declaredFieldsForFilter(res), "entry from another UID")
+	_, ok = rec.declaredFieldsEntry(res)
+	assert.False(t, ok, "entry from another UID")
+	rec.seedDeclaredFields(res)
+	got, ok := rec.declaredFieldsEntry(res)
+	require.True(t, ok)
+	assert.Equal(t, map[string]struct{}{"name": {}}, got, "seeded from the current spec")
 }
 
 // --- filterUnsetUnmanagedDifferences -----------------------------------------
@@ -294,26 +301,69 @@ func newUnsetRes(spec map[string]interface{}) *uResource {
 	return r
 }
 
-// syncOnce runs one Sync with AWS reporting `latest`.
-func syncOnce(t *testing.T, rec *resourceReconciler, rm *ackmocks.AWSResourceManager, kc *ctrlrtclientmock.Client, desired, latest acktypes.AWSResource) {
+// syncN runs n Syncs with AWS reporting `latest` each time.
+func syncN(t *testing.T, n int, rec *resourceReconciler, rm *ackmocks.AWSResourceManager, kc *ctrlrtclientmock.Client, desired, latest acktypes.AWSResource) {
 	t.Helper()
 	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
 	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
 	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	for i := 0; i < n; i++ {
+		_, err := rec.Sync(context.TODO(), rm, desired)
+		require.NoError(t, err)
+	}
+}
+
+// syncOnce runs one Sync with AWS reporting `latest`.
+func syncOnce(t *testing.T, rec *resourceReconciler, rm *ackmocks.AWSResourceManager, kc *ctrlrtclientmock.Client, desired, latest acktypes.AWSResource) {
+	t.Helper()
+	syncN(t, 1, rec, rm, kc, desired, latest)
 }
 
 func TestUnsetFieldsUnmanaged_ServerDefaultDoesNotDriveUpdate(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
 	syncOnce(t, rec, rm, kc,
 		newUnsetRes(map[string]interface{}{"name": "a"}),
 		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"), "recorded on the first sync")
 	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestUnsetFieldsUnmanaged_NoEntryKeepsTodaysBehaviorOnce: after a restart
+// the store is empty, so the first sync can't tell a server default from a
+// removal. It sends the Update as today and seeds the entry; the next sync
+// filters.
+func TestUnsetFieldsUnmanaged_NoEntryKeepsTodaysBehaviorOnce(t *testing.T) {
+	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	syncN(t, 3, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
+
+	rm.AssertNumberOfCalls(t, "Update", 1)
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
+}
+
+// A no-op Update that AWS rejects (some services refuse an update that
+// changes nothing) must not keep the CR without an entry forever: the entry
+// is seeded before the Update, so the next sync filters.
+func TestUnsetFieldsUnmanaged_NoEntryFailedUpdateStillSeeds(t *testing.T) {
+	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	desired := newUnsetRes(map[string]interface{}{"name": "a"})
+	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"})
+	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("nothing to update"))
+	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	_, err := rec.Sync(context.TODO(), rm, desired)
+	require.Error(t, err)
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
+
+	_, err = rec.Sync(context.TODO(), rm, desired)
+	require.NoError(t, err)
+	rm.AssertNumberOfCalls(t, "Update", 1)
 }
 
 func TestUnsetFieldsUnmanaged_NotEnabledKeepsTodaysBehavior(t *testing.T) {
@@ -352,17 +402,17 @@ func TestUnsetFieldsUnmanaged_AppliedRemovalLeavesRecord(t *testing.T) {
 	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
 }
 
-// TestUnsetFieldsUnmanaged_RemovalMissedAfterRestart documents the cost of
-// keeping the record in memory: after a restart the store is empty, so a
-// removal made while the controller was not running looks like a field that
-// was never set, and AWS keeps the old value.
-func TestUnsetFieldsUnmanaged_RemovalMissedAfterRestart(t *testing.T) {
+// TestUnsetFieldsUnmanaged_RemovalAfterRestartIsSentOnce: a removal made
+// while the controller was not running reaches the first sync after the
+// restart, which keeps today's behavior and sends the Update. After that the
+// entry is seeded from the spec, which no longer has the field.
+func TestUnsetFieldsUnmanaged_RemovalAfterRestartIsSentOnce(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	syncOnce(t, rec, rm, kc,
+	syncN(t, 3, rec, rm, kc,
 		newUnsetRes(map[string]interface{}{"name": "a"}),
 		newUnsetRes(map[string]interface{}{"name": "a", "description": "old value"}))
 
-	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNumberOfCalls(t, "Update", 1)
 	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
 }
 
@@ -386,11 +436,12 @@ func TestUnsetFieldsUnmanaged_RecreatedObjectIsNotTrusted(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
 	// Left by an earlier object with the same name that declared description.
 	rec.declared.set(unsetKey, "uid-other", []string{"name", "description"})
-	syncOnce(t, rec, rm, kc,
+	syncN(t, 2, rec, rm, kc,
 		newUnsetRes(map[string]interface{}{"name": "a"}),
 		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
-	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	// Treated as no entry: today's behavior once, then filtered.
+	rm.AssertNumberOfCalls(t, "Update", 1)
 	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"), "replaced")
 }
 
@@ -442,6 +493,7 @@ func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 func TestUnsetFieldsUnmanaged_OptedOutFieldStillDrivesUpdate(t *testing.T) {
 	rec, rm, rdMock, kc := unsetFieldsReconciler(t, true)
 	rec.rd = &unsetFieldsDescriptor{AWSResourceDescriptor: rdMock, enabled: true, paths: []string{"Spec.Description"}}
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
 	desired := newUnsetRes(map[string]interface{}{"name": "a"})
 	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "added outside ACK"})
 	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)

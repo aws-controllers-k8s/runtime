@@ -38,14 +38,16 @@ import (
 // successful sync (declaredFieldsStore). A difference whose desired side is
 // unset is dropped only when its path is NOT in that record. A path that is in
 // the record was set before, so the user removed it, and the difference is
-// kept: removal behaves exactly as it does without the gate.
+// kept: removal behaves exactly as it does without the setting.
 //
 // The record is internal to the controller and is not persisted. When a CR
-// has no entry (the first sync, or after a controller restart or a leader
-// change), the fields set right now are used. So the failure mode is that a
-// removal made while the controller was not running, or still pending when it
-// stopped, is treated as unmanaged afterwards; the filter never drops a
-// difference for a path the user set.
+// has no entry, the controller can't tell what the user set before (after a
+// controller restart or a leader change, or for a resource it did not create
+// in this process), so that sync keeps today's behavior: no difference is
+// dropped and the Update is sent. The entry is seeded from the current spec
+// at that point, whatever the Update returns, so the next sync filters. The
+// cost is one Update per such CR, on its first sync after a restart; a CR
+// created by this process gets its entry from the create and pays nothing.
 
 // declaredSpecPaths returns the dotted, JSON-style paths (relative to spec)
 // of every field set on the resource's spec. It descends through structs only:
@@ -208,19 +210,23 @@ func declaredKey(res acktypes.AWSResource) (types.NamespacedName, types.UID, boo
 	return types.NamespacedName{Namespace: mo.GetNamespace(), Name: mo.GetName()}, mo.GetUID(), true
 }
 
-// declaredFieldsForFilter returns the record the filter should use: the
-// recorded paths, or, when the CR has no entry, the paths set right now.
-func (r *resourceReconciler) declaredFieldsForFilter(res acktypes.AWSResource) map[string]struct{} {
+// declaredFieldsEntry returns the CR's entry. ok is false when the CR has
+// none, or the entry belongs to an earlier object with the same name.
+func (r *resourceReconciler) declaredFieldsEntry(res acktypes.AWSResource) (map[string]struct{}, bool) {
+	key, uid, ok := declaredKey(res)
+	if !ok {
+		return nil, false
+	}
+	return r.declared.get(key, uid)
+}
+
+// seedDeclaredFields records the paths set on the CR right now. Called on a
+// sync that found no entry, before its Update, so that the next sync filters
+// even if this one fails.
+func (r *resourceReconciler) seedDeclaredFields(res acktypes.AWSResource) {
 	if key, uid, ok := declaredKey(res); ok {
-		if paths, ok := r.declared.get(key, uid); ok {
-			return paths
-		}
+		r.declared.set(key, uid, declaredSpecPaths(res))
 	}
-	paths := map[string]struct{}{}
-	for _, p := range declaredSpecPaths(res) {
-		paths[p] = struct{}{}
-	}
-	return paths
 }
 
 // isUnsetDeltaValue reports whether a value taken from a delta Difference is
