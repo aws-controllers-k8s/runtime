@@ -242,7 +242,7 @@ func TestFilterUnsetUnmanaged(t *testing.T) {
 		// outside Spec: kept
 		[3]interface{}{"Status.Something", nilStr, strp("x")},
 	)
-	dropped := filterUnsetUnmanagedDifferences(d, record, []string{"Spec.Tags"})
+	dropped := filterUnsetUnmanagedDifferences(d, record, []string{"Spec.Tags"}, nil).dropped
 	assert.ElementsMatch(t, []string{
 		"Spec.Description",
 		"Spec.TracingConfiguration",
@@ -259,7 +259,7 @@ func TestFilterUnsetUnmanaged_RemovedParentKeepsDiff(t *testing.T) {
 	// The user removed the whole struct: the parent path is in the record, so
 	// the difference is kept and removal behaves as it does without the gate.
 	d := deltaOf([3]interface{}{"Spec.LoggingConfiguration", (*dfLogging)(nil), &dfLogging{Level: strp("ERROR")}})
-	dropped := filterUnsetUnmanagedDifferences(d, map[string]struct{}{"loggingConfiguration": {}, "loggingConfiguration.level": {}}, nil)
+	dropped := filterUnsetUnmanagedDifferences(d, map[string]struct{}{"loggingConfiguration": {}, "loggingConfiguration.level": {}}, nil, nil).dropped
 	assert.Empty(t, dropped)
 	assert.Len(t, d.Differences, 1)
 }
@@ -487,7 +487,7 @@ func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 	)
 	// Policy is opted out, and Tags is kept because the generated list always
 	// includes the tag field.
-	dropped := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, []string{"Spec.Policy", "Spec.Tags"})
+	dropped := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, []string{"Spec.Policy", "Spec.Tags"}, nil).dropped
 	assert.Equal(t, []string{"Spec.Description"}, dropped)
 	assert.Equal(t, []string{"Spec.Policy", "Spec.Tags"}, pathsOf(d))
 }
@@ -533,6 +533,112 @@ func TestFilterUnsetUnmanaged_GoNameDiffersFromJSON(t *testing.T) {
 
 	var nilStr *string
 	d := deltaOf([3]interface{}{"Spec.Type", nilStr, strp("EXPRESS")})
-	assert.Empty(t, filterUnsetUnmanagedDifferences(d, record, nil), "the removal is kept")
+	assert.Empty(t, filterUnsetUnmanagedDifferences(d, record, nil, nil).dropped, "the removal is kept")
 	assert.Len(t, d.Differences, 1)
+}
+
+// --- AWS values seen on unset fields ----------------------------------------
+
+func TestFilterUnsetUnmanaged_ComparesAgainstPreviousValue(t *testing.T) {
+	var nilStr *string
+	diffs := func(desc, kms string) *ackcompare.Delta {
+		return deltaOf(
+			[3]interface{}{"Spec.Description", nilStr, strp(desc)},
+			[3]interface{}{"Spec.KMSKeyID", nilStr, strp(kms)},
+		)
+	}
+
+	// First filtered sync: every difference on an unset field is dropped
+	// and its value recorded.
+	d := diffs("server default", "aws/managed")
+	first := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, nil, nil)
+	assert.ElementsMatch(t, []string{"Spec.Description", "Spec.KMSKeyID"}, first.dropped)
+	assert.Empty(t, first.changed)
+	assert.Empty(t, d.Differences)
+
+	// AWS changed one value: that difference is kept, the other dropped.
+	d = diffs("changed outside ACK", "aws/managed")
+	second := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, nil, first.seen)
+	assert.Equal(t, []string{"Spec.KMSKeyID"}, second.dropped)
+	assert.Equal(t, []string{"Spec.Description"}, second.changed)
+	assert.Equal(t, []string{"Spec.Description"}, pathsOf(d))
+
+	// AWS still reports the changed value (nil could not undo it): accepted.
+	d = diffs("changed outside ACK", "aws/managed")
+	third := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, nil, second.seen)
+	assert.Empty(t, third.changed)
+	assert.Empty(t, d.Differences)
+}
+
+func TestFilterUnsetUnmanaged_ValueAppearingIsAChange(t *testing.T) {
+	var nilStr *string
+	// First filtered sync: AWS reported no value for Policy, so there was no
+	// difference and nothing to record.
+	first := filterUnsetUnmanagedDifferences(ackcompare.NewDelta(), map[string]struct{}{}, nil, nil)
+	require.NotNil(t, first.seen)
+
+	d := deltaOf([3]interface{}{"Spec.Policy", nilStr, strp("added outside ACK")})
+	second := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, nil, first.seen)
+	assert.Equal(t, []string{"Spec.Policy"}, second.changed)
+	assert.Len(t, d.Differences, 1, "kept, so the hook can delete it")
+}
+
+func TestDeclaredFieldsStore_SeenValues(t *testing.T) {
+	s := newDeclaredFieldsStore()
+	key := k8stypes.NamespacedName{Namespace: "ns", Name: "a"}
+	s.setSeenValues(key, "uid-1", map[string]uint64{"Spec.Description": 1})
+	assert.Nil(t, s.seenValues(key, "uid-1"), "no entry: nothing stored")
+
+	s.set(key, "uid-1", []string{"Name"})
+	assert.Nil(t, s.seenValues(key, "uid-1"), "nil until the first filtered sync")
+	s.setSeenValues(key, "uid-1", map[string]uint64{})
+	assert.NotNil(t, s.seenValues(key, "uid-1"), "an empty result still marks the first sync as done")
+
+	s.setSeenValues(key, "uid-1", map[string]uint64{"Spec.Description": 7})
+	s.set(key, "uid-1", []string{"Name", "Enabled"})
+	assert.Equal(t, map[string]uint64{"Spec.Description": 7}, s.seenValues(key, "uid-1"), "kept when the record is replaced")
+	assert.Equal(t, []string{"Enabled", "Name"}, s.recorded(key, "uid-1"), "interned delta paths are not recorded as declared")
+
+	s.set(key, "uid-2", []string{"Name"})
+	assert.Nil(t, s.seenValues(key, "uid-2"), "a new object with the same name starts over")
+}
+
+// syncSeq runs one Sync per latest, with AWS reporting each in turn.
+func syncSeq(t *testing.T, rec *resourceReconciler, rm *ackmocks.AWSResourceManager, kc *ctrlrtclientmock.Client, desired acktypes.AWSResource, latests ...acktypes.AWSResource) {
+	t.Helper()
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	for _, latest := range latests {
+		rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil).Once()
+		rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil).Once()
+		rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil).Once()
+		_, err := rec.Sync(context.TODO(), rm, desired)
+		require.NoError(t, err)
+	}
+}
+
+// An AWS-side change to a field the user never set drives one Update, as
+// today. When nil can't undo it, the new value is accepted afterwards.
+func TestUnsetFieldsUnmanaged_AWSChangeDrivesOneUpdate(t *testing.T) {
+	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
+	desired := newUnsetRes(map[string]interface{}{"name": "a"})
+	def := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"})
+	changed := newUnsetRes(map[string]interface{}{"name": "a", "description": "changed outside ACK"})
+
+	syncSeq(t, rec, rm, kc, desired, def, def, changed, changed, changed)
+	rm.AssertNumberOfCalls(t, "Update", 1)
+}
+
+// A value that appears on a field AWS previously reported as unset (a policy
+// added outside ACK) is a change too, so the hook gets to remove it.
+func TestUnsetFieldsUnmanaged_AppearingValueDrivesOneUpdate(t *testing.T) {
+	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
+	desired := newUnsetRes(map[string]interface{}{"name": "a"})
+	none := newUnsetRes(map[string]interface{}{"name": "a"})
+	added := newUnsetRes(map[string]interface{}{"name": "a", "description": "added outside ACK"})
+
+	// The Update removed it, so AWS reports nothing afterwards.
+	syncSeq(t, rec, rm, kc, desired, none, added, none, none)
+	rm.AssertNumberOfCalls(t, "Update", 1)
 }

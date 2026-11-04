@@ -30,6 +30,9 @@ import (
 // bitset over the interned paths: an entry costs a few machine words no
 // matter how large the field values are.
 //
+// Each entry also keeps a hash of the value AWS reported for every unset
+// field on the previous sync, so a change to that value can be detected.
+//
 // The store is empty after a controller restart or a leader change. A CR with
 // no entry keeps today's behavior for one sync, and its entry is seeded from
 // its spec on that sync. See declared_fields.go.
@@ -43,6 +46,10 @@ type declaredFieldsStore struct {
 type declaredEntry struct {
 	uid  types.UID
 	bits []uint64
+	// seen maps each unset field that AWS reported a value for on the
+	// previous filtered sync (by interned delta path) to a hash of that
+	// value. It is nil until the CR's first filtered sync.
+	seen map[int]uint64
 }
 
 func newDeclaredFieldsStore() *declaredFieldsStore {
@@ -87,19 +94,68 @@ func (s *declaredFieldsStore) set(key types.NamespacedName, uid types.UID, paths
 	defer s.mu.Unlock()
 	idx := make([]int, 0, len(paths))
 	for _, p := range paths {
-		i, ok := s.index[p]
-		if !ok {
-			i = len(s.paths)
-			s.index[p] = i
-			s.paths = append(s.paths, p)
-		}
-		idx = append(idx, i)
+		idx = append(idx, s.intern(p))
 	}
 	bits := make([]uint64, (len(s.paths)+63)/64)
 	for _, i := range idx {
 		bits[i/64] |= 1 << uint(i%64)
 	}
-	s.entries[key] = declaredEntry{uid: uid, bits: bits}
+	// Keep the values seen for the same object; a new object starts over.
+	var seen map[int]uint64
+	if e, ok := s.entries[key]; ok && e.uid == uid {
+		seen = e.seen
+	}
+	s.entries[key] = declaredEntry{uid: uid, bits: bits, seen: seen}
+}
+
+// intern returns the index of p, adding it if needed. Callers hold s.mu.
+func (s *declaredFieldsStore) intern(p string) int {
+	i, ok := s.index[p]
+	if !ok {
+		i = len(s.paths)
+		s.index[p] = i
+		s.paths = append(s.paths, p)
+	}
+	return i
+}
+
+// seenValues returns the value hashes recorded for the CR's unset fields on
+// its previous filtered sync, keyed by delta path. It returns nil when the CR
+// has no entry or has not had a filtered sync yet.
+func (s *declaredFieldsStore) seenValues(key types.NamespacedName, uid types.UID) map[string]uint64 {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok || e.uid != uid || e.seen == nil {
+		return nil
+	}
+	out := make(map[string]uint64, len(e.seen))
+	for i, h := range e.seen {
+		out[s.paths[i]] = h
+	}
+	return out
+}
+
+// setSeenValues replaces the value hashes for the CR's unset fields. It does
+// nothing when the CR has no entry.
+func (s *declaredFieldsStore) setSeenValues(key types.NamespacedName, uid types.UID, seen map[string]uint64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok || e.uid != uid {
+		return
+	}
+	e.seen = make(map[int]uint64, len(seen))
+	for p, h := range seen {
+		e.seen[s.intern(p)] = h
+	}
+	s.entries[key] = e
 }
 
 // forget drops the CR's entry. Called when the CR is being deleted or is gone.

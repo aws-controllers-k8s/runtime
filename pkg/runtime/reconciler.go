@@ -1132,16 +1132,21 @@ func (r *resourceReconciler) updateResource(
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
-	// A field the user never set does not drive an Update just because AWS
-	// reports a value for it. Applied here only, not in filteredDelta: the
+	// A field the user never set drives an Update only when AWS's value for it
+	// changed since the previous sync. Applied here only, not in filteredDelta: the
 	// patch gate in patchResourceMetadataAndSpec must still see such
 	// differences so that late-initialized values are persisted.
 	if r.unsetFieldsUnmanaged() {
 		if declared, ok := r.declaredFieldsEntry(desired); ok {
-			if dropped := filterUnsetUnmanagedDifferences(
-				delta, declared, r.unsetMeansEmptyPaths(),
-			); len(dropped) > 0 {
-				rlog.Debug("ignoring differences on spec fields this resource does not set", "paths", dropped)
+			res := filterUnsetUnmanagedDifferences(
+				delta, declared, r.unsetMeansEmptyPaths(), r.seenUnsetValues(desired),
+			)
+			r.recordSeenUnsetValues(desired, res.seen)
+			if len(res.dropped) > 0 {
+				rlog.Debug("ignoring unchanged AWS values on spec fields this resource does not set", "paths", res.dropped)
+			}
+			if len(res.changed) > 0 {
+				rlog.Info("AWS value changed on spec fields this resource does not set", "paths", res.changed)
 			}
 		} else {
 			// No entry: what the user set before is unknown (for example

@@ -15,6 +15,8 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"reflect"
 	"sort"
 	"strings"
@@ -27,11 +29,12 @@ import (
 )
 
 // A controller generated with `unset_fields_unmanaged: true` in its
-// generator.yaml treats a spec field the user never set as not managed by the
-// resource: when AWS reports a value for it (typically a server-side default),
-// that difference does not drive an Update. The setting reaches the runtime
-// through the resource descriptor (AWSResourceDescriptorWithUnsetFields); it
-// is chosen by the controller's maintainers, not by users.
+// generator.yaml compares a spec field the user never set against the value
+// AWS reported for it on the previous sync, instead of against nil. A
+// server-side default therefore does not drive an Update, while a change to
+// that value still does, once. The setting reaches the runtime through the
+// resource descriptor (AWSResourceDescriptorWithUnsetFields); it is chosen by
+// the controller's maintainers, not by users.
 //
 // A nil field alone cannot tell "never set" from "removed by the user", so the
 // controller keeps, in memory, which spec paths each CR set at its last
@@ -246,33 +249,88 @@ func isUnsetDeltaValue(v interface{}) bool {
 	return false
 }
 
-// filterUnsetUnmanagedDifferences removes, in place, every spec difference
-// whose desired side (A) is unset and whose path the record does not contain.
-// It returns the dropped paths for logging. Differences outside Spec, on tag
-// fields, or on paths the user set before (a removal) are kept.
+// unsetFilterResult is what filterUnsetUnmanagedDifferences did to a delta.
+type unsetFilterResult struct {
+	// dropped are the differences removed from the delta.
+	dropped []string
+	// changed are unset fields whose AWS value differs from the previous
+	// sync's. Their differences are kept, so the Update undoes what it can.
+	changed []string
+	// seen holds a hash of AWS's value for every unset field that differs,
+	// to compare against on the next sync.
+	seen map[string]uint64
+}
+
+// filterUnsetUnmanagedDifferences handles every spec difference whose
+// desired side (A) is unset and whose path the record does not contain: a
+// field the user never set. Such a difference is removed from the delta, in
+// place, while AWS reports the same value as on the previous sync. When the
+// value changed, the difference is kept, so this sync's Update undoes the
+// change wherever sending nil can (a hook that deletes, an API that resets an
+// omitted field). Whatever AWS reports after that is accepted on the next
+// sync, so a change nil can't undo costs one Update.
 //
-// unsetMeansEmpty lists the paths (Go field names, e.g. "Spec.Policy") whose
-// differences are always kept.
+// seen is the result of the previous sync. When it is nil (the CR's first
+// filtered sync), every such difference is removed and recorded.
+//
+// Differences outside Spec, on paths the user set before (a removal), and on
+// unsetMeansEmpty paths (Go field names, e.g. "Spec.Policy") are always kept.
 func filterUnsetUnmanagedDifferences(
 	delta *ackcompare.Delta,
 	declared map[string]struct{},
 	unsetMeansEmpty []string,
-) []string {
+	seen map[string]uint64,
+) unsetFilterResult {
+	res := unsetFilterResult{seen: map[string]uint64{}}
 	if delta == nil {
-		return nil
+		return res
 	}
-	var dropped []string
 	kept := delta.Differences[:0]
 	for _, diff := range delta.Differences {
 		if diff != nil && isUnsetDeltaValue(diff.A) && diff.Path.Contains("Spec") &&
 			!pathIsUnsetMeansEmpty(diff.Path, unsetMeansEmpty) && !pathInRecord(diff.Path, declared) {
-			dropped = append(dropped, diff.Path.String())
-			continue
+			p := diff.Path.String()
+			h := hashDeltaValue(diff.B)
+			res.seen[p] = h
+			if prev, ok := seen[p]; seen == nil || (ok && prev == h) {
+				res.dropped = append(res.dropped, p)
+				continue
+			}
+			res.changed = append(res.changed, p)
 		}
 		kept = append(kept, diff)
 	}
 	delta.Differences = kept
-	return dropped
+	return res
+}
+
+// hashDeltaValue returns a hash of a value from a delta Difference. Only
+// equality matters, so the value itself is never stored.
+func hashDeltaValue(v interface{}) uint64 {
+	h := fnv.New64a()
+	b, err := json.Marshal(v)
+	if err != nil {
+		b = []byte(fmt.Sprintf("%v", v))
+	}
+	_, _ = h.Write(b)
+	return h.Sum64()
+}
+
+// seenUnsetValues returns what filterUnsetUnmanagedDifferences recorded for
+// the CR on its previous sync, or nil.
+func (r *resourceReconciler) seenUnsetValues(res acktypes.AWSResource) map[string]uint64 {
+	key, uid, ok := declaredKey(res)
+	if !ok {
+		return nil
+	}
+	return r.declared.seenValues(key, uid)
+}
+
+// recordSeenUnsetValues stores the hashes for the CR's next sync.
+func (r *resourceReconciler) recordSeenUnsetValues(res acktypes.AWSResource, seen map[string]uint64) {
+	if key, uid, ok := declaredKey(res); ok {
+		r.declared.setSeenValues(key, uid, seen)
+	}
 }
 
 func pathInRecord(p ackcompare.Path, declared map[string]struct{}) bool {
