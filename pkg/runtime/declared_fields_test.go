@@ -16,6 +16,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -130,55 +131,59 @@ func TestDeclaredSpecPaths_Unstructured(t *testing.T) {
 	assert.Equal(t, []string{"loggingConfiguration", "loggingConfiguration.level", "name"}, declaredSpecPaths(res))
 }
 
-// --- record encoding ---------------------------------------------------------
+// --- declaredFieldsStore -----------------------------------------------------
 
-func TestDeclaredFieldsRecord_RoundTripAndDeterministic(t *testing.T) {
-	paths := []string{"name", "loggingConfiguration", "loggingConfiguration.level"}
-	v1, err := encodeDeclaredFieldsRecord("uid-1", paths)
-	require.NoError(t, err)
-	v2, err := encodeDeclaredFieldsRecord("uid-1", []string{"loggingConfiguration.level", "name", "loggingConfiguration"})
-	require.NoError(t, err)
-	assert.Equal(t, v1, v2, "encoding must not depend on input order")
-	assert.Equal(t, `{"uid":"uid-1","fields":{"loggingConfiguration":{"level":{}},"name":{}}}`, v1)
+func TestDeclaredFieldsStore(t *testing.T) {
+	s := newDeclaredFieldsStore()
+	key := k8stypes.NamespacedName{Namespace: "ns", Name: "a"}
+	_, ok := s.get(key, "uid-1")
+	assert.False(t, ok, "no entry yet")
 
-	res := &tResource{obj: &dfCR{ObjectMeta: metav1.ObjectMeta{
-		UID:         "uid-1",
-		Annotations: map[string]string{ackv1alpha1.AnnotationDeclaredFields: v1},
-	}}}
-	got, ok := readDeclaredFieldsRecord(res)
-	require.True(t, ok)
-	assert.Equal(t, map[string]struct{}{
-		"name": {}, "loggingConfiguration": {}, "loggingConfiguration.level": {},
-	}, got)
-}
+	s.set(key, "uid-1", []string{"name", "loggingConfiguration", "loggingConfiguration.level"})
+	assert.Equal(t, []string{"loggingConfiguration", "loggingConfiguration.level", "name"}, s.recorded(key, "uid-1"))
 
-func TestReadDeclaredFieldsRecord_Unusable(t *testing.T) {
-	valid, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name"})
-	for name, tc := range map[string]struct {
-		uid         k8stypes.UID
-		annotations map[string]string
-	}{
-		"missing":     {uid: "uid-1"},
-		"garbage":     {uid: "uid-1", annotations: map[string]string{ackv1alpha1.AnnotationDeclaredFields: "{not json"}},
-		"foreign uid": {uid: "uid-2", annotations: map[string]string{ackv1alpha1.AnnotationDeclaredFields: valid}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			res := &tResource{obj: &dfCR{ObjectMeta: metav1.ObjectMeta{UID: tc.uid, Annotations: tc.annotations}}}
-			_, ok := readDeclaredFieldsRecord(res)
-			assert.False(t, ok)
-		})
+	_, ok = s.get(key, "uid-2")
+	assert.False(t, ok, "an entry left by an earlier object with the same name is not used")
+
+	// Paths are interned once per kind; replacing an entry drops the paths
+	// that are no longer set.
+	other := k8stypes.NamespacedName{Namespace: "ns", Name: "b"}
+	s.set(other, "uid-3", []string{"name", "description"})
+	s.set(key, "uid-1", []string{"name"})
+	assert.Equal(t, []string{"name"}, s.recorded(key, "uid-1"))
+	assert.Equal(t, []string{"description", "name"}, s.recorded(other, "uid-3"))
+	assert.Len(t, s.paths, 4)
+
+	s.forget(key)
+	_, ok = s.get(key, "uid-1")
+	assert.False(t, ok, "forgotten")
+
+	// More than 64 distinct paths spill into a second word.
+	many := make([]string, 70)
+	for i := range many {
+		many[i] = fmt.Sprintf("f%02d", i)
 	}
+	s.set(key, "uid-1", many)
+	assert.Equal(t, many, s.recorded(key, "uid-1"))
+	assert.Equal(t, []string{"description", "name"}, s.recorded(other, "uid-3"), "older, shorter bitsets still read correctly")
+
+	var nilStore *declaredFieldsStore
+	nilStore.set(key, "uid-1", []string{"name"})
+	nilStore.forget(key)
+	_, ok = nilStore.get(key, "uid-1")
+	assert.False(t, ok, "a nil store records nothing")
 }
 
 func TestDeclaredFieldsForFilter_FallsBackToCurrentSpec(t *testing.T) {
-	// A record from another object (for example a copied manifest) is ignored
-	// and the fields set right now are used instead.
-	foreign, _ := encodeDeclaredFieldsRecord("uid-other", []string{"name", "description"})
+	rec := &resourceReconciler{declared: newDeclaredFieldsStore()}
 	res := &tResource{obj: &dfCR{
-		ObjectMeta: metav1.ObjectMeta{UID: "uid-1", Annotations: map[string]string{ackv1alpha1.AnnotationDeclaredFields: foreign}},
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "a", UID: "uid-1"},
 		Spec:       dfSpec{Name: strp("a")},
 	}}
-	assert.Equal(t, map[string]struct{}{"name": {}}, declaredFieldsForFilter(res))
+	assert.Equal(t, map[string]struct{}{"name": {}}, rec.declaredFieldsForFilter(res), "no entry")
+	// An entry left by an earlier object with the same name is ignored.
+	rec.declared.set(k8stypes.NamespacedName{Namespace: "ns", Name: "a"}, "uid-old", []string{"name", "description"})
+	assert.Equal(t, map[string]struct{}{"name": {}}, rec.declaredFieldsForFilter(res), "entry from another UID")
 }
 
 // --- filterUnsetUnmanagedDifferences -----------------------------------------
@@ -257,114 +262,97 @@ func unsetFieldsReconciler(t *testing.T, gateEnabled bool) (*resourceReconciler,
 	t.Helper()
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, false)
 	rec.cfg.FeatureGates[featuregate.UnsetFieldsUnmanaged] = featuregate.Feature{Enabled: gateEnabled}
+	rec.declared = newDeclaredFieldsStore()
 	wireDescriptorCommon(rd)
 	wireManagerCommon(rm, scmd)
 	return rec, rm, rd, kc
 }
 
-// newUnsetRes builds a managed uResource with a UID and optional record.
-func newUnsetRes(spec map[string]interface{}, record string) *uResource {
+// unsetKey is the store key of the resources built by newUnsetRes.
+var unsetKey = k8stypes.NamespacedName{Namespace: "default", Name: "mybook"}
+
+// newUnsetRes builds a managed uResource named default/mybook with UID uid-1.
+func newUnsetRes(spec map[string]interface{}) *uResource {
 	r := newDriftRes(false, spec)
 	r.obj.SetUID("uid-1")
-	if record != "" {
-		r.obj.SetAnnotations(map[string]string{ackv1alpha1.AnnotationDeclaredFields: record})
-	}
 	return r
 }
 
-// patchedAnnotation returns the declared-fields annotation of the object
-// passed to the last kc.Patch call, or "" when Patch was not called.
-func patchedAnnotation(kc *ctrlrtclientmock.Client) string {
-	for i := len(kc.Calls) - 1; i >= 0; i-- {
-		if kc.Calls[i].Method == "Patch" {
-			if obj, ok := kc.Calls[i].Arguments.Get(1).(client.Object); ok {
-				return obj.GetAnnotations()[ackv1alpha1.AnnotationDeclaredFields]
-			}
-		}
-	}
-	return ""
+// syncOnce runs one Sync with AWS reporting `latest`.
+func syncOnce(t *testing.T, rec *resourceReconciler, rm *ackmocks.AWSResourceManager, kc *ctrlrtclientmock.Client, desired, latest acktypes.AWSResource) {
+	t.Helper()
+	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
+	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	_, err := rec.Sync(context.TODO(), rm, desired)
+	require.NoError(t, err)
 }
 
 func TestUnsetFieldsUnmanaged_ServerDefaultDoesNotDriveUpdate(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, "")
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}, "")
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	want, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name"})
-	assert.Equal(t, want, patchedAnnotation(kc), "the record is written on the first sync")
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"), "recorded on the first sync")
+	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestUnsetFieldsUnmanaged_GateOffKeepsTodaysBehavior(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, false)
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, "")
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}, "")
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	assert.Empty(t, patchedAnnotation(kc), "no record without the gate")
+	assert.Nil(t, rec.declared.recorded(unsetKey, "uid-1"), "nothing recorded without the gate")
 }
 
 func TestUnsetFieldsUnmanaged_RemovedFieldStillDrivesUpdate(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	record, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name", "description"})
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, record)
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "old value"}, record)
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	rec.declared.set(unsetKey, "uid-1", []string{"name", "description"})
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "old value"}))
 
 	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	// AWS still reported the removed value before the Update, so the removal
 	// stays pending in the record and keeps showing in the delta next time,
-	// exactly as without the gate. The stored record already matches, so no
-	// record patch is needed.
-	want, _ := encodeDeclaredFieldsRecord("uid-1", []string{"description", "name"})
-	assert.Equal(t, want, record)
-	assert.NotEqual(t, `{"uid":"uid-1","fields":{"name":{}}}`, patchedAnnotation(kc))
+	// exactly as without the gate.
+	assert.Equal(t, []string{"description", "name"}, rec.declared.recorded(unsetKey, "uid-1"))
 }
 
 func TestUnsetFieldsUnmanaged_AppliedRemovalLeavesRecord(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	record, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name", "description"})
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, record)
+	rec.declared.set(unsetKey, "uid-1", []string{"name", "description"})
 	// AWS no longer reports description: the removal has been applied.
-	latest := newUnsetRes(map[string]interface{}{"name": "a"}, record)
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a"}))
 
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	want, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name"})
-	assert.Equal(t, want, patchedAnnotation(kc))
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
+}
+
+// TestUnsetFieldsUnmanaged_RemovalMissedAfterRestart documents the cost of
+// keeping the record in memory: after a restart the store is empty, so a
+// removal made while the controller was not running looks like a field that
+// was never set, and AWS keeps the old value.
+func TestUnsetFieldsUnmanaged_RemovalMissedAfterRestart(t *testing.T) {
+	rec, rm, _, kc := unsetFieldsReconciler(t, true)
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "old value"}))
+
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"))
 }
 
 func TestNextDeclaredPaths(t *testing.T) {
-	record, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name", "kmsKeyID", "description"})
-	declared := &tResource{obj: &dfCR{
-		ObjectMeta: metav1.ObjectMeta{UID: "uid-1", Annotations: map[string]string{ackv1alpha1.AnnotationDeclaredFields: record}},
-		Spec:       dfSpec{Name: strp("a"), Enabled: boolp(true)},
-	}}
+	previous := map[string]struct{}{"name": {}, "kmsKeyID": {}, "description": {}}
+	declared := &tResource{obj: &dfCR{Spec: dfSpec{Name: strp("a"), Enabled: boolp(true)}}}
 	observed := &tResource{obj: &dfCR{Spec: dfSpec{
 		Name:     strp("a"),
 		Enabled:  boolp(true),
@@ -372,44 +360,52 @@ func TestNextDeclaredPaths(t *testing.T) {
 		Logging:  &dfLogging{},         // never declared: not added
 		// description: removed and no longer reported: dropped
 	}}}
-	assert.Equal(t, []string{"enabled", "kmsKeyID", "name"}, nextDeclaredPaths(declared, observed))
-	// Without an observation (create path) the record is what is set now.
-	assert.Equal(t, []string{"enabled", "name"}, nextDeclaredPaths(declared, nil))
+	assert.Equal(t, []string{"enabled", "kmsKeyID", "name"}, nextDeclaredPaths(declared, observed, previous))
+	// Without an observation (create path) or an entry, the record is what is set now.
+	assert.Equal(t, []string{"enabled", "name"}, nextDeclaredPaths(declared, nil, previous))
+	assert.Equal(t, []string{"enabled", "name"}, nextDeclaredPaths(declared, observed, nil))
 }
 
-func TestUnsetFieldsUnmanaged_ForeignRecordIsNotTrusted(t *testing.T) {
+func TestUnsetFieldsUnmanaged_RecreatedObjectIsNotTrusted(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	// Copied from another object: it claims description was declared.
-	foreign, _ := encodeDeclaredFieldsRecord("uid-other", []string{"name", "description"})
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, foreign)
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}, foreign)
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	// Left by an earlier object with the same name that declared description.
+	rec.declared.set(unsetKey, "uid-other", []string{"name", "description"})
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	want, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name"})
-	assert.Equal(t, want, patchedAnnotation(kc), "the foreign record is replaced")
+	assert.Equal(t, []string{"name"}, rec.declared.recorded(unsetKey, "uid-1"), "replaced")
 }
 
 func TestUnsetFieldsUnmanaged_SteadyStateMakesNoWrite(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, true)
-	record, _ := encodeDeclaredFieldsRecord("uid-1", []string{"name"})
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, record)
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}, record)
-	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
-	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)
-	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	_, err := rec.Sync(context.TODO(), rm, desired)
-	require.NoError(t, err)
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// deletingRes is a uResource that is being deleted.
+type deletingRes struct{ *uResource }
+
+func (r *deletingRes) IsBeingDeleted() bool { return true }
+
+func TestUnsetFieldsUnmanaged_DeletionForgetsEntry(t *testing.T) {
+	rec, rm, _, _, _ := ignoreDriftReconcilerMocks(t, false)
+	rec.declared = newDeclaredFieldsStore()
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("IsManaged", mock.Anything).Return(false)
+	rec.rd = rd
+	rec.declared.set(unsetKey, "uid-1", []string{"name"})
+
+	_, err := rec.reconcile(context.TODO(), rm, &deletingRes{newUnsetRes(map[string]interface{}{"name": "a"})})
+	require.NoError(t, err)
+	_, ok := rec.declared.get(unsetKey, "uid-1")
+	assert.False(t, ok)
 }
 
 // optOutDescriptor is a mocked descriptor that also implements
@@ -439,8 +435,8 @@ func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 func TestUnsetFieldsUnmanaged_OptedOutFieldStillDrivesUpdate(t *testing.T) {
 	rec, rm, rdMock, kc := unsetFieldsReconciler(t, true)
 	rec.rd = &optOutDescriptor{AWSResourceDescriptor: rdMock, paths: []string{"Spec.Description"}}
-	desired := newUnsetRes(map[string]interface{}{"name": "a"}, "")
-	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "added outside ACK"}, "")
+	desired := newUnsetRes(map[string]interface{}{"name": "a"})
+	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "added outside ACK"})
 	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
 	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(latest, nil)
 	rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil)

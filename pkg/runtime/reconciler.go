@@ -85,6 +85,9 @@ type resourceReconciler struct {
 	rmf          acktypes.AWSResourceManagerFactory
 	rd           acktypes.AWSResourceDescriptor
 	resyncPeriod time.Duration
+	// declared is the in-memory record used by the UnsetFieldsUnmanaged
+	// feature gate. See declared_fields.go.
+	declared *declaredFieldsStore
 }
 
 // GroupVersionKind returns the string containing the API group, version and
@@ -263,6 +266,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
+			r.forgetDeclaredFields(req.NamespacedName)
 			return ctrlrt.Result{}, nil
 		}
 		return ctrlrt.Result{}, err
@@ -518,6 +522,9 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
+		if key, _, ok := declaredKey(res); ok {
+			r.forgetDeclaredFields(key)
+		}
 		// Ensure the resource is managed before attempting delete
 		if !r.rd.IsManaged(res) {
 			return res, nil
@@ -711,9 +718,10 @@ func (r *resourceReconciler) Sync(
 	if latest, err = r.lateInitializeResource(ctx, rm, resolved, latest); err != nil {
 		return latest, err
 	}
-	// Record which spec fields this sync was asked to manage. See
-	// declared_fields.go; a no-op unless UnsetFieldsUnmanaged is enabled.
-	latest = r.ensureDeclaredFieldsRecord(ctx, rm, resolved, observed, latest)
+	// Record, in controller memory, which spec fields this sync was asked to
+	// manage. See declared_fields.go; a no-op unless UnsetFieldsUnmanaged is
+	// enabled.
+	r.recordDeclaredFields(resolved, observed)
 	return latest, nil
 }
 
@@ -1130,7 +1138,7 @@ func (r *resourceReconciler) updateResource(
 	// differences so that late-initialized values are persisted.
 	if r.cfg.FeatureGates.IsEnabled(featuregate.UnsetFieldsUnmanaged) {
 		if dropped := filterUnsetUnmanagedDifferences(
-			delta, declaredFieldsForFilter(desired), r.unsetMeansEmptyPaths(),
+			delta, r.declaredFieldsForFilter(desired), r.unsetMeansEmptyPaths(),
 		); len(dropped) > 0 {
 			rlog.Debug("ignoring differences on spec fields this resource does not set", "paths", dropped)
 		}
@@ -2020,5 +2028,6 @@ func NewReconcilerWithClient(
 		rmf:          rmf,
 		rd:           rmf.ResourceDescriptor(),
 		resyncPeriod: resyncPeriod,
+		declared:     newDeclaredFieldsStore(),
 	}
 }

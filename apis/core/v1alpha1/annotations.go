@@ -102,12 +102,4 @@ const (
 	// the baseline and is late-initialized normally. This annotation is only
 	// honored when the IgnoreFieldDrift feature gate is enabled.
 	AnnotationIgnoreFieldDrift = AnnotationPrefix + "ignore-field-drift"
-	// AnnotationDeclaredFields is written by the ACK service controller, not
-	// by users. It records which spec field paths were set at the last
-	// successful sync, as JSON: {"uid":"<metadata.uid>","fields":{<tree>}}.
-	// Only paths are stored, never values. A field that is unset now but was
-	// set before has been removed by the user; a field that was never set is
-	// not managed by this resource. Only written and read when the
-	// UnsetFieldsUnmanaged feature gate is enabled.
-	AnnotationDeclaredFields = AnnotationPrefix + "declared-fields"
 )
