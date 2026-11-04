@@ -42,17 +42,26 @@ const (
 	// alters reconciliation behavior, so it is disabled by default and must be
 	// explicitly enabled by the controller operator.
 	IgnoreFieldDrift = "IgnoreFieldDrift"
+
+	// UnsetFieldsUnmanaged is a feature gate that stops a spec field the user
+	// never set from driving an Update when AWS reports a value for it (for
+	// example a server-side default). Removal stays visible: a field that was
+	// set before and is unset now still shows in the delta. The controller
+	// records the declared fields in the services.k8s.aws/declared-fields
+	// annotation.
+	UnsetFieldsUnmanaged = "UnsetFieldsUnmanaged"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
 // representing the default feature gates for ACK controllers.
 var defaultACKFeatureGates = FeatureGates{
-	ResourceAdoption:  {Stage: Beta, Enabled: true},
-	ReadOnlyResources: {Stage: Beta, Enabled: true},
-	TeamLevelCARM:     {Stage: Alpha, Enabled: false},
-	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
-	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
-	IgnoreFieldDrift:  {Stage: Alpha, Enabled: false},
+	ResourceAdoption:     {Stage: Beta, Enabled: true},
+	ReadOnlyResources:    {Stage: Beta, Enabled: true},
+	TeamLevelCARM:        {Stage: Alpha, Enabled: false},
+	ServiceLevelCARM:     {Stage: Alpha, Enabled: false},
+	IAMRoleSelector:      {Stage: Alpha, Enabled: false},
+	IgnoreFieldDrift:     {Stage: Alpha, Enabled: false},
+	UnsetFieldsUnmanaged: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.

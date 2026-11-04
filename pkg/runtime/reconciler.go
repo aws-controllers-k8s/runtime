@@ -644,6 +644,12 @@ func (r *resourceReconciler) Sync(
 	rlog.Enter("rm.ReadOne")
 	latest, err = rm.ReadOne(ctx, resolved)
 	rlog.Exit("rm.ReadOne", err)
+	// What AWS reported before any Update; used to keep a pending removal in
+	// the declared-fields record. See nextDeclaredPaths.
+	var observed acktypes.AWSResource
+	if err == nil && r.cfg.FeatureGates.IsEnabled(featuregate.UnsetFieldsUnmanaged) && ackcompare.IsNotNil(latest) {
+		observed = latest.DeepCopy()
+	}
 	if err != nil {
 		if err != ackerr.NotFound {
 			return latest, err
@@ -705,6 +711,9 @@ func (r *resourceReconciler) Sync(
 	if latest, err = r.lateInitializeResource(ctx, rm, resolved, latest); err != nil {
 		return latest, err
 	}
+	// Record which spec fields this sync was asked to manage. See
+	// declared_fields.go; a no-op unless UnsetFieldsUnmanaged is enabled.
+	latest = r.ensureDeclaredFieldsRecord(ctx, rm, resolved, observed, latest)
 	return latest, nil
 }
 
@@ -1115,6 +1124,17 @@ func (r *resourceReconciler) updateResource(
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
+	// A field the user never set does not drive an Update just because AWS
+	// reports a value for it. Applied here only, not in filteredDelta: the
+	// patch gate in patchResourceMetadataAndSpec must still see such
+	// differences so that late-initialized values are persisted.
+	if r.cfg.FeatureGates.IsEnabled(featuregate.UnsetFieldsUnmanaged) {
+		if dropped := filterUnsetUnmanagedDifferences(
+			delta, declaredFieldsForFilter(desired), r.unsetMeansEmptyPaths(),
+		); len(dropped) > 0 {
+			rlog.Debug("ignoring differences on spec fields this resource does not set", "paths", dropped)
+		}
+	}
 	if delta.DifferentAt("Spec") {
 		rlog.Info(
 			"desired resource state has changed",
