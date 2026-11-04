@@ -31,7 +31,6 @@ import (
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
-	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
@@ -234,7 +233,7 @@ func TestFilterUnsetUnmanaged(t *testing.T) {
 		// outside Spec: kept
 		[3]interface{}{"Status.Something", nilStr, strp("x")},
 	)
-	dropped := filterUnsetUnmanagedDifferences(d, record, nil)
+	dropped := filterUnsetUnmanagedDifferences(d, record, []string{"Spec.Tags"})
 	assert.ElementsMatch(t, []string{
 		"Spec.Description",
 		"Spec.TracingConfiguration",
@@ -258,13 +257,30 @@ func TestFilterUnsetUnmanaged_RemovedParentKeepsDiff(t *testing.T) {
 
 // --- reconciler wiring -------------------------------------------------------
 
-func unsetFieldsReconciler(t *testing.T, gateEnabled bool) (*resourceReconciler, *ackmocks.AWSResourceManager, *ackmocks.AWSResourceDescriptor, *ctrlrtclientmock.Client) {
+// unsetFieldsDescriptor is a mocked descriptor that also implements
+// AWSResourceDescriptorWithUnsetFields, as one generated with
+// `unset_fields_unmanaged: true` does.
+type unsetFieldsDescriptor struct {
+	*ackmocks.AWSResourceDescriptor
+	enabled bool
+	paths   []string
+}
+
+func (d *unsetFieldsDescriptor) UnsetFieldsUnmanaged() bool     { return d.enabled }
+func (d *unsetFieldsDescriptor) UnsetMeansEmptyPaths() []string { return d.paths }
+
+// unsetFieldsReconciler returns a reconciler whose descriptor was generated
+// with (enabled) or without the setting. Without it, the descriptor does not
+// implement the interface at all, like one from today's code-generator.
+func unsetFieldsReconciler(t *testing.T, enabled bool) (*resourceReconciler, *ackmocks.AWSResourceManager, *ackmocks.AWSResourceDescriptor, *ctrlrtclientmock.Client) {
 	t.Helper()
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, false)
-	rec.cfg.FeatureGates[featuregate.UnsetFieldsUnmanaged] = featuregate.Feature{Enabled: gateEnabled}
 	rec.declared = newDeclaredFieldsStore()
 	wireDescriptorCommon(rd)
 	wireManagerCommon(rm, scmd)
+	if enabled {
+		rec.rd = &unsetFieldsDescriptor{AWSResourceDescriptor: rd, enabled: true, paths: []string{"Spec.Tags"}}
+	}
 	return rec, rm, rd, kc
 }
 
@@ -300,14 +316,14 @@ func TestUnsetFieldsUnmanaged_ServerDefaultDoesNotDriveUpdate(t *testing.T) {
 	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func TestUnsetFieldsUnmanaged_GateOffKeepsTodaysBehavior(t *testing.T) {
+func TestUnsetFieldsUnmanaged_NotEnabledKeepsTodaysBehavior(t *testing.T) {
 	rec, rm, _, kc := unsetFieldsReconciler(t, false)
 	syncOnce(t, rec, rm, kc,
 		newUnsetRes(map[string]interface{}{"name": "a"}),
 		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 
 	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	assert.Nil(t, rec.declared.recorded(unsetKey, "uid-1"), "nothing recorded without the gate")
+	assert.Nil(t, rec.declared.recorded(unsetKey, "uid-1"), "nothing recorded when not enabled")
 }
 
 func TestUnsetFieldsUnmanaged_RemovedFieldStillDrivesUpdate(t *testing.T) {
@@ -408,15 +424,6 @@ func TestUnsetFieldsUnmanaged_DeletionForgetsEntry(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// optOutDescriptor is a mocked descriptor that also implements
-// AWSResourceDescriptorWithUnsetMeansEmpty, as a generated one does.
-type optOutDescriptor struct {
-	*ackmocks.AWSResourceDescriptor
-	paths []string
-}
-
-func (d *optOutDescriptor) UnsetMeansEmptyPaths() []string { return d.paths }
-
 func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 	var nilStr *string
 	var nilList []*string
@@ -425,8 +432,8 @@ func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 		[3]interface{}{"Spec.Tags", nilList, []*string{strp("t")}},
 		[3]interface{}{"Spec.Description", nilStr, strp("server default")},
 	)
-	// The descriptor's list is authoritative: Policy is opted out, and Tags
-	// is kept because the generated list includes the tag field.
+	// Policy is opted out, and Tags is kept because the generated list always
+	// includes the tag field.
 	dropped := filterUnsetUnmanagedDifferences(d, map[string]struct{}{}, []string{"Spec.Policy", "Spec.Tags"})
 	assert.Equal(t, []string{"Spec.Description"}, dropped)
 	assert.Equal(t, []string{"Spec.Policy", "Spec.Tags"}, pathsOf(d))
@@ -434,7 +441,7 @@ func TestFilterUnsetUnmanaged_DescriptorOptOut(t *testing.T) {
 
 func TestUnsetFieldsUnmanaged_OptedOutFieldStillDrivesUpdate(t *testing.T) {
 	rec, rm, rdMock, kc := unsetFieldsReconciler(t, true)
-	rec.rd = &optOutDescriptor{AWSResourceDescriptor: rdMock, paths: []string{"Spec.Description"}}
+	rec.rd = &unsetFieldsDescriptor{AWSResourceDescriptor: rdMock, enabled: true, paths: []string{"Spec.Description"}}
 	desired := newUnsetRes(map[string]interface{}{"name": "a"})
 	latest := newUnsetRes(map[string]interface{}{"name": "a", "description": "added outside ACK"})
 	rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
@@ -445,5 +452,16 @@ func TestUnsetFieldsUnmanaged_OptedOutFieldStillDrivesUpdate(t *testing.T) {
 	_, err := rec.Sync(context.TODO(), rm, desired)
 	require.NoError(t, err)
 
+	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// A descriptor that implements the interface but reports false (the setting
+// is generated per controller, so this is not expected, but must be safe).
+func TestUnsetFieldsUnmanaged_DescriptorReportsFalse(t *testing.T) {
+	rec, rm, rdMock, kc := unsetFieldsReconciler(t, false)
+	rec.rd = &unsetFieldsDescriptor{AWSResourceDescriptor: rdMock, enabled: false}
+	syncOnce(t, rec, rm, kc,
+		newUnsetRes(map[string]interface{}{"name": "a"}),
+		newUnsetRes(map[string]interface{}{"name": "a", "description": "server default"}))
 	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

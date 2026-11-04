@@ -85,8 +85,8 @@ type resourceReconciler struct {
 	rmf          acktypes.AWSResourceManagerFactory
 	rd           acktypes.AWSResourceDescriptor
 	resyncPeriod time.Duration
-	// declared is the in-memory record used by the UnsetFieldsUnmanaged
-	// feature gate. See declared_fields.go.
+	// declared is the in-memory record used when the controller was
+	// generated with unset_fields_unmanaged. See declared_fields.go.
 	declared *declaredFieldsStore
 }
 
@@ -654,7 +654,7 @@ func (r *resourceReconciler) Sync(
 	// What AWS reported before any Update; used to keep a pending removal in
 	// the declared-fields record. See nextDeclaredPaths.
 	var observed acktypes.AWSResource
-	if err == nil && r.cfg.FeatureGates.IsEnabled(featuregate.UnsetFieldsUnmanaged) && ackcompare.IsNotNil(latest) {
+	if err == nil && r.unsetFieldsUnmanaged() && ackcompare.IsNotNil(latest) {
 		observed = latest.DeepCopy()
 	}
 	if err != nil {
@@ -719,8 +719,8 @@ func (r *resourceReconciler) Sync(
 		return latest, err
 	}
 	// Record, in controller memory, which spec fields this sync was asked to
-	// manage. See declared_fields.go; a no-op unless UnsetFieldsUnmanaged is
-	// enabled.
+	// manage. See declared_fields.go; a no-op unless the controller was
+	// generated with unset_fields_unmanaged.
 	r.recordDeclaredFields(resolved, observed)
 	return latest, nil
 }
@@ -1136,7 +1136,7 @@ func (r *resourceReconciler) updateResource(
 	// reports a value for it. Applied here only, not in filteredDelta: the
 	// patch gate in patchResourceMetadataAndSpec must still see such
 	// differences so that late-initialized values are persisted.
-	if r.cfg.FeatureGates.IsEnabled(featuregate.UnsetFieldsUnmanaged) {
+	if r.unsetFieldsUnmanaged() {
 		if dropped := filterUnsetUnmanagedDifferences(
 			delta, r.declaredFieldsForFilter(desired), r.unsetMeansEmptyPaths(),
 		); len(dropped) > 0 {
