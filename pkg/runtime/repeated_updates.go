@@ -34,25 +34,24 @@ import (
 // generator.yaml skips an Update that would repeat the last successful one.
 //
 // After every sync that ends with ACK.ResourceSynced and Ready both True, the
-// reconciler keeps, in memory, a hash of the spec the delta was computed from
-// (the resolved desired state, after the ignore-field-drift merge) and a hash
-// of the spec AWS reported before any Update. On the next sync, a non-empty
-// delta does not drive an Update when:
+// reconciler keeps, in memory, two hashes: one of what the Update is built
+// from (the resolved desired spec, after the ignore-field-drift merge, plus
+// the CR's labels and annotations), and one of what AWS reported before any
+// Update (the spec and the status, without conditions). On the next sync, a
+// non-empty delta does not drive an Update only when:
 //
 //   - the CR has such a record, so its last sync ended Synced and Ready,
-//   - the spec the delta is computed from hashes the same,
-//   - the spec AWS reports hashes the same, and
-//   - the resource manager reports the resource synced from what AWS reports
-//     now (rm.IsSynced reads the status fields the controller's synced
-//     condition is generated from).
+//   - both hashes are unchanged,
+//   - the spec references no Secret, whose value can change unseen,
+//   - no hook marked the fresh read not synced, Terminal or Recoverable, and
+//   - rm.IsSynced reports the fresh read synced.
 //
 // Then the delta is the one the last sync acted on. That sync's Update, if it
 // sent one, succeeded without changing anything the controller reads, so
 // sending it again would change nothing either. This is the perpetual delta:
 // a server default on an unset field, a value AWS rewrites, a list AWS
-// reorders. Any change to the spec or to what AWS reports, and any sync that
-// does not end Synced and Ready (a failed Update, a requeue), sends the
-// Update as today.
+// reorders. In every other case, including whenever the reconciler cannot
+// tell, the Update is sent as today.
 //
 // The record is not persisted, so it is empty after a controller restart or a
 // leader change: the first sync of each CR then behaves as today.
@@ -143,18 +142,32 @@ func (r *resourceReconciler) isRepeatedUpdate(
 	desired acktypes.AWSResource,
 	latest acktypes.AWSResource,
 ) bool {
+	// Every early return leaves no pending record, so finishSync also drops
+	// the committed one and the next sync behaves as today.
 	key, uid, ok := resourceKey(desired)
 	if !ok {
 		return false
 	}
-	specHash, ok1 := hashSpec(desired)
-	awsHash, ok2 := hashSpec(latest)
-	if !ok1 || !ok2 {
-		r.updates.forget(key)
+	// A Secret's value is read at Update time and is in neither the spec nor
+	// what AWS returns, so a rotation can't be seen. Never skip.
+	if spec, ok := resourceSpec(desired); !ok || hasSecretReference(reflect.ValueOf(spec)) {
 		return false
 	}
-	prev, ok := r.updates.begin(key, updateRecord{uid: uid, spec: specHash, aws: awsHash})
-	if !ok || prev.spec != specHash || prev.aws != awsHash {
+	desiredHash, ok1 := hashDesired(desired)
+	observedHash, ok2 := hashObserved(latest)
+	if !ok1 || !ok2 {
+		return false
+	}
+	prev, ok := r.updates.begin(key, updateRecord{uid: uid, spec: desiredHash, aws: observedHash})
+	if !ok || prev.spec != desiredHash || prev.aws != observedHash {
+		return false
+	}
+	// A hook may have marked the read itself not synced (for example a
+	// change still propagating).
+	if c := ackcondition.Synced(latest); c != nil && c.Status != corev1.ConditionTrue {
+		return false
+	}
+	if conditionTrue(ackcondition.Terminal(latest)) || conditionTrue(ackcondition.Recoverable(latest)) {
 		return false
 	}
 	synced, err := rm.IsSynced(ctx, latest)
@@ -194,39 +207,117 @@ func resourceKey(res acktypes.AWSResource) (types.NamespacedName, types.UID, boo
 	return types.NamespacedName{Namespace: mo.GetNamespace(), Name: mo.GetName()}, mo.GetUID(), true
 }
 
-// hashSpec returns a hash of the resource's spec. Only equality matters, so
-// the spec itself is never stored. encoding/json is deterministic for structs
-// and sorts map keys.
-func hashSpec(res acktypes.AWSResource) (uint64, bool) {
-	if ackcompare.IsNil(res) {
+// hashDesired hashes what the Update is built from: the spec, plus the labels
+// and annotations, which some hooks read and which change without changing
+// the spec.
+func hashDesired(res acktypes.AWSResource) (uint64, bool) {
+	spec, ok := resourceSpec(res)
+	if !ok {
 		return 0, false
 	}
-	var spec interface{}
-	obj := res.RuntimeObject()
-	if u, ok := obj.(*unstructured.Unstructured); ok {
-		spec = u.Object["spec"]
-	} else {
-		v := reflect.ValueOf(obj)
-		for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
-			if v.IsNil() {
-				return 0, false
-			}
-			v = v.Elem()
-		}
-		if v.Kind() != reflect.Struct {
-			return 0, false
-		}
-		f := v.FieldByName("Spec")
-		if !f.IsValid() {
-			return 0, false
-		}
-		spec = f.Interface()
+	mo := res.MetaObject()
+	return hashJSON(spec, mo.GetLabels(), mo.GetAnnotations())
+}
+
+// hashObserved hashes what AWS reported: the spec and the status, without
+// conditions. Compare and update hooks also read the status.
+func hashObserved(res acktypes.AWSResource) (uint64, bool) {
+	spec, ok := resourceSpec(res)
+	if !ok {
+		return 0, false
 	}
-	b, err := json.Marshal(spec)
+	status, ok := fieldOf(res, "Status", "status")
+	if !ok {
+		return 0, false
+	}
+	b, err := json.Marshal(status)
+	if err != nil {
+		return 0, false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return 0, false
+	}
+	delete(m, "conditions")
+	return hashJSON(spec, m)
+}
+
+// hashJSON returns a hash of the JSON encoding of parts. Only equality
+// matters, so nothing hashed is stored. encoding/json is deterministic for
+// structs and sorts map keys.
+func hashJSON(parts ...interface{}) (uint64, bool) {
+	b, err := json.Marshal(parts)
 	if err != nil {
 		return 0, false
 	}
 	h := fnv.New64a()
 	_, _ = h.Write(b)
 	return h.Sum64(), true
+}
+
+func resourceSpec(res acktypes.AWSResource) (interface{}, bool) {
+	return fieldOf(res, "Spec", "spec")
+}
+
+// fieldOf returns the Spec or Status of a typed resource, or the matching
+// map entry of an unstructured one.
+func fieldOf(res acktypes.AWSResource, goName, jsonName string) (interface{}, bool) {
+	if ackcompare.IsNil(res) || res.MetaObject() == nil {
+		return nil, false
+	}
+	obj := res.RuntimeObject()
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.Object[jsonName], true
+	}
+	v := reflect.ValueOf(obj)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil, false
+	}
+	f := v.FieldByName(goName)
+	if !f.IsValid() {
+		return nil, false
+	}
+	return f.Interface(), true
+}
+
+var secretKeyReferenceType = reflect.TypeOf(ackv1alpha1.SecretKeyReference{})
+
+// hasSecretReference reports whether v holds a set SecretKeyReference
+// anywhere under it.
+func hasSecretReference(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface:
+		if v.IsNil() {
+			return false
+		}
+		return hasSecretReference(v.Elem())
+	case reflect.Struct:
+		if v.Type() == secretKeyReferenceType {
+			return true
+		}
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() && hasSecretReference(v.Field(i)) {
+				return true
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if hasSecretReference(v.Index(i)) {
+				return true
+			}
+		}
+	case reflect.Map:
+		for _, k := range v.MapKeys() {
+			if hasSecretReference(v.MapIndex(k)) {
+				return true
+			}
+		}
+	}
+	return false
 }
