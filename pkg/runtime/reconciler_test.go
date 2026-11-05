@@ -249,6 +249,7 @@ func TestReconcilerCreate_UnmanageResourceOnAWSErrors(t *testing.T) {
 
 	desired, desiredRTObj, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -309,6 +310,7 @@ func TestReconcilerCreate_KeepManagedOnPostCreateError(t *testing.T) {
 
 	desired, desiredRTObj, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -431,6 +433,7 @@ func TestReconcilerCreate_UnmanageOnAWSErrorWithoutPostCreateMarker(t *testing.T
 
 	desired, desiredRTObj, _ := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -487,6 +490,7 @@ func TestReconcilerReadOnlyResource(t *testing.T) {
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationReadOnly: "true",
 	})
@@ -547,6 +551,7 @@ func TestReconcilerAdoptResource(t *testing.T) {
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt",
 		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
@@ -719,6 +724,7 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
@@ -794,6 +800,7 @@ func TestReconcilerAdoptOrCreateResource_Adopt(t *testing.T) {
 
 	desired, _, metaObj := resourceMocks()
 	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
 	metaObj.SetAnnotations(map[string]string{
 		ackv1alpha1.AnnotationAdoptionPolicy: "adopt-or-create",
 		ackv1alpha1.AnnotationAdoptionFields: adoptionFieldsString,
@@ -3549,4 +3556,199 @@ func TestReconcilerAdoptOrCreate_PreservesReferences(t *testing.T) {
 	inner.AssertNotCalled(t, "ClearResolvedReferences", acktypes.AWSResource(desired))
 	require.Empty(rm.calls,
 		"no restoration is needed when the declared spec is never the patch base")
+}
+
+// mockStatefulConditions makes the Conditions and ReplaceConditions mocks of
+// res behave like a real resource: Conditions returns what ReplaceConditions
+// stored last.
+func mockStatefulConditions(
+	res *ackmocks.AWSResource,
+	initial []*ackv1alpha1.Condition,
+) {
+	state := initial
+	res.On("Conditions").Return(func() []*ackv1alpha1.Condition { return state })
+	res.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		state = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+}
+
+// syncWithCanceledReadOne runs Sync for a managed resource that was in sync,
+// with ReadOne failing on a canceled AWS request: the error an in-flight call
+// returns when the controller shuts down. Like a generated resource manager,
+// ReadOne returns the resource with an ACK.Recoverable condition carrying the
+// error.
+func syncWithCanceledReadOne(
+	t *testing.T,
+	ctx context.Context,
+) (*ackmocks.AWSResource, *ackmocks.AWSResourceManager, error) {
+	t.Helper()
+
+	desired, _, _ := resourceMocks()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeResourceSynced,
+			Status:  corev1.ConditionTrue,
+			Message: &ackcondition.SyncedMessage,
+		},
+		{
+			Type:    ackv1alpha1.ConditionTypeReady,
+			Status:  corev1.ConditionTrue,
+			Message: &ackcondition.SyncedMessage,
+		},
+	})
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+
+	canceledErr := &smithy.OperationError{
+		ServiceID:     "IAM",
+		OperationName: "GetPolicy",
+		Err: fmt.Errorf("get identity: get credentials: %w",
+			&aws.RequestCanceledError{Err: context.Canceled}),
+	}
+	recoverableMessage := canceledErr.Error()
+	latest, _, _ := resourceMocks()
+	mockStatefulConditions(latest, []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeRecoverable,
+			Status:  corev1.ConditionTrue,
+			Message: &recoverableMessage,
+		},
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ReadOne", ctx, desired).Return(latest, canceledErr)
+	rm.On("IsSynced", ctx, latest).Return(true, nil)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(true)
+
+	r, _, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+
+	_, err := r.Sync(ctx, rm, desired)
+	return latest, rm, err
+}
+
+// A reconciliation cut off by the controller's shutdown observed nothing new
+// about the resource, so the resource keeps the conditions it had. Otherwise
+// the canceled request would mark a resource that is in sync as
+// ACK.ResourceSynced=Unknown until the next leader reconciles it again.
+func TestReconcilerSync_ShutdownKeepsPriorConditions(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the controller is shutting down
+
+	latest, rm, err := syncWithCanceledReadOne(t, ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	synced := ackcondition.Synced(latest)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionTrue, synced.Status)
+	assert.Equal(t, ackcondition.SyncedMessage, *synced.Message)
+
+	ready := ackcondition.Ready(latest)
+	require.NotNil(t, ready)
+	assert.Equal(t, corev1.ConditionTrue, ready.Status)
+
+	assert.Nil(t, ackcondition.Recoverable(latest),
+		"the cancellation must not show up as a recoverable error")
+	// The ACK.ResourceSynced condition is the prior one, not recomputed.
+	rm.AssertNotCalled(t, "IsSynced", ctx, latest)
+}
+
+// A canceled request while the controller keeps running is a failure of this
+// reconciliation like any other: the resource is ACK.ResourceSynced=Unknown and
+// ACK.Recoverable carries the error, as before.
+func TestReconcilerSync_CanceledRequestWithoutShutdown(t *testing.T) {
+	ctx := context.Background()
+
+	latest, _, err := syncWithCanceledReadOne(t, ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	synced := ackcondition.Synced(latest)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Equal(t, ackcondition.UnknownSyncedMessage, *synced.Message)
+
+	recoverable := ackcondition.Recoverable(latest)
+	require.NotNil(t, recoverable)
+	assert.Equal(t, corev1.ConditionTrue, recoverable.Status)
+	assert.Contains(t, *recoverable.Message, "context canceled")
+}
+
+// The controller shuts down after Create made the resource, while a later call
+// of the same Create is canceled (the case runtime#191 fixed). The resource
+// stays managed, and the resource Sync returns is the created one, carrying
+// its ARN, so HandleReconcileError still patches it to the status. Keeping the
+// prior conditions changes nothing here: a new resource has none, so
+// ACK.ResourceSynced is Unknown.
+func TestReconcilerSync_ShutdownMidCreateStillPatchesStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the controller is shutting down
+	arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("ARN").Return(&arn)
+
+	canceledErr := &smithy.OperationError{
+		ServiceID:     "IAM",
+		OperationName: "AttachRolePolicy",
+		Err: fmt.Errorf("get identity: get credentials: %w",
+			&aws.RequestCanceledError{Err: context.Canceled}),
+	}
+	recoverableMessage := canceledErr.Error()
+	latest, latestRTObj, _ := resourceMocks()
+	latest.On("Identifiers").Return(ids)
+	mockStatefulConditions(latest, []*ackv1alpha1.Condition{
+		{
+			Type:    ackv1alpha1.ConditionTypeRecoverable,
+			Status:  corev1.ConditionTrue,
+			Message: &recoverableMessage,
+		},
+	})
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+	rm.On("ClearResolvedReferences", desired).Return(desired)
+	rm.On("ClearResolvedReferences", latest).Return(latest)
+	rm.On("ReadOne", ctx, desired).Return(latest, ackerr.NotFound).Once()
+	rm.On("Create", ctx, desired).Return(latest, canceledErr)
+	rm.On("IsSynced", ctx, latest).Return(false, nil)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+	rd.On("IsManaged", desired).Return(false).Twice()
+	rd.On("IsManaged", desired).Return(true)
+	rd.On("MarkManaged", desired)
+	rd.On("MarkUnmanaged", desired)
+	rd.On("ResourceFromRuntimeObject", desiredRTObj).Return(desired)
+	rd.On("Delta", desired, desired).Return(ackcompare.NewDelta())
+
+	r, kc, scmd := reconcilerMocks(rmf)
+	rm.On("EnsureTags", ctx, desired, scmd).Return(nil)
+	rm.On("FilterSystemTags", mock.Anything, []string{})
+	kc.On("Patch", withoutCancelContextMatcher, mock.Anything, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+
+	res, err := r.Sync(ctx, rm, desired)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Same(t, latest, res, "Sync returns the created resource")
+	rd.AssertCalled(t, "MarkManaged", desired)
+	rd.AssertNotCalled(t, "MarkUnmanaged", desired)
+
+	synced := ackcondition.Synced(latest)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Nil(t, ackcondition.Recoverable(latest),
+		"the cancellation must not show up as a recoverable error")
+
+	_, _ = r.HandleReconcileError(ctx, desired, res, err)
+	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 }
