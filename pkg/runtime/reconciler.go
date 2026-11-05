@@ -85,9 +85,9 @@ type resourceReconciler struct {
 	rmf          acktypes.AWSResourceManagerFactory
 	rd           acktypes.AWSResourceDescriptor
 	resyncPeriod time.Duration
-	// declared is the in-memory record used when the controller was
-	// generated with unset_fields_unmanaged. See declared_fields.go.
-	declared *declaredFieldsStore
+	// updates is the in-memory record used when the controller was
+	// generated with skip_repeated_updates. See repeated_updates.go.
+	updates *updateRecordStore
 }
 
 // GroupVersionKind returns the string containing the API group, version and
@@ -266,7 +266,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
-			r.forgetDeclaredFields(req.NamespacedName)
+			r.forgetUpdateRecord(req.NamespacedName)
 			return ctrlrt.Result{}, nil
 		}
 		return ctrlrt.Result{}, err
@@ -522,8 +522,8 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
-		if key, _, ok := declaredKey(res); ok {
-			r.forgetDeclaredFields(key)
+		if key, _, ok := resourceKey(res); ok {
+			r.forgetUpdateRecord(key)
 		}
 		// Ensure the resource is managed before attempting delete
 		if !r.rd.IsManaged(res) {
@@ -573,6 +573,11 @@ func (r *resourceReconciler) Sync(
 
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
+	// Deferred before ensureConditions so that it runs after it and sees this
+	// sync's conditions. See repeated_updates.go.
+	defer func() {
+		r.finishSync(desired, latest, err)
+	}()
 	r.resetConditions(ctx, desired)
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
@@ -651,12 +656,6 @@ func (r *resourceReconciler) Sync(
 	rlog.Enter("rm.ReadOne")
 	latest, err = rm.ReadOne(ctx, resolved)
 	rlog.Exit("rm.ReadOne", err)
-	// What AWS reported before any Update; used to keep a pending removal in
-	// the declared-fields record. See nextDeclaredPaths.
-	var observed acktypes.AWSResource
-	if err == nil && r.unsetFieldsUnmanaged() && ackcompare.IsNotNil(latest) {
-		observed = latest.DeepCopy()
-	}
 	if err != nil {
 		if err != ackerr.NotFound {
 			return latest, err
@@ -718,10 +717,6 @@ func (r *resourceReconciler) Sync(
 	if latest, err = r.lateInitializeResource(ctx, rm, resolved, latest); err != nil {
 		return latest, err
 	}
-	// Record, in controller memory, which spec fields this sync was asked to
-	// manage. See declared_fields.go; a no-op unless the controller was
-	// generated with unset_fields_unmanaged.
-	r.recordDeclaredFields(resolved, observed)
 	return latest, nil
 }
 
@@ -1132,31 +1127,19 @@ func (r *resourceReconciler) updateResource(
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
-	// A field the user never set drives an Update only when AWS's value for it
-	// changed since the previous sync. Applied here only, not in filteredDelta: the
-	// patch gate in patchResourceMetadataAndSpec must still see such
-	// differences so that late-initialized values are persisted.
-	if r.unsetFieldsUnmanaged() {
-		if declared, ok := r.declaredFieldsEntry(desired); ok {
-			res := filterUnsetUnmanagedDifferences(
-				delta, declared, r.unsetMeansEmptyPaths(), r.seenUnsetValues(desired),
-			)
-			r.recordSeenUnsetValues(desired, res.seen)
-			if len(res.dropped) > 0 {
-				rlog.Debug("ignoring unchanged AWS values on spec fields this resource does not set", "paths", res.dropped)
-			}
-			if len(res.changed) > 0 {
-				rlog.Info("AWS value changed on spec fields this resource does not set", "paths", res.changed)
-			}
-		} else {
-			// No entry: what the user set before is unknown (for example
-			// after a controller restart), so keep today's behavior for this
-			// sync and seed the entry for the next one.
-			rlog.Debug("no declared-fields entry; not filtering differences on this sync")
-			r.seedDeclaredFields(desired)
-		}
+	// Skip an Update that would repeat the last successful one against
+	// unchanged AWS state. Only the Update is skipped: the delta still gates
+	// the spec patch in patchResourceMetadataAndSpec, so late-initialized
+	// values are persisted as today. See repeated_updates.go.
+	repeated := r.skipRepeatedUpdates() &&
+		r.isRepeatedUpdate(ctx, rm, reconcileDesired, latest)
+	if repeated && delta.DifferentAt("Spec") {
+		rlog.Debug(
+			"skipping Update: spec and AWS state unchanged since the last synced sync",
+			"diff", delta.Differences,
+		)
 	}
-	if delta.DifferentAt("Spec") {
+	if delta.DifferentAt("Spec") && !repeated {
 		rlog.Info(
 			"desired resource state has changed",
 			"diff", delta.Differences,
@@ -2041,6 +2024,6 @@ func NewReconcilerWithClient(
 		rmf:          rmf,
 		rd:           rmf.ResourceDescriptor(),
 		resyncPeriod: resyncPeriod,
-		declared:     newDeclaredFieldsStore(),
+		updates:      newUpdateRecordStore(),
 	}
 }

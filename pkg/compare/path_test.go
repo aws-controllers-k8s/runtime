@@ -47,18 +47,3 @@ func TestPathContainsFold(t *testing.T) {
 	// Different field -> no match.
 	assert.False(t, p.ContainsFold("spec.name"))
 }
-
-func TestPathEqualFold(t *testing.T) {
-	p := ackcompare.NewPath("Spec.LoggingConfiguration.Level")
-	assert.True(t, p.EqualFold("Spec.LoggingConfiguration.Level"))
-	assert.True(t, p.EqualFold("spec.loggingConfiguration.level"))
-	// A prefix of the path is not an exact match.
-	assert.False(t, p.EqualFold("Spec.LoggingConfiguration"))
-	// A longer subject is not an exact match.
-	assert.False(t, p.EqualFold("Spec.LoggingConfiguration.Level.X"))
-	assert.False(t, p.EqualFold("Spec.LoggingConfiguration.Destinations"))
-}
-
-func TestPathString(t *testing.T) {
-	assert.Equal(t, "Spec.KMSKeyID", ackcompare.NewPath("Spec.KMSKeyID").String())
-}

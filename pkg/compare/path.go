@@ -103,18 +103,6 @@ func (p Path) ContainsFold(subject string) bool {
 
 // NewPath returns a new Path struct pointer from a dotted-notation string,
 // e.g. "Author.Name"
-// String returns the Path as a dotted string, e.g. "Spec.LoggingConfiguration".
-func (p Path) String() string {
-	return strings.Join(p.parts, ".")
-}
-
-// EqualFold returns true if the Path is exactly the supplied dotted subject,
-// comparing each part case-insensitively. Unlike ContainsFold, a Path that
-// lies under the subject (is longer than it) does not match.
-func (p Path) EqualFold(subject string) bool {
-	return len(strings.Split(subject, ".")) == len(p.parts) && p.ContainsFold(subject)
-}
-
 func NewPath(dotted string) Path {
 	return Path{strings.Split(dotted, ".")}
 }
