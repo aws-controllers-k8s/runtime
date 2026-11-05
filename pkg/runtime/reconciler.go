@@ -566,8 +566,10 @@ func (r *resourceReconciler) Sync(
 
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
+	priorConditions := copyConditions(desired.Conditions())
 	r.resetConditions(ctx, desired)
 	defer func() {
+		r.restoreConditionsOnShutdown(ctx, latest, priorConditions, err)
 		r.ensureConditions(ctx, rm, latest, err)
 	}()
 
@@ -726,6 +728,49 @@ func (r *resourceReconciler) resetConditions(
 	}()
 
 	ackcondition.Clear(res)
+}
+
+// restoreConditionsOnShutdown puts back the conditions the resource had before
+// this reconciliation loop when the loop failed only because the controller is
+// shutting down: the reconcile context was canceled and the error is that
+// cancellation.
+//
+// Such a loop observed nothing new about the resource, so its error says
+// nothing about the resource either. Without this, ensureConditions would mark
+// a resource that was in sync as ACK.ResourceSynced=Unknown (and the resource
+// manager may have added an ACK.Recoverable condition carrying "context
+// canceled"). Status patches ignore the cancellation, so that state would
+// reach the API server and stay there until the next leader reconciles the
+// resource again; meanwhile, resources that reference it fail to resolve the
+// reference. The other status fields, such as the ARN of a resource created
+// just before the cancellation, are still patched as before.
+func (r *resourceReconciler) restoreConditionsOnShutdown(
+	ctx context.Context,
+	latest acktypes.AWSResource,
+	priorConditions []*ackv1alpha1.Condition,
+	reconcileErr error,
+) {
+	if ackcompare.IsNil(latest) ||
+		!errors.Is(ctx.Err(), context.Canceled) ||
+		!errors.Is(reconcileErr, context.Canceled) {
+		return
+	}
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Debug("reconciliation canceled by controller shutdown, keeping the prior conditions")
+	latest.ReplaceConditions(priorConditions)
+}
+
+// copyConditions returns a deep copy of the supplied conditions.
+func copyConditions(
+	conditions []*ackv1alpha1.Condition,
+) []*ackv1alpha1.Condition {
+	copied := make([]*ackv1alpha1.Condition, 0, len(conditions))
+	for _, c := range conditions {
+		if c != nil {
+			copied = append(copied, c.DeepCopy())
+		}
+	}
+	return copied
 }
 
 // ensureConditions examines the supplied resource's collection of Condition
