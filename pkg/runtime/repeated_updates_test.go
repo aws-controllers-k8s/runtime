@@ -83,11 +83,15 @@ func newRURes(spec map[string]interface{}) *uResource {
 	return r
 }
 
-// step is one sync: the CR as stored, what AWS reports, and the Update error.
+// step is one sync: the CR as stored, what AWS reports, the Update error,
+// and what AWS reports right after the Update (after; default latest, as for
+// an Update that changes nothing). afterErr fails the read after the Update.
 type step struct {
 	desired   acktypes.AWSResource
 	latest    acktypes.AWSResource
 	updateErr error
+	after     acktypes.AWSResource
+	afterErr  error
 }
 
 // runSteps runs one Sync per step and returns how many Updates were sent.
@@ -98,7 +102,23 @@ func runSteps(t *testing.T, rec *resourceReconciler, rm *ackmocks.AWSResourceMan
 		// Fresh objects per sync, as a real ReadOne returns: conditions set
 		// on one sync's result must not leak into the next.
 		latest := s.latest.DeepCopy()
-		rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil).Once()
+		after := s.after
+		if after == nil {
+			after = s.latest
+		}
+		reads := 0
+		rm.On("ReadOne", mock.Anything, mock.Anything).Return(
+			func(context.Context, acktypes.AWSResource) (acktypes.AWSResource, error) {
+				reads++
+				if reads == 1 {
+					return latest, nil
+				}
+				if s.afterErr != nil {
+					return nil, s.afterErr
+				}
+				return after.DeepCopy(), nil
+			},
+		)
 		rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil).Maybe().Once()
 		rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Run(func(mock.Arguments) { updates++ }).
@@ -237,32 +257,43 @@ func TestSkipRepeatedUpdates_DeletionForgetsRecord(t *testing.T) {
 func TestUpdateRecordStore(t *testing.T) {
 	s := newUpdateRecordStore()
 	key := k8stypes.NamespacedName{Namespace: "ns", Name: "a"}
+	rec1 := updateRecord{uid: "u1", spec: 1, aws: 2}
 
-	_, ok := s.begin(key, updateRecord{uid: "u1", spec: 1, aws: 2})
+	_, ok := s.lookup(key, "u1")
 	assert.False(t, ok, "no record yet")
 	s.finish(key, true)
-	prev, ok := s.begin(key, updateRecord{uid: "u1", spec: 3, aws: 4})
-	require.True(t, ok)
-	assert.Equal(t, updateRecord{uid: "u1", spec: 1, aws: 2}, prev, "begin returns the committed record")
+	assert.Empty(t, s.committed, "finish without a proposal commits nothing")
 
-	s.finish(key, false)
-	_, ok = s.begin(key, updateRecord{uid: "u1"})
-	assert.False(t, ok, "a sync that did not end Synced drops the record")
+	s.propose(key, rec1)
 	s.finish(key, true)
-	_, ok = s.begin(key, updateRecord{uid: "u2"})
+	prev, ok := s.lookup(key, "u1")
+	require.True(t, ok)
+	assert.Equal(t, rec1, prev)
+	_, ok = s.lookup(key, "u2")
 	assert.False(t, ok, "a record from another UID is not used")
 
+	s.propose(key, updateRecord{uid: "u1", spec: 3, aws: 4})
+	s.finish(key, false)
+	_, ok = s.lookup(key, "u1")
+	assert.False(t, ok, "a sync that did not end Synced drops the record")
+
+	s.propose(key, rec1)
+	s.finish(key, true)
+	s.finish(key, true)
+	_, ok = s.lookup(key, "u1")
+	assert.False(t, ok, "a synced sync that proposed nothing drops the record")
+
+	s.propose(key, rec1)
+	s.finish(key, true)
 	s.forget(key)
 	assert.Empty(t, s.committed)
 	assert.Empty(t, s.pending)
 
-	s.finish(key, true)
-	assert.Empty(t, s.committed, "finish without begin commits nothing")
-
 	var nilStore *updateRecordStore
+	nilStore.propose(key, rec1)
 	nilStore.finish(key, true)
 	nilStore.forget(key)
-	_, ok = nilStore.begin(key, updateRecord{})
+	_, ok = nilStore.lookup(key, "u1")
 	assert.False(t, ok, "a nil store records nothing")
 }
 
@@ -329,7 +360,8 @@ func commitFor(t *testing.T, rec *resourceReconciler, desired, latest acktypes.A
 func TestIsRepeatedUpdate_ReadMarkedNotSynced(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
 	commitFor(t, rec, ruDesired, ruDefault)
-	assert.True(t, rec.isRepeatedUpdate(context.TODO(), rm, ruDesired, ruDefault.DeepCopy()), "control")
+	control := ruDefault.DeepCopy()
+	assert.True(t, rec.isRepeatedUpdate(context.TODO(), rm, rec.observeSync(ruDesired, control), control), "control")
 
 	for _, set := range []func(acktypes.AWSResource){
 		func(r acktypes.AWSResource) { ackcondition.SetSynced(r, corev1.ConditionFalse, nil, nil) },
@@ -339,7 +371,7 @@ func TestIsRepeatedUpdate_ReadMarkedNotSynced(t *testing.T) {
 		commitFor(t, rec, ruDesired, ruDefault)
 		latest := ruDefault.DeepCopy()
 		set(latest)
-		assert.False(t, rec.isRepeatedUpdate(context.TODO(), rm, ruDesired, latest))
+		assert.False(t, rec.isRepeatedUpdate(context.TODO(), rm, rec.observeSync(ruDesired, latest), latest))
 	}
 }
 
@@ -430,14 +462,111 @@ func TestIsRepeatedUpdate_SecretReferenceNeverSkipped(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
 	plain := newTyped(ruSpec{Name: ruStr("a")})
 	commitFor(t, rec, plain, plain)
-	assert.True(t, rec.isRepeatedUpdate(context.TODO(), rm, plain, plain.DeepCopy()), "control")
+	assert.True(t, rec.isRepeatedUpdate(context.TODO(), rm, rec.observeSync(plain, plain.DeepCopy()), plain.DeepCopy()), "control")
 
 	withSecret := newTyped(ruSpec{Name: ruStr("a"), Password: &ackv1alpha1.SecretKeyReference{Key: "password"}})
 	commitFor(t, rec, withSecret, withSecret)
-	assert.False(t, rec.isRepeatedUpdate(context.TODO(), rm, withSecret, withSecret.DeepCopy()))
+	obs := rec.observeSync(withSecret, withSecret.DeepCopy())
+	assert.False(t, obs.ok, "a spec with a Secret reference is never recorded")
+	assert.False(t, rec.isRepeatedUpdate(context.TODO(), rm, obs, withSecret.DeepCopy()))
 
 	assert.True(t, hasSecretReference(reflect.ValueOf(struct {
 		L []map[string]*ackv1alpha1.SecretKeyReference
 	}{L: []map[string]*ackv1alpha1.SecretKeyReference{{"k": {}}}})), "found inside lists and maps")
 	assert.False(t, hasSecretReference(reflect.ValueOf(ruSpec{Name: ruStr("a")})))
+}
+
+// ruApplied is what AWS reports once ruDesired2 is applied: the server
+// default is still there, so the delta is perpetual.
+var ruApplied = newRURes(map[string]interface{}{"name": "b", "description": "server default"})
+
+// An Update that changed AWS is not recorded, so when another writer puts
+// back the state from before it, the next sync sends the Update again.
+func TestSkipRepeatedUpdates_OutsideRevertIsCorrected(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	n := runSteps(t, rec, rm,
+		step{desired: ruDesired, latest: ruDefault},
+		step{desired: ruDesired, latest: ruDefault},
+		// The spec changes; the Update applies it.
+		step{desired: ruDesired2, latest: ruDefault, after: ruApplied},
+		// Another writer put the old state back before this sync.
+		step{desired: ruDesired2, latest: ruDefault, after: ruApplied},
+		// The writer stopped: one Update shows the rest is perpetual.
+		step{desired: ruDesired2, latest: ruApplied},
+		step{desired: ruDesired2, latest: ruApplied},
+	)
+	assert.Equal(t, 4, n, "every sync after the spec change until an Update changes nothing")
+}
+
+// Drift that ACK corrected is corrected again when it comes back, with no
+// spec change in between.
+func TestSkipRepeatedUpdates_ReappliedDriftIsCorrected(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	n := runSteps(t, rec, rm,
+		step{desired: ruDesired, latest: ruDefault},
+		step{desired: ruDesired, latest: ruDefault},
+		step{desired: ruDesired, latest: ruChanged, after: ruDefault},
+		step{desired: ruDesired, latest: ruChanged, after: ruDefault},
+		step{desired: ruDesired, latest: ruDefault},
+		step{desired: ruDesired, latest: ruDefault},
+	)
+	assert.Equal(t, 4, n)
+}
+
+// When the read after the Update fails, nothing is recorded.
+func TestSkipRepeatedUpdates_FailedReadAfterUpdateRecordsNothing(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	failRead := step{desired: ruDesired, latest: ruDefault, afterErr: errors.New("throttled")}
+	ok := step{desired: ruDesired, latest: ruDefault}
+	n := runSteps(t, rec, rm, failRead, failRead, ok, ok)
+	assert.Equal(t, 3, n)
+}
+
+// A sync with nothing to update records nothing, so a delta that appears
+// later is sent at least once.
+func TestSkipRepeatedUpdates_EmptyDeltaRecordsNothing(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	inSync := newRURes(map[string]interface{}{"name": "a"})
+	n := runSteps(t, rec, rm,
+		step{desired: ruDesired, latest: inSync},
+		step{desired: ruDesired, latest: inSync},
+	)
+	assert.Equal(t, 0, n)
+	assert.Empty(t, rec.updates.committed)
+}
+
+// A panic during a sync drops the record. controller-runtime recovers the
+// panic, but the sync's error and result are then whatever they were before
+// it, which can look like success.
+func TestSkipRepeatedUpdates_PanicDropsRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		desired acktypes.AWSResource
+		panicIn string
+	}{
+		{"in the Update", ruDesired2, "Update"},
+		{"after a skip", ruDesired, "LateInitialize"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+			runSteps(t, rec, rm, step{desired: ruDesired, latest: ruDefault})
+			_, ok := rec.updates.committed[rKey]
+			require.True(t, ok, "control: the first sync recorded its Update")
+
+			latest := ruDefault.DeepCopy()
+			boom := func(mock.Arguments) { panic("boom") }
+			rm.On("ReadOne", mock.Anything, mock.Anything).Return(latest, nil)
+			if tc.panicIn == "Update" {
+				rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(boom).Return(latest, nil)
+				rm.On("LateInitialize", mock.Anything, mock.Anything).Return(latest, nil).Maybe()
+			} else {
+				rm.On("LateInitialize", mock.Anything, mock.Anything).Run(boom).Return(latest, nil)
+			}
+			assert.PanicsWithValue(t, "boom", func() {
+				_, _ = rec.Sync(context.TODO(), rm, tc.desired.DeepCopy())
+			}, "the panic still reaches controller-runtime")
+			assert.Empty(t, rec.updates.committed)
+			assert.Empty(t, rec.updates.pending)
+		})
+	}
 }

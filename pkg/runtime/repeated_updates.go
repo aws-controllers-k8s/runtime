@@ -27,34 +27,45 @@ import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
+	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
 // A controller generated with `skip_repeated_updates: true` in its
-// generator.yaml skips an Update that would repeat the last successful one.
+// generator.yaml skips an Update that would repeat one already shown to
+// change nothing.
 //
-// After every sync that ends with ACK.ResourceSynced and Ready both True, the
-// reconciler keeps, in memory, two hashes: one of what the Update is built
-// from (the resolved desired spec, after the ignore-field-drift merge, plus
-// the CR's labels and annotations), and one of what AWS reported before any
-// Update (the spec and the status, without conditions). On the next sync, a
-// non-empty delta does not drive an Update only when:
+// The reconciler keeps, in memory, one record per CR. A record is written only
+// by a sync that ends with ACK.ResourceSynced and Ready both True, and only
+// when that sync sent an Update and read AWS again right after it, and the
+// read after the Update equals the read before it. The record then holds two
+// hashes: one of what the Update is built from (the resolved desired spec,
+// after the ignore-field-drift merge, plus the CR's labels and annotations),
+// and one of what AWS reported (the spec and the status, without
+// conditions). A later sync that skips because of the record keeps it; every
+// other sync drops it. On a later sync, a non-empty delta does not drive an
+// Update only when:
 //
-//   - the CR has such a record, so its last sync ended Synced and Ready,
+//   - the CR has such a record,
 //   - both hashes are unchanged,
 //   - the spec references no Secret, whose value can change unseen,
 //   - no hook marked the fresh read not synced, Terminal or Recoverable, and
 //   - rm.IsSynced reports the fresh read synced.
 //
-// Then the delta is the one the last sync acted on. That sync's Update, if it
-// sent one, succeeded without changing anything the controller reads, so
-// sending it again would change nothing either. This is the perpetual delta:
-// a server default on an unset field, a value AWS rewrites, a list AWS
-// reorders. In every other case, including whenever the reconciler cannot
-// tell, the Update is sent as today.
+// Then the Update would be built from the same inputs, against the same AWS
+// state, as an Update that succeeded and left AWS reading the same. Sending it
+// again would change nothing either. This is the perpetual delta: a server
+// default on an unset field, a value AWS rewrites, a list AWS reorders.
 //
-// The record is not persisted, so it is empty after a controller restart or a
-// leader change: the first sync of each CR then behaves as today.
+// Comparing against the read before the Update would not be enough: an
+// Update that changed AWS, followed by another writer putting the old state
+// back, reads exactly like an Update that changed nothing. Requiring the read
+// right after the Update to equal the read before it rules that out.
+//
+// In every other case, including whenever the reconciler cannot tell, the
+// Update is sent as today. The record is not persisted, so it is empty after
+// a controller restart or a leader change: the first sync of each CR then
+// behaves as today.
 
 // updateRecord holds the hashes from one sync.
 type updateRecord struct {
@@ -64,9 +75,9 @@ type updateRecord struct {
 }
 
 // updateRecordStore is the reconciler's record, one per kind. pending holds
-// the hashes of the sync in progress, committed those of the CR's last sync
-// that ended Synced and Ready. Controller-runtime never reconciles the same
-// object concurrently, so one pending entry per object is enough.
+// the record the sync in progress will commit if it ends Synced and Ready,
+// committed the CR's current record. Controller-runtime never reconciles the
+// same object concurrently, so one pending entry per object is enough.
 type updateRecordStore struct {
 	mu        sync.Mutex
 	committed map[types.NamespacedName]updateRecord
@@ -80,26 +91,36 @@ func newUpdateRecordStore() *updateRecordStore {
 	}
 }
 
-// begin stores the hashes of the sync in progress and returns the CR's
-// committed record. ok is false when there is none, or it belongs to an
-// earlier object with the same name. A nil store has no records.
-func (s *updateRecordStore) begin(key types.NamespacedName, now updateRecord) (updateRecord, bool) {
+// lookup returns the CR's committed record. ok is false when there is none,
+// or it belongs to an earlier object with the same name. A nil store has no
+// records.
+func (s *updateRecordStore) lookup(key types.NamespacedName, uid types.UID) (updateRecord, bool) {
 	if s == nil {
 		return updateRecord{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending[key] = now
 	prev, ok := s.committed[key]
-	if !ok || prev.uid != now.uid {
+	if !ok || prev.uid != uid {
 		return updateRecord{}, false
 	}
 	return prev, true
 }
 
-// finish ends a sync: it commits the pending hashes when the sync ended
-// Synced and Ready, and otherwise drops the committed record so the next
-// sync behaves as today.
+// propose sets the record the sync in progress commits if it ends Synced and
+// Ready.
+func (s *updateRecordStore) propose(key types.NamespacedName, rec updateRecord) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending[key] = rec
+}
+
+// finish ends a sync: it commits the proposed record when the sync ended
+// Synced and Ready, and otherwise, or when nothing was proposed, drops the
+// committed record so the next sync behaves as today.
 func (s *updateRecordStore) finish(key types.NamespacedName, synced bool) {
 	if s == nil {
 		return
@@ -115,7 +136,8 @@ func (s *updateRecordStore) finish(key types.NamespacedName, synced bool) {
 	delete(s.committed, key)
 }
 
-// forget drops the CR's record. Called when the CR is deleted or gone.
+// forget drops the CR's record. Called when the CR is deleted or gone, and
+// when a sync panics.
 func (s *updateRecordStore) forget(key types.NamespacedName) {
 	if s == nil {
 		return
@@ -133,33 +155,48 @@ func (r *resourceReconciler) skipRepeatedUpdates() bool {
 	return ok && d.SkipRepeatedUpdates()
 }
 
-// isRepeatedUpdate records this sync's hashes and reports whether an Update
-// for `delta` would repeat the last successful one. desired is the resource
-// the delta was computed from; latest is what AWS reports, before any Update.
-func (r *resourceReconciler) isRepeatedUpdate(
-	ctx context.Context,
-	rm acktypes.AWSResourceManager,
-	desired acktypes.AWSResource,
-	latest acktypes.AWSResource,
-) bool {
-	// Every early return leaves no pending record, so finishSync also drops
-	// the committed one and the next sync behaves as today.
+// syncObservation is what one sync would record: the CR's key and the hashes
+// of its inputs. ok is false when the sync can never be recorded.
+type syncObservation struct {
+	key types.NamespacedName
+	rec updateRecord
+	ok  bool
+}
+
+// observeSync hashes this sync's inputs. desired is the resource the delta is
+// computed from; latest is what AWS reports, before any Update. Call it before
+// the delta is computed: compare hooks may modify both in place.
+func (r *resourceReconciler) observeSync(desired, latest acktypes.AWSResource) syncObservation {
 	key, uid, ok := resourceKey(desired)
 	if !ok {
-		return false
+		return syncObservation{}
 	}
 	// A Secret's value is read at Update time and is in neither the spec nor
-	// what AWS returns, so a rotation can't be seen. Never skip.
+	// what AWS returns, so a rotation can't be seen. Never record.
 	if spec, ok := resourceSpec(desired); !ok || hasSecretReference(reflect.ValueOf(spec)) {
-		return false
+		return syncObservation{}
 	}
 	desiredHash, ok1 := hashDesired(desired)
 	observedHash, ok2 := hashObserved(latest)
 	if !ok1 || !ok2 {
+		return syncObservation{}
+	}
+	return syncObservation{key: key, rec: updateRecord{uid: uid, spec: desiredHash, aws: observedHash}, ok: true}
+}
+
+// isRepeatedUpdate reports whether an Update for this sync would repeat one
+// already shown to change nothing. When it does, the record is kept.
+func (r *resourceReconciler) isRepeatedUpdate(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	obs syncObservation,
+	latest acktypes.AWSResource,
+) bool {
+	if !obs.ok {
 		return false
 	}
-	prev, ok := r.updates.begin(key, updateRecord{uid: uid, spec: desiredHash, aws: observedHash})
-	if !ok || prev.spec != desiredHash || prev.aws != observedHash {
+	prev, ok := r.updates.lookup(obs.key, obs.rec.uid)
+	if !ok || prev.spec != obs.rec.spec || prev.aws != obs.rec.aws {
 		return false
 	}
 	// A hook may have marked the read itself not synced (for example a
@@ -170,8 +207,48 @@ func (r *resourceReconciler) isRepeatedUpdate(
 	if conditionTrue(ackcondition.Terminal(latest)) || conditionTrue(ackcondition.Recoverable(latest)) {
 		return false
 	}
-	synced, err := rm.IsSynced(ctx, latest)
-	return err == nil && synced
+	if synced, err := rm.IsSynced(ctx, latest); err != nil || !synced {
+		return false
+	}
+	r.updates.propose(obs.key, obs.rec)
+	return true
+}
+
+// recordIfNoOp reads AWS again after a successful Update and proposes the
+// sync's record only when the read equals the one taken before the Update,
+// so the Update changed nothing the controller reads. readInput is the object
+// the read before the Update was given, unmodified. updated is what the
+// Update returned; a result that can't end the sync Synced is not read
+// again, since nothing would be recorded anyway.
+func (r *resourceReconciler) recordIfNoOp(
+	ctx context.Context,
+	rm acktypes.AWSResourceManager,
+	obs syncObservation,
+	readInput acktypes.AWSResource,
+	updated acktypes.AWSResource,
+) {
+	if !obs.ok || ackcompare.IsNil(readInput) || ackcompare.IsNil(updated) {
+		return
+	}
+	if c := ackcondition.Synced(updated); c != nil && c.Status != corev1.ConditionTrue {
+		return
+	}
+	if synced, err := rm.IsSynced(ctx, updated); err != nil || !synced {
+		return
+	}
+	rlog := ackrtlog.FromContext(ctx)
+	rlog.Enter("rm.ReadOne (after Update)")
+	after, err := rm.ReadOne(ctx, readInput)
+	rlog.Exit("rm.ReadOne (after Update)", err)
+	if err != nil {
+		return
+	}
+	afterHash, ok := hashObserved(after)
+	if !ok || afterHash != obs.rec.aws {
+		rlog.Debug("not recording the Update as repeatable: AWS reads differently after it")
+		return
+	}
+	r.updates.propose(obs.key, obs.rec)
 }
 
 // finishSync ends the sync of desired; latest and err are what Sync returns,
@@ -187,6 +264,15 @@ func (r *resourceReconciler) finishSync(desired, latest acktypes.AWSResource, er
 	synced := err == nil && ackcompare.IsNotNil(latest) &&
 		conditionTrue(ackcondition.Synced(latest)) && conditionTrue(ackcondition.Ready(latest))
 	r.updates.finish(key, synced)
+}
+
+// abandonSync drops the CR's record when a sync panics. A recovered panic
+// leaves Sync's error unset and its conditions set from the read before the
+// Update, so finishSync would take it for success.
+func (r *resourceReconciler) abandonSync(desired acktypes.AWSResource) {
+	if key, _, ok := resourceKey(desired); ok {
+		r.updates.forget(key)
+	}
 }
 
 // forgetUpdateRecord drops the CR's record.

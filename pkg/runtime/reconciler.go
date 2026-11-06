@@ -574,8 +574,14 @@ func (r *resourceReconciler) Sync(
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
 	// Deferred before ensureConditions so that it runs after it and sees this
-	// sync's conditions. See repeated_updates.go.
+	// sync's conditions. A panic drops the record instead: controller-runtime
+	// recovers it, but err and latest are then whatever they were before the
+	// panic, which can look like success. See repeated_updates.go.
 	defer func() {
+		if p := recover(); p != nil {
+			r.abandonSync(desired)
+			panic(p)
+		}
 		r.finishSync(desired, latest, err)
 	}()
 	r.resetConditions(ctx, desired)
@@ -1124,18 +1130,30 @@ func (r *resourceReconciler) updateResource(
 	// preserves status today but does not promise to.
 	setStatusWithoutConditions(reconcileDesired, latest)
 
+	// Hash this sync's inputs before the delta is computed, since compare
+	// hooks may modify both objects in place. readInput is what the read
+	// before this Update was given, for the read after it. See
+	// repeated_updates.go.
+	skipRepeated := r.skipRepeatedUpdates()
+	var obs syncObservation
+	var readInput acktypes.AWSResource
+	if skipRepeated {
+		obs = r.observeSync(reconcileDesired, latest)
+		readInput = desired.DeepCopy()
+	}
+
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
-	// Skip an Update that would repeat the last successful one against
-	// unchanged AWS state. Only the Update is skipped: the delta still gates
-	// the spec patch in patchResourceMetadataAndSpec, so late-initialized
-	// values are persisted as today. See repeated_updates.go.
-	repeated := r.skipRepeatedUpdates() &&
-		r.isRepeatedUpdate(ctx, rm, reconcileDesired, latest)
-	if repeated && delta.DifferentAt("Spec") {
+	// Skip an Update that would repeat one already shown to change nothing.
+	// Only the Update is skipped: the delta still gates the spec patch in
+	// patchResourceMetadataAndSpec, so late-initialized values are persisted
+	// as today. See repeated_updates.go.
+	repeated := skipRepeated && delta.DifferentAt("Spec") &&
+		r.isRepeatedUpdate(ctx, rm, obs, latest)
+	if repeated {
 		rlog.Debug(
-			"skipping Update: spec and AWS state unchanged since the last synced sync",
+			"skipping Update: an Update built from the same spec against the same AWS state changed nothing",
 			"diff", delta.Differences,
 		)
 	}
@@ -1186,6 +1204,9 @@ func (r *resourceReconciler) updateResource(
 			return updated, err
 		}
 		rlog.Info("updated resource")
+		if skipRepeated {
+			r.recordIfNoOp(ctx, rm, obs, readInput, updated)
+		}
 	}
 	return updated, nil
 }
