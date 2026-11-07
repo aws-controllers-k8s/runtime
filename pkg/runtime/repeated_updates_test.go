@@ -163,12 +163,13 @@ var (
 	ruDesired2 = newRURes(map[string]interface{}{"name": "b"})
 )
 
-// A perpetual delta (here a server default on an unset field) is sent once,
-// then skipped while nothing changes.
-func TestSkipRepeatedUpdates_PerpetualDeltaSentOnce(t *testing.T) {
+// A perpetual delta (here a server default on an unset field) is sent by two
+// consecutive syncs, which show it changes nothing, then skipped while
+// nothing changes.
+func TestSkipRepeatedUpdates_PerpetualDeltaSentTwice(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
-	n := runSteps(t, rec, rm, repeat(4, step{desired: ruDesired, latest: ruDefault})...)
-	assert.Equal(t, 1, n)
+	n := runSteps(t, rec, rm, repeat(5, step{desired: ruDesired, latest: ruDefault})...)
+	assert.Equal(t, 2, n)
 }
 
 func TestSkipRepeatedUpdates_AWSChangeSendsUpdate(t *testing.T) {
@@ -180,7 +181,7 @@ func TestSkipRepeatedUpdates_AWSChangeSendsUpdate(t *testing.T) {
 		step{desired: ruDesired, latest: ruChanged},
 		step{desired: ruDesired, latest: ruChanged},
 	)
-	assert.Equal(t, 2, n, "the first sync, then one for the change")
+	assert.Equal(t, 4, n, "two to confirm, then two more after the change")
 }
 
 func TestSkipRepeatedUpdates_SpecChangeSendsUpdate(t *testing.T) {
@@ -190,8 +191,9 @@ func TestSkipRepeatedUpdates_SpecChangeSendsUpdate(t *testing.T) {
 		step{desired: ruDesired, latest: ruDefault},
 		step{desired: ruDesired2, latest: ruDefault},
 		step{desired: ruDesired2, latest: ruDefault},
+		step{desired: ruDesired2, latest: ruDefault},
 	)
-	assert.Equal(t, 2, n, "the first sync, then one for the edit")
+	assert.Equal(t, 4, n, "two to confirm, then two more after the edit")
 }
 
 // An Update that fails leaves the sync not Synced, so the next sync sends it
@@ -199,8 +201,9 @@ func TestSkipRepeatedUpdates_SpecChangeSendsUpdate(t *testing.T) {
 func TestSkipRepeatedUpdates_FailedUpdateIsRetried(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
 	fail := step{desired: ruDesired, latest: ruDefault, updateErr: errors.New("throttled")}
-	n := runSteps(t, rec, rm, fail, fail, fail, step{desired: ruDesired, latest: ruDefault}, step{desired: ruDesired, latest: ruDefault})
-	assert.Equal(t, 4, n, "every failed attempt, then the one that succeeds")
+	succeed := step{desired: ruDesired, latest: ruDefault}
+	n := runSteps(t, rec, rm, fail, fail, fail, succeed, succeed, succeed)
+	assert.Equal(t, 5, n, "every failed attempt, then two that succeed")
 	_, ok := rec.updates.committed[rKey]
 	assert.True(t, ok)
 }
@@ -211,7 +214,7 @@ func TestSkipRepeatedUpdates_NotSyncedSendsUpdate(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, false)
 	spec, _ := hashDesired(ruDesired)
 	aws, _ := hashObserved(ruDefault)
-	rec.updates.committed[rKey] = updateRecord{uid: "uid-1", spec: spec, aws: aws}
+	rec.updates.committed[rKey] = updateRecord{uid: "uid-1", spec: spec, aws: aws, confirmed: true}
 	n := runSteps(t, rec, rm, repeat(3, step{desired: ruDesired, latest: ruDefault})...)
 	assert.Equal(t, 3, n)
 	_, ok := rec.updates.committed[rKey]
@@ -230,9 +233,9 @@ func TestSkipRepeatedUpdates_RecreatedObjectIsNotTrusted(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
 	spec, _ := hashDesired(ruDesired)
 	aws, _ := hashObserved(ruDefault)
-	rec.updates.committed[rKey] = updateRecord{uid: "uid-old", spec: spec, aws: aws}
-	n := runSteps(t, rec, rm, repeat(2, step{desired: ruDesired, latest: ruDefault})...)
-	assert.Equal(t, 1, n)
+	rec.updates.committed[rKey] = updateRecord{uid: "uid-old", spec: spec, aws: aws, confirmed: true}
+	n := runSteps(t, rec, rm, repeat(3, step{desired: ruDesired, latest: ruDefault})...)
+	assert.Equal(t, 2, n)
 	assert.Equal(t, k8stypes.UID("uid-1"), rec.updates.committed[rKey].uid)
 }
 
@@ -325,8 +328,9 @@ func TestSkipRepeatedUpdates_AnnotationChangeSendsUpdate(t *testing.T) {
 		step{desired: ruDesired, latest: ruDefault},
 		step{desired: annotated, latest: ruDefault},
 		step{desired: annotated, latest: ruDefault},
+		step{desired: annotated, latest: ruDefault},
 	)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 4, n)
 }
 
 // Compare and update hooks read the status, so a status change is a change.
@@ -338,8 +342,9 @@ func TestSkipRepeatedUpdates_StatusChangeSendsUpdate(t *testing.T) {
 		step{desired: ruDesired, latest: ruDefault},
 		step{desired: ruDesired, latest: moved},
 		step{desired: ruDesired, latest: moved},
+		step{desired: ruDesired, latest: moved},
 	)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 4, n)
 }
 
 // commitFor commits a record matching desired and latest, as a previous
@@ -352,7 +357,7 @@ func commitFor(t *testing.T, rec *resourceReconciler, desired, latest acktypes.A
 	require.True(t, ok)
 	aws, ok := hashObserved(latest)
 	require.True(t, ok)
-	rec.updates.committed[key] = updateRecord{uid: uid, spec: spec, aws: aws}
+	rec.updates.committed[key] = updateRecord{uid: uid, spec: spec, aws: aws, confirmed: true}
 }
 
 // A hook may mark the read itself not synced; conditions are not part of the
@@ -491,11 +496,12 @@ func TestSkipRepeatedUpdates_OutsideRevertIsCorrected(t *testing.T) {
 		step{desired: ruDesired2, latest: ruDefault, after: ruApplied},
 		// Another writer put the old state back before this sync.
 		step{desired: ruDesired2, latest: ruDefault, after: ruApplied},
-		// The writer stopped: one Update shows the rest is perpetual.
+		// The writer stopped: two Updates show the rest is perpetual.
+		step{desired: ruDesired2, latest: ruApplied},
 		step{desired: ruDesired2, latest: ruApplied},
 		step{desired: ruDesired2, latest: ruApplied},
 	)
-	assert.Equal(t, 4, n, "every sync after the spec change until an Update changes nothing")
+	assert.Equal(t, 6, n, "every sync after the spec change until two Updates change nothing")
 }
 
 // Drift that ACK corrected is corrected again when it comes back, with no
@@ -509,8 +515,9 @@ func TestSkipRepeatedUpdates_ReappliedDriftIsCorrected(t *testing.T) {
 		step{desired: ruDesired, latest: ruChanged, after: ruDefault},
 		step{desired: ruDesired, latest: ruDefault},
 		step{desired: ruDesired, latest: ruDefault},
+		step{desired: ruDesired, latest: ruDefault},
 	)
-	assert.Equal(t, 4, n)
+	assert.Equal(t, 6, n)
 }
 
 // When the read after the Update fails, nothing is recorded.
@@ -518,8 +525,8 @@ func TestSkipRepeatedUpdates_FailedReadAfterUpdateRecordsNothing(t *testing.T) {
 	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
 	failRead := step{desired: ruDesired, latest: ruDefault, afterErr: errors.New("throttled")}
 	ok := step{desired: ruDesired, latest: ruDefault}
-	n := runSteps(t, rec, rm, failRead, failRead, ok, ok)
-	assert.Equal(t, 3, n)
+	n := runSteps(t, rec, rm, failRead, failRead, ok, ok, ok)
+	assert.Equal(t, 4, n)
 }
 
 // A sync with nothing to update records nothing, so a delta that appears
@@ -549,9 +556,9 @@ func TestSkipRepeatedUpdates_PanicDropsRecord(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
-			runSteps(t, rec, rm, step{desired: ruDesired, latest: ruDefault})
-			_, ok := rec.updates.committed[rKey]
-			require.True(t, ok, "control: the first sync recorded its Update")
+			runSteps(t, rec, rm, repeat(2, step{desired: ruDesired, latest: ruDefault})...)
+			r, ok := rec.updates.committed[rKey]
+			require.True(t, ok && r.confirmed, "control: two syncs confirmed the record")
 
 			latest := ruDefault.DeepCopy()
 			boom := func(mock.Arguments) { panic("boom") }
@@ -569,4 +576,40 @@ func TestSkipRepeatedUpdates_PanicDropsRecord(t *testing.T) {
 			assert.Empty(t, rec.updates.pending)
 		})
 	}
+}
+
+// A read right after an Update can be answered from before the Update's own
+// change. Then the first sync records an Update that changed AWS as if it
+// changed nothing, and a one-off restore of the earlier state must still be
+// undone: the second sync sends the Update again instead of skipping.
+func TestSkipRepeatedUpdates_StaleReadAfterUpdateNeedsConfirmation(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	n := runSteps(t, rec, rm,
+		// The Update applies ruDesired2, but the read after it is stale.
+		step{desired: ruDesired2, latest: ruDefault, after: ruDefault},
+	)
+	require.Equal(t, 1, n)
+	r := rec.updates.committed[rKey]
+	require.False(t, r.confirmed, "one sync never confirms")
+
+	// Another writer restored the earlier state; the read after the
+	// re-sent Update is stale again.
+	n = runSteps(t, rec, rm, step{desired: ruDesired2, latest: ruDefault, after: ruDefault})
+	assert.Equal(t, 1, n, "the restore is undone: the Update is sent, not skipped")
+}
+
+// A confirmation must come from the next sync: a sync in between that
+// records nothing starts over.
+func TestSkipRepeatedUpdates_ConfirmationIsConsecutive(t *testing.T) {
+	rec, rm, _ := repeatedUpdatesReconciler(t, true, true)
+	inSync := newRURes(map[string]interface{}{"name": "a"})
+	perpetual := step{desired: ruDesired, latest: ruDefault}
+	n := runSteps(t, rec, rm,
+		perpetual,
+		step{desired: ruDesired, latest: inSync},
+		perpetual,
+		perpetual,
+		perpetual,
+	)
+	assert.Equal(t, 3, n, "the sync with nothing to update drops the unconfirmed record")
 }

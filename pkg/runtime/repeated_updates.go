@@ -32,46 +32,58 @@ import (
 )
 
 // A controller generated with `skip_repeated_updates: true` in its
-// generator.yaml skips an Update that would repeat one already shown to
+// generator.yaml skips an Update that two consecutive syncs have shown to
 // change nothing.
 //
-// The reconciler keeps, in memory, one record per CR. A record is written only
-// by a sync that ends with ACK.ResourceSynced and Ready both True, and only
-// when that sync sent an Update and read AWS again right after it, and the
-// read after the Update equals the read before it. The record then holds two
-// hashes: one of what the Update is built from (the resolved desired spec,
-// after the ignore-field-drift merge, plus the CR's labels and annotations),
-// and one of what AWS reported (the spec and the status, without
-// conditions). A later sync that skips because of the record keeps it; every
-// other sync drops it. On a later sync, a non-empty delta does not drive an
-// Update only when:
+// The reconciler keeps, in memory, at most one record per CR. A sync that
+// ends with ACK.ResourceSynced and Ready both True, sent an Update, and read
+// AWS again right after it with the same result as the read before it,
+// writes a record of two hashes: one of what the Update is built from (the
+// resolved desired spec, after the ignore-field-drift merge, plus the CR's
+// labels and annotations), and one of what AWS reported (the spec and the
+// status, without conditions). The record is confirmed when the next sync
+// does the same with the same two hashes. A sync that skips because of a
+// confirmed record keeps it; every other sync drops it, so a confirmation
+// always comes from two consecutive syncs. On a later sync, a non-empty delta
+// does not drive an Update only when:
 //
-//   - the CR has such a record,
+//   - the CR has a confirmed record,
 //   - both hashes are unchanged,
 //   - the spec references no Secret, whose value can change unseen,
 //   - no hook marked the fresh read not synced, Terminal or Recoverable, and
 //   - rm.IsSynced reports the fresh read synced.
 //
 // Then the Update would be built from the same inputs, against the same AWS
-// state, as an Update that succeeded and left AWS reading the same. Sending it
-// again would change nothing either. This is the perpetual delta: a server
+// state, as an Update that succeeded and left AWS reading the same. Sending
+// it again would change nothing either. This is the perpetual delta: a server
 // default on an unset field, a value AWS rewrites, a list AWS reorders.
 //
-// Comparing against the read before the Update would not be enough: an
-// Update that changed AWS, followed by another writer putting the old state
-// back, reads exactly like an Update that changed nothing. Requiring the read
-// right after the Update to equal the read before it rules that out.
+// Why two syncs. A read taken before an Update can't tell an Update that
+// changed nothing from one that changed AWS while another writer put the old
+// state back before the next sync: both leave the next read equal to the
+// read before the Update. The read right after the Update tells them apart,
+// unless the service answers it from before the Update's own change, which
+// some read APIs do for a few seconds. The second sync's Update is sent a
+// resync after the first, when the first Update's change is visible, so its
+// read is stale only if the second Update itself changed something, which
+// happens only when another writer restored the earlier state in between. A
+// one-off restore is then undone by that second Update; only a writer that
+// restores the same state after every Update, on a service whose reads lag,
+// can still produce a wrong record.
 //
 // In every other case, including whenever the reconciler cannot tell, the
 // Update is sent as today. The record is not persisted, so it is empty after
-// a controller restart or a leader change: the first sync of each CR then
-// behaves as today.
+// a controller restart or a leader change: the first syncs of each CR then
+// behave as today.
 
-// updateRecord holds the hashes from one sync.
+// updateRecord holds the hashes from one sync. confirmed is set when a
+// second consecutive sync with the same hashes also showed its Update to
+// change nothing; only a confirmed record lets a sync skip.
 type updateRecord struct {
-	uid  types.UID
-	spec uint64
-	aws  uint64
+	uid       types.UID
+	spec      uint64
+	aws       uint64
+	confirmed bool
 }
 
 // updateRecordStore is the reconciler's record, one per kind. pending holds
@@ -196,7 +208,7 @@ func (r *resourceReconciler) isRepeatedUpdate(
 		return false
 	}
 	prev, ok := r.updates.lookup(obs.key, obs.rec.uid)
-	if !ok || prev.spec != obs.rec.spec || prev.aws != obs.rec.aws {
+	if !ok || !prev.confirmed || prev.spec != obs.rec.spec || prev.aws != obs.rec.aws {
 		return false
 	}
 	// A hook may have marked the read itself not synced (for example a
@@ -210,13 +222,14 @@ func (r *resourceReconciler) isRepeatedUpdate(
 	if synced, err := rm.IsSynced(ctx, latest); err != nil || !synced {
 		return false
 	}
-	r.updates.propose(obs.key, obs.rec)
+	r.updates.propose(obs.key, prev)
 	return true
 }
 
 // recordIfNoOp reads AWS again after a successful Update and proposes the
 // sync's record only when the read equals the one taken before the Update,
-// so the Update changed nothing the controller reads. readInput is the object
+// so the Update changed nothing the controller reads. The record is confirmed
+// when the CR's current record, from the previous sync, has the same hashes. readInput is the object
 // the read before the Update was given, unmodified. updated is what the
 // Update returned; a result that can't end the sync Synced is not read
 // again, since nothing would be recorded anyway.
@@ -248,7 +261,11 @@ func (r *resourceReconciler) recordIfNoOp(
 		rlog.Debug("not recording the Update as repeatable: AWS reads differently after it")
 		return
 	}
-	r.updates.propose(obs.key, obs.rec)
+	rec := obs.rec
+	if prev, ok := r.updates.lookup(obs.key, rec.uid); ok && prev.spec == rec.spec && prev.aws == rec.aws {
+		rec.confirmed = true
+	}
+	r.updates.propose(obs.key, rec)
 }
 
 // finishSync ends the sync of desired; latest and err are what Sync returns,
