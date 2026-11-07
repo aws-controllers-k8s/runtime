@@ -85,6 +85,9 @@ type resourceReconciler struct {
 	rmf          acktypes.AWSResourceManagerFactory
 	rd           acktypes.AWSResourceDescriptor
 	resyncPeriod time.Duration
+	// updates is the in-memory record used when the controller was
+	// generated with skip_repeated_updates. See repeated_updates.go.
+	updates *updateRecordStore
 }
 
 // GroupVersionKind returns the string containing the API group, version and
@@ -263,6 +266,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// resource wasn't found. just ignore these.
+			r.forgetUpdateRecord(req.NamespacedName)
 			return ctrlrt.Result{}, nil
 		}
 		return ctrlrt.Result{}, err
@@ -518,6 +522,9 @@ func (r *resourceReconciler) reconcile(
 	res acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	if res.IsBeingDeleted() {
+		if key, _, ok := resourceKey(res); ok {
+			r.forgetUpdateRecord(key)
+		}
 		// Ensure the resource is managed before attempting delete
 		if !r.rd.IsManaged(res) {
 			return res, nil
@@ -566,6 +573,17 @@ func (r *resourceReconciler) Sync(
 
 	var latest acktypes.AWSResource // the newly created or mutated resource
 
+	// Deferred before ensureConditions so that it runs after it and sees this
+	// sync's conditions. A panic drops the record instead: controller-runtime
+	// recovers it, but err and latest are then whatever they were before the
+	// panic, which can look like success. See repeated_updates.go.
+	defer func() {
+		if p := recover(); p != nil {
+			r.abandonSync(desired)
+			panic(p)
+		}
+		r.finishSync(desired, latest, err)
+	}()
 	r.resetConditions(ctx, desired)
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
@@ -1112,10 +1130,34 @@ func (r *resourceReconciler) updateResource(
 	// preserves status today but does not promise to.
 	setStatusWithoutConditions(reconcileDesired, latest)
 
+	// Hash this sync's inputs before the delta is computed, since compare
+	// hooks may modify both objects in place. readInput is what the read
+	// before this Update was given, for the read after it. See
+	// repeated_updates.go.
+	skipRepeated := r.skipRepeatedUpdates()
+	var obs syncObservation
+	var readInput acktypes.AWSResource
+	if skipRepeated {
+		obs = r.observeSync(reconcileDesired, latest)
+		readInput = desired.DeepCopy()
+	}
+
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
-	if delta.DifferentAt("Spec") {
+	// Skip an Update that would repeat one already shown to change nothing.
+	// Only the Update is skipped: the delta still gates the spec patch in
+	// patchResourceMetadataAndSpec, so late-initialized values are persisted
+	// as today. See repeated_updates.go.
+	repeated := skipRepeated && delta.DifferentAt("Spec") &&
+		r.isRepeatedUpdate(ctx, rm, obs, latest)
+	if repeated {
+		rlog.Debug(
+			"skipping Update: an Update built from the same spec against the same AWS state changed nothing",
+			"diff", delta.Differences,
+		)
+	}
+	if delta.DifferentAt("Spec") && !repeated {
 		rlog.Info(
 			"desired resource state has changed",
 			"diff", delta.Differences,
@@ -1162,6 +1204,9 @@ func (r *resourceReconciler) updateResource(
 			return updated, err
 		}
 		rlog.Info("updated resource")
+		if skipRepeated {
+			r.recordIfNoOp(ctx, rm, obs, readInput, updated)
+		}
 	}
 	return updated, nil
 }
@@ -2000,5 +2045,6 @@ func NewReconcilerWithClient(
 		rmf:          rmf,
 		rd:           rmf.ResourceDescriptor(),
 		resyncPeriod: resyncPeriod,
+		updates:      newUpdateRecordStore(),
 	}
 }
