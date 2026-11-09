@@ -596,17 +596,16 @@ func (r *resourceReconciler) Sync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-) (acktypes.AWSResource, error) {
-	var err error
+) (latest acktypes.AWSResource, err error) {
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.Sync")
 	defer func() {
 		exit(err)
 	}()
 
-	var latest acktypes.AWSResource // the newly created or mutated resource
-
 	r.resetConditions(ctx, desired)
+	// latest and err are the results Sync returns, so the conditions are
+	// ensured on the resource it returns, whichever path it takes.
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
 	}()
@@ -681,7 +680,10 @@ func (r *resourceReconciler) Sync(
 		err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
 		rlog.Exit("rm.EnsureTags", err)
 		if err != nil {
-			return resolved, err
+			// resolved can be desired itself, or share its spec and status,
+			// so return a copy: otherwise the conditions set on it are set
+			// on desired too, and the status patch sees no change.
+			return resolved.DeepCopy(), err
 		}
 	}
 

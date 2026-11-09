@@ -1667,11 +1667,18 @@ func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, ctrlrt.Result{}, result)
 
-	// The CR says why.
+	// The CR says why, and that it is not synced.
 	terminal := ackcondition.Terminal(res)
 	require.NotNil(terminal)
 	assert.Equal(t, corev1.ConditionTrue, terminal.Status)
 	assert.Contains(t, *terminal.Message, "malformed paths [spec/bad]")
+	synced := ackcondition.Synced(res)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(res)
+	require.NotNil(ready)
+	assert.Equal(t, corev1.ConditionFalse, ready.Status)
+	assert.Equal(t, *terminal.Message, *ready.Message)
 
 	// Update must NOT have been called.
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)

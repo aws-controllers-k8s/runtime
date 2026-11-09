@@ -615,27 +615,14 @@ func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionPolicy: "invalid-policy",
 	})
 
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		hasTerminal := false
-		for _, condition := range conditions {
-			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
-				continue
-			}
-			hasTerminal = true
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Contains(*condition.Message, "unrecognized adoption policy invalid-policy")
-		}
-		assert.True(hasTerminal)
-	}).Once()
-	desired.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rmf, rd := managerFactoryMocks(desired, nil, false)
@@ -653,6 +640,19 @@ func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 	rm.AssertNotCalled(t, "ReadOne")
 	rm.AssertNotCalled(t, "Create")
 	rm.AssertNotCalled(t, "Update")
+
+	// The resource reports the terminal error, and that it is not synced
+	terminal := ackcondition.Terminal(latest)
+	require.NotNil(terminal)
+	assert.Equal(corev1.ConditionTrue, terminal.Status)
+	assert.Contains(*terminal.Message, "unrecognized adoption policy invalid-policy")
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(latest)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionFalse, ready.Status)
+	assert.Equal(terminal.Message, ready.Message)
 }
 
 func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
@@ -668,27 +668,14 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionFields: "not-valid-json",
 	})
 
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		hasTerminal := false
-		for _, condition := range conditions {
-			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
-				continue
-			}
-			hasTerminal = true
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Contains(*condition.Message, "failed to parse services.k8s.aws/adoption-fields annotation as JSON")
-		}
-		assert.True(hasTerminal)
-	}).Once()
-	desired.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -709,6 +696,19 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 	rm.AssertNotCalled(t, "ReadOne")
 	rm.AssertNotCalled(t, "Create")
 	rm.AssertNotCalled(t, "Update")
+
+	// The resource reports the terminal error, and that it is not synced
+	terminal := ackcondition.Terminal(latest)
+	require.NotNil(terminal)
+	assert.Equal(corev1.ConditionTrue, terminal.Status)
+	assert.Contains(*terminal.Message, "failed to parse services.k8s.aws/adoption-fields annotation as JSON")
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(latest)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionFalse, ready.Status)
+	assert.Equal(terminal.Message, ready.Message)
 }
 
 func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
@@ -2053,7 +2053,6 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2063,25 +2062,14 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 
 	resolveReferenceError := errors.New("failed to resolve reference")
 
-	// resourceReconciler.ensureConditions will ensure that if the resource
-	// manager has not set any Conditions on the resource, that at least an
-	// ACK.ResourceSynced condition with status Unknown will be set on the
-	// resource.
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		assert.Equal(t, 1, len(conditions))
-		cond := conditions[0]
-		assert.Equal(t, ackv1alpha1.ConditionTypeReferencesResolved, cond.Type)
-		// The non-terminal reconciler error causes the ReferencesResolved
-		// condition to be Unknown
-		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
-		assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
-		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
-	})
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -2129,6 +2117,22 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertNotCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	// The non-terminal reconciler error causes the ReferencesResolved
+	// condition to be Unknown
+	cond := ackcondition.ReferencesResolved(desired)
+	require.NotNil(cond)
+	assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+	assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
+	assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
+	// resourceReconciler.ensureConditions sets ACK.ResourceSynced and Ready to
+	// Unknown, since the resource's sync state could not be determined.
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(t, corev1.ConditionUnknown, ready.Status)
 }
 
 func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
@@ -2141,8 +2145,14 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2151,26 +2161,6 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	latest.On("Identifiers").Return(ids)
 
 	ensureControllerTagsError := errors.New("failed to ensure controller tags")
-
-	// resourceReconciler.ensureConditions will ensure that if the resource
-	// manager has not set any Conditions on the resource, that at least an
-	// ACK.ResourceSynced condition with status Unknown will be set on the
-	// resource.
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		assert.Equal(t, 1, len(conditions))
-		cond := conditions[0]
-		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
-		// The non-terminal reconciler error causes the ResourceSynced
-		// condition to be False
-		assert.Equal(t, corev1.ConditionFalse, cond.Status)
-		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
-		assert.Equal(t, ensureControllerTagsError.Error(), *cond.Reason)
-	})
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
@@ -2218,6 +2208,45 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	// resourceReconciler.ensureConditions sets ACK.ResourceSynced and Ready to
+	// Unknown with the error, since the resource's sync state could not be
+	// determined.
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Equal(t, ackcondition.UnknownSyncedMessage, *synced.Message)
+	assert.Equal(t, ensureControllerTagsError.Error(), *synced.Reason)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(t, corev1.ConditionUnknown, ready.Status)
+}
+
+// rm.ResolveReferences can return desired itself, and the status patch diffs
+// desired against the resource Sync returns. When EnsureTags fails, Sync
+// returns a copy, so the conditions it sets reach the CR.
+func TestReconcilerSync_EnsureControllerTagsError_ConditionsOnCopy(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired := newUResource(nil, map[string]interface{}{"description": "X"})
+
+	r, rm, rd, _, scmd := ignoreDriftReconcilerMocks(t, false)
+	wireDescriptorCommon(rd)
+	rm.On("ResolveReferences", ctx, mock.Anything, desired).Return(desired, false, nil)
+	ensureControllerTagsError := errors.New("failed to ensure controller tags")
+	rm.On("EnsureTags", ctx, desired, scmd).Return(ensureControllerTagsError)
+
+	latest, err := r.Sync(ctx, rm, desired)
+	require.Equal(ensureControllerTagsError, err)
+	require.NotNil(latest)
+
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Equal(t, ensureControllerTagsError.Error(), *synced.Reason)
+	// desired, the base of the status patch, keeps the reset conditions
+	assert.Empty(t, desired.Conditions())
 }
 
 func TestReconcile_AccountDrifted(t *testing.T) {
@@ -2971,7 +3000,6 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	ctx := context.TODO()
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	crossNsErr := ackerr.ResourceReferenceCrossNamespaceNotAllowedFor(
 		"default", "other-ns", "my-ref",
@@ -2980,29 +3008,14 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	// When ResolveReferences returns a cross-namespace error, the reconciler
 	// should set ReferencesResolved=False on the resource and return the
 	// error without calling ReadOne.
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		// Find the ReferencesResolved condition
-		var refCond *ackv1alpha1.Condition
-		for _, c := range conditions {
-			if c.Type == ackv1alpha1.ConditionTypeReferencesResolved {
-				refCond = c
-				break
-			}
-		}
-		require.NotNil(refCond, "expected ReferencesResolved condition to be set")
-		assert.Equal(corev1.ConditionFalse, refCond.Status,
-			"ReferencesResolved should be False for cross-namespace rejection")
-		assert.Equal(ackcondition.FailedReferenceResolutionMessage, *refCond.Message)
-		assert.Contains(*refCond.Reason, "cross-namespace resource reference is not allowed")
-		assert.Contains(*refCond.Reason, "default")
-		assert.Contains(*refCond.Reason, "other-ns")
-		assert.Contains(*refCond.Reason, "my-ref")
-	})
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -3033,6 +3046,24 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	rm.AssertNotCalled(t, "Update")
 	rm.AssertNotCalled(t, "LateInitialize")
 	rm.AssertNotCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	refCond := ackcondition.ReferencesResolved(desired)
+	require.NotNil(refCond, "expected ReferencesResolved condition to be set")
+	assert.Equal(corev1.ConditionFalse, refCond.Status,
+		"ReferencesResolved should be False for cross-namespace rejection")
+	assert.Equal(ackcondition.FailedReferenceResolutionMessage, *refCond.Message)
+	assert.Contains(*refCond.Reason, "cross-namespace resource reference is not allowed")
+	assert.Contains(*refCond.Reason, "default")
+	assert.Contains(*refCond.Reason, "other-ns")
+	assert.Contains(*refCond.Reason, "my-ref")
+	// The returned error is not terminal, so ACK.ResourceSynced and Ready
+	// are Unknown
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionUnknown, ready.Status)
 }
 
 // secretReconciler builds a minimal reconciler with the supplied
