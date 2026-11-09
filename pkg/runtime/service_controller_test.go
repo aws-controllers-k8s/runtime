@@ -475,3 +475,82 @@ func TestWithPrometheusRegistry_ConflictingCollectorPanics(t *testing.T) {
 	sc := NewServiceController("gamma", "gamma.services.k8s.aws", acktypes.VersionInfo{})
 	require.Panics(t, func() { sc.WithPrometheusRegistry(reg) })
 }
+
+func TestControllerName(t *testing.T) {
+	gvk := schema.GroupVersionKind{
+		Group:   "eks.services.k8s.aws",
+		Version: "v1alpha1",
+		Kind:    "Cluster",
+	}
+	require.Equal(t, "cluster", controllerName(ackcfg.Config{}, gvk))
+	require.Equal(t, "cluster.eks.services.k8s.aws",
+		controllerName(ackcfg.Config{QualifiedControllerNames: true}, gvk))
+}
+
+// newSingleKindServiceController returns a service controller that manages a
+// single resource kind of the given API group.
+func newSingleKindServiceController(alias, group, kind string) *serviceController {
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{Group: group, Version: "v1alpha1", Kind: kind},
+	)
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	zapOptions := ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    alias,
+			ServiceAPIGroup: group,
+		},
+		log: ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions)),
+	}
+	sc.WithResourceManagerFactories([]acktypes.AWSResourceManagerFactory{rmf})
+	return sc
+}
+
+// TestBindControllerManager_SameKindCollidesByDefault shows why
+// QualifiedControllerNames exists: two services with a kind of the same name
+// cannot be bound to one manager, because controller-runtime requires unique
+// controller names and the default name is the lowercased kind.
+func TestBindControllerManager_SameKindCollidesByDefault(t *testing.T) {
+	require := require.New(t)
+
+	mgr := &fakeManager{}
+	cfg := ackcfg.Config{EnableCARM: false}
+
+	alpha := newSingleKindServiceController("alpha", "alpha.services.k8s.aws", "Widget")
+	require.NoError(alpha.BindControllerManager(mgr, cfg))
+
+	beta := newSingleKindServiceController("beta", "beta.services.k8s.aws", "Widget")
+	require.ErrorContains(beta.BindControllerManager(mgr, cfg),
+		"controller with name widget already exists")
+}
+
+// TestBindControllerManager_QualifiedControllerNames checks that with
+// QualifiedControllerNames two services with a kind of the same name, and
+// their FieldExport reconcilers, can be bound to one manager without
+// disabling controller-runtime's name validation.
+func TestBindControllerManager_QualifiedControllerNames(t *testing.T) {
+	require := require.New(t)
+
+	mgr := &fakeManager{restCfg: newFieldExportInstalledAPIServer(t)}
+	cfg := ackcfg.Config{
+		EnableCARM:                  false,
+		EnableFieldExportReconciler: true,
+		QualifiedControllerNames:    true,
+	}
+
+	for _, sc := range []*serviceController{
+		newSingleKindServiceController("alpha", "alpha.services.k8s.aws", "Cluster"),
+		newSingleKindServiceController("beta", "beta.services.k8s.aws", "Cluster"),
+	} {
+		require.NoError(sc.BindControllerManager(mgr, cfg), sc.ServiceAlias)
+		require.Len(sc.reconcilers, 1)
+		require.NotNil(sc.fieldExportReconciler)
+		require.Len(sc.resourceFieldExportReconcilers, 1)
+	}
+}

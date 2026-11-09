@@ -117,6 +117,13 @@ type Config struct {
 	ReconcileDefaultMaxConcurrency  int
 	ReconcileResourceMaxConcurrency []string
 	ReconcileResources              string
+	// QualifiedControllerNames makes the controllers bound to the
+	// controller-runtime manager use "<kind>.<api group>" as their name
+	// instead of "<kind>". A kind is only unique within one service, so a
+	// binary that binds several service controllers to one manager must set
+	// it. It also changes the "controller" label of the controller-runtime
+	// metrics. It has no flag: such a binary sets it in code.
+	QualifiedControllerNames bool
 	// TODO(a-hilaly): migrate to k8s.io/component-base and implement a proper parser for feature gates.
 	FeatureGates    featuregate.FeatureGates
 	featureGatesRaw string
