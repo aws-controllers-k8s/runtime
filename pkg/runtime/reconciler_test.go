@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -2352,7 +2353,8 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	}
 
 	apiReader := &ctrlrtclientmock.Reader{}
-	apiReader.On("Get", ctx, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
+	// Reconcile reads the resource with its own context, see withShutdownGrace.
+	apiReader.On("Get", mock.Anything, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
 	r.apiReader = apiReader
 
 	// Call Reconcile
@@ -3673,4 +3675,295 @@ func TestReconcilerAdoptOrCreate_PreservesReferences(t *testing.T) {
 	inner.AssertNotCalled(t, "ClearResolvedReferences", acktypes.AWSResource(desired))
 	require.Empty(rm.calls,
 		"no restoration is needed when the declared spec is never the patch base")
+}
+
+// mockStatefulConditions makes the Conditions and ReplaceConditions mocks of
+// res behave like a real resource: Conditions returns what ReplaceConditions
+// stored last.
+func mockStatefulConditions(
+	res *ackmocks.AWSResource,
+	initial []*ackv1alpha1.Condition,
+) {
+	state := initial
+	res.On("Conditions").Return(func() []*ackv1alpha1.Condition { return state })
+	res.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		state = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+}
+
+// shutdownReconcilerMocks returns a resourceReconciler whose Reconcile reads
+// desired from the API server and syncs it with rm, and the status writer it
+// patches the resource status with. The caller mocks the status writer's
+// Patch.
+func shutdownReconcilerMocks(
+	rmf *ackmocks.AWSResourceManagerFactory,
+	rd *ackmocks.AWSResourceDescriptor,
+	desired *ackmocks.AWSResource,
+	rm *ackmocks.AWSResourceManager,
+) (*resourceReconciler, *ctrlrtclientmock.SubResourceWriter) {
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("Region").Return(nil)
+	ids.On("OwnerAccountID").Return(nil)
+	desired.On("Identifiers").Return(ids)
+	desired.On("IsBeingDeleted").Return(false)
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+	rmf.On("ManagerFor",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return(rm, nil)
+
+	sc := &ackmocks.ServiceController{}
+	sc.On("GetMetadata").Return(acktypes.ServiceControllerMetadata{})
+	sc.On("NewAWSConfig",
+		mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything,
+	).Return(aws.Config{}, nil)
+
+	kc := &ctrlrtclientmock.Client{}
+	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	apiReader := &ctrlrtclientmock.Reader{}
+	apiReader.On("Get", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:        kc,
+			apiReader: apiReader,
+			sc:        sc,
+			log:       fakeLogger,
+			cfg:       ackcfg.Config{ResourceTagKeys: []string{}},
+			carmCache: ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{}),
+			irsCache:  iamroleselector.NewCache(fakeLogger),
+			metrics:   ackmetrics.NewMetrics("bookstore"),
+		},
+		rmf: rmf,
+		rd:  rd,
+	}
+	return r, statusWriter
+}
+
+var shutdownTestRequest = ctrlrt.Request{
+	NamespacedName: types.NamespacedName{Namespace: "default", Name: "mybook"},
+}
+
+// The controller starts shutting down while ReadOne is in flight. The
+// reconciliation keeps its context, finishes, and patches the resource as
+// ACK.ResourceSynced=True instead of failing with "context canceled".
+func TestReconcile_ShutdownLetsInFlightReconcileFinish(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancel(context.Background())
+		defer shutdown()
+
+		desired, _, _ := resourceMocks()
+		desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+		desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+		latest, latestRTObj, _ := resourceMocks()
+		mockStatefulConditions(latest, nil)
+
+		rm := &ackmocks.AWSResourceManager{}
+		rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+		rm.On("EnsureTags", mock.Anything, desired, mock.Anything).Return(nil)
+		rm.On("ReadOne", mock.Anything, desired).Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			shutdown()
+			time.Sleep(time.Second) // the call takes another second
+			assert.NoError(t, ctx.Err())
+		}).Return(latest, nil)
+		rm.On("ClearResolvedReferences", mock.Anything).Return(
+			func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+		)
+		rm.On("LateInitialize", mock.Anything, latest).Return(latest, nil)
+		rm.On("IsSynced", mock.Anything, latest).Return(true, nil)
+		rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+		rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+		rd.On("IsManaged", desired).Return(true)
+		rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+
+		r, statusWriter := shutdownReconcilerMocks(rmf, rd, desired, rm)
+		statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		_, err := r.Reconcile(parent, shutdownTestRequest)
+		require.NoError(t, err)
+
+		synced := ackcondition.Synced(latest)
+		require.NotNil(t, synced)
+		assert.Equal(t, corev1.ConditionTrue, synced.Status)
+		assert.Nil(t, ackcondition.Recoverable(latest))
+		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	})
+}
+
+// A call that is still in flight when the grace period has passed is canceled,
+// and the resource is ACK.ResourceSynced=Unknown with ACK.Recoverable carrying
+// the error, as before.
+func TestReconcile_ShutdownCancelsReconcileOnceGracePassed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancel(context.Background())
+		defer shutdown()
+
+		desired, _, _ := resourceMocks()
+		desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+		desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+		latest, latestRTObj, _ := resourceMocks()
+
+		rm := &ackmocks.AWSResourceManager{}
+		rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+		rm.On("EnsureTags", mock.Anything, desired, mock.Anything).Return(nil)
+		rm.On("ReadOne", mock.Anything, desired).Return(
+			func(ctx context.Context, _ acktypes.AWSResource) (acktypes.AWSResource, error) {
+				shutdown()
+				start := time.Now()
+				<-ctx.Done() // the call hangs
+				assert.Equal(t, shutdownGracePeriod, time.Since(start))
+				err := &smithy.OperationError{
+					ServiceID:     "IAM",
+					OperationName: "GetPolicy",
+					Err:           &aws.RequestCanceledError{Err: ctx.Err()},
+				}
+				// Like a generated resource manager, ReadOne returns the
+				// resource with an ACK.Recoverable condition carrying the
+				// error.
+				message := err.Error()
+				mockStatefulConditions(latest, []*ackv1alpha1.Condition{{
+					Type:    ackv1alpha1.ConditionTypeRecoverable,
+					Status:  corev1.ConditionTrue,
+					Message: &message,
+				}})
+				return latest, err
+			},
+		)
+		rm.On("IsSynced", mock.Anything, latest).Return(true, nil)
+
+		rmf, rd := managedResourceManagerFactoryMocks(desired, latest)
+		rd.On("IsManaged", desired).Return(true)
+
+		r, statusWriter := shutdownReconcilerMocks(rmf, rd, desired, rm)
+		statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		_, err := r.Reconcile(parent, shutdownTestRequest)
+		require.ErrorIs(t, err, context.Canceled)
+
+		synced := ackcondition.Synced(latest)
+		require.NotNil(t, synced)
+		assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+		recoverable := ackcondition.Recoverable(latest)
+		require.NotNil(t, recoverable)
+		assert.Contains(t, *recoverable.Message, "context canceled")
+		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	})
+}
+
+// The controller starts shutting down while Create is in flight (the case
+// runtime#191 fixed by patching the status of a resource whose Create failed
+// with "context canceled"). Create now finishes, and the created resource,
+// with its ARN, is patched to the status with the right conditions.
+func TestReconcile_ShutdownMidCreateFinishesCreate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancel(context.Background())
+		defer shutdown()
+		arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+		desired, _, _ := resourceMocks()
+		desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+		desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+		ids := &ackmocks.AWSResourceIdentifiers{}
+		ids.On("ARN").Return(&arn)
+		created, createdRTObj, _ := resourceMocks()
+		created.On("Identifiers").Return(ids)
+		mockStatefulConditions(created, nil)
+		observed, _, _ := resourceMocks()
+
+		rm := &ackmocks.AWSResourceManager{}
+		rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+		rm.On("EnsureTags", mock.Anything, desired, mock.Anything).Return(nil)
+		rm.On("ReadOne", mock.Anything, desired).Return(nil, ackerr.NotFound).Once()
+		rm.On("Create", mock.Anything, desired).Run(func(args mock.Arguments) {
+			ctx := args.Get(0).(context.Context)
+			shutdown()
+			time.Sleep(time.Second) // the rest of the Create calls
+			assert.NoError(t, ctx.Err())
+		}).Return(created, nil)
+		rm.On("ReadOne", mock.Anything, created).Return(observed, nil)
+		rm.On("ClearResolvedReferences", mock.Anything).Return(
+			func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+		)
+		rm.On("LateInitialize", mock.Anything, created).Return(created, nil)
+		rm.On("IsSynced", mock.Anything, created).Return(true, nil)
+		rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+		rmf, rd := managedResourceManagerFactoryMocks(desired, created)
+		rd.On("IsManaged", mock.Anything).Return(true)
+		rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+
+		r, statusWriter := shutdownReconcilerMocks(rmf, rd, desired, rm)
+		statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		_, err := r.Reconcile(parent, shutdownTestRequest)
+		require.NoError(t, err)
+
+		rm.AssertCalled(t, "ReadOne", mock.Anything, created)
+		synced := ackcondition.Synced(created)
+		require.NotNil(t, synced)
+		assert.Equal(t, corev1.ConditionTrue, synced.Status)
+		assert.Nil(t, ackcondition.Recoverable(created))
+		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, createdRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	})
+}
+
+// The controller starts shutting down during Create, and the ReadOne after
+// Create keeps returning NotFound, as an eventually consistent API can. Once
+// the grace period has passed, the retries stop right away instead of waiting
+// for the next backoff tick, and the created resource is patched to the status
+// before the controller Pod is killed.
+func TestReconcile_ShutdownDuringDelayedReadOneAfterCreate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancel(context.Background())
+		defer shutdown()
+		var shutdownAt, patchedAt time.Time
+		arn := ackv1alpha1.AWSResourceName("mybook-arn")
+
+		desired, _, _ := resourceMocks()
+		desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
+		desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+		ids := &ackmocks.AWSResourceIdentifiers{}
+		ids.On("ARN").Return(&arn)
+		created, createdRTObj, _ := resourceMocks()
+		created.On("Identifiers").Return(ids)
+		mockStatefulConditions(created, nil)
+
+		rm := &ackmocks.AWSResourceManager{}
+		rm.On("ResolveReferences", mock.Anything, mock.Anything, desired).Return(desired, false, nil)
+		rm.On("EnsureTags", mock.Anything, desired, mock.Anything).Return(nil)
+		rm.On("ReadOne", mock.Anything, desired).Return(nil, ackerr.NotFound).Once()
+		rm.On("Create", mock.Anything, desired).Run(func(args mock.Arguments) {
+			shutdown()
+			shutdownAt = time.Now()
+			time.Sleep(time.Second) // the rest of the Create calls
+		}).Return(created, nil)
+		rm.On("ReadOne", mock.Anything, created).Return(nil, ackerr.NotFound)
+		rm.On("ClearResolvedReferences", mock.Anything).Return(
+			func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+		)
+		rm.On("IsSynced", mock.Anything, created).Return(false, nil)
+		rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+		rmf, rd := managedResourceManagerFactoryMocks(desired, created)
+		rd.On("IsManaged", mock.Anything).Return(true)
+
+		r, statusWriter := shutdownReconcilerMocks(rmf, rd, desired, rm)
+		statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Run(func(mock.Arguments) {
+			patchedAt = time.Now()
+		}).Return(nil)
+		_, _ = r.Reconcile(parent, shutdownTestRequest)
+
+		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, createdRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+		assert.Equal(t, shutdownGracePeriod, patchedAt.Sub(shutdownAt))
+	})
 }

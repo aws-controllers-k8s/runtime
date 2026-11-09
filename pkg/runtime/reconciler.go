@@ -59,6 +59,12 @@ const (
 	// resource if the CARM cache is not synced yet, or if the roleARN is not
 	// available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
+	// shutdownGracePeriod is how long an in-flight reconciliation keeps running
+	// after the controller starts shutting down. It stays well below the
+	// controller Pod's terminationGracePeriodSeconds (10s in the Helm chart),
+	// so the reconciliation can still patch the resource's status before the
+	// Pod is killed, and below the leader election lease duration (15s).
+	shutdownGracePeriod = 5 * time.Second
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -259,6 +265,12 @@ func (r *reconciler) WriteToSecret(
 // Reconcile implements `controller-runtime.Reconciler` and handles reconciling
 // a CR CRUD request
 func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) (ctrlrt.Result, error) {
+	// Let a reconciliation that is in flight when the controller shuts down
+	// finish, instead of failing its AWS calls with "context canceled" and
+	// marking the resource ACK.ResourceSynced=Unknown.
+	ctx, cancel := withShutdownGrace(ctx, shutdownGracePeriod)
+	defer cancel()
+
 	desired, err := r.getAWSResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -958,7 +970,10 @@ func (r *resourceReconciler) delayedReadOneAfterCreate(
 
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = backoffReadOneTimeout
-	ticker := backoff.NewTicker(bo)
+	// Stop at once when ctx is canceled, for example when the shutdown grace
+	// period has passed, so the created resource is still patched to the
+	// status before the controller Pod is killed.
+	ticker := backoff.NewTicker(backoff.WithContext(bo, ctx))
 	attempts := 0
 
 	var observed acktypes.AWSResource
