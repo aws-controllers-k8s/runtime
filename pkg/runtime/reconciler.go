@@ -377,7 +377,10 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_region", region,
 			"desired_region", desired.Identifiers().Region(),
 		)
-		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+		err = ackerr.NewTerminalError(errors.New(msg))
+		latest = withTerminalConditions(desired, err)
+		setIAMRoleSelectorCondition(latest, selector)
+		return r.HandleReconcileError(ctx, desired, latest, err)
 	}
 
 	// Similarly, if the user has specified an account ID that is different
@@ -393,7 +396,10 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_account", *desired.Identifiers().OwnerAccountID(),
 			"desired_account", acctID,
 		)
-		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+		err = ackerr.NewTerminalError(errors.New(msg))
+		latest = withTerminalConditions(desired, err)
+		setIAMRoleSelectorCondition(latest, selector)
+		return r.HandleReconcileError(ctx, desired, latest, err)
 	}
 
 	// The config pivot to the roleARN will happen if it is not empty.
@@ -420,6 +426,24 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 		setIAMRoleSelectorCondition(latest, selector)
 	}
 	return r.HandleReconcileError(ctx, desired, latest, err)
+}
+
+// withTerminalConditions returns a copy of res whose conditions report err, a
+// terminal error found before the resource is synced: ACK.Terminal is True
+// with the error, and ACK.ResourceSynced and Ready are False, as when Sync
+// stops on a terminal error. The conditions res had are dropped, as every
+// reconciliation does before it sets new ones.
+func withTerminalConditions(
+	res acktypes.AWSResource,
+	err error,
+) acktypes.AWSResource {
+	latest := res.DeepCopy()
+	ackcondition.Clear(latest)
+	reason := err.Error()
+	ackcondition.SetTerminal(latest, corev1.ConditionTrue, &reason, nil)
+	ackcondition.SetSynced(latest, corev1.ConditionFalse, &ackcondition.NotSyncedMessage, &reason)
+	ackcondition.SetReady(latest, corev1.ConditionFalse, &reason, ptr.To(string(ackv1alpha1.ConditionTypeTerminal)))
+	return latest
 }
 
 func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.IAMRoleSelector) {

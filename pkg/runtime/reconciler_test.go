@@ -2239,11 +2239,18 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	ids.On("Region").Return(nil)
 	ids.On("OwnerAccountID").Return(&existingAccount)
 	desired.On("Identifiers").Return(ids)
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// The resource was in sync before the account changed.
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 	desired.On("IsBeingDeleted").Return(false)
 
 	// Setup resource descriptor
@@ -2364,6 +2371,96 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	require.NotNil(err)
 	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
 	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
+
+	// The CR shows it, instead of keeping the conditions it had.
+	assertTerminalConditions(t, desired, err)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertTerminalConditions checks that res reports err as a terminal error:
+// ACK.Terminal is True with the error, and ACK.ResourceSynced and Ready are
+// False.
+func assertTerminalConditions(t *testing.T, res acktypes.AWSResource, err error) {
+	t.Helper()
+	terminal := ackcondition.Terminal(res)
+	require.NotNil(t, terminal)
+	assert.Equal(t, corev1.ConditionTrue, terminal.Status)
+	assert.Equal(t, err.Error(), *terminal.Message)
+	synced := ackcondition.Synced(res)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(res)
+	require.NotNil(t, ready)
+	assert.Equal(t, corev1.ConditionFalse, ready.Status)
+	assert.Equal(t, err.Error(), *ready.Message)
+}
+
+// The resource's region annotation no longer matches the region it exists in.
+// The reconciliation stops with a terminal error, and the CR shows it.
+func TestReconcile_RegionDrifted(t *testing.T) {
+	ctx := context.TODO()
+	req := ctrlrt.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "mybook"},
+	}
+
+	existingRegion := ackv1alpha1.AWSRegion("us-west-2")
+	desired, _, metaObj := resourceMocks()
+	metaObj.SetAnnotations(map[string]string{ackv1alpha1.AnnotationRegion: "eu-central-1"})
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("Region").Return(&existingRegion)
+	ids.On("OwnerAccountID").Return(nil)
+	desired.On("Identifiers").Return(ids)
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(schema.GroupVersionKind{
+		Group:   "test.services.k8s.aws",
+		Kind:    "Book",
+		Version: "v1alpha1",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	apiReader := &ctrlrtclientmock.Reader{}
+	apiReader.On("Get", mock.Anything, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
+
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:        kc,
+			apiReader: apiReader,
+			log:       fakeLogger,
+			cfg:       ackcfg.Config{Region: "us-west-2"},
+			carmCache: ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{}),
+			irsCache:  iamroleselector.NewCache(fakeLogger),
+			metrics:   ackmetrics.NewMetrics("test"),
+		},
+		rd: rd,
+	}
+
+	_, err := r.Reconcile(ctx, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Resource already exists in region us-west-2")
+	assertTerminalConditions(t, desired, err)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // preDeleteDescriptorMock implements both AWSResourceDescriptor and
