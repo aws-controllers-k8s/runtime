@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -418,4 +419,59 @@ func TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing
 
 	require.Nil(sc.fieldExportReconciler)
 	require.Empty(sc.resourceFieldExportReconcilers)
+}
+
+// TestWithPrometheusRegistry_SharedRegistry checks that the service
+// controllers of a binary that hosts several services can all register their
+// metrics with the same registry. The collectors are package-level, so the
+// second registration used to panic with "duplicate metrics collector
+// registration attempted".
+func TestWithPrometheusRegistry_SharedRegistry(t *testing.T) {
+	require := require.New(t)
+
+	reg := prometheus.NewRegistry()
+	vi := acktypes.VersionInfo{GitVersion: "test-version"}
+	alpha := NewServiceController("alpha", "alpha.services.k8s.aws", vi)
+	beta := NewServiceController("beta", "beta.services.k8s.aws", vi)
+
+	require.NotPanics(func() { alpha.WithPrometheusRegistry(reg) })
+	require.NotPanics(func() { beta.WithPrometheusRegistry(reg) })
+
+	alpha.(*serviceController).metrics.RecordAPICall("READ_ONE", "DescribeAlpha", nil)
+	beta.(*serviceController).metrics.RecordAPICall("READ_ONE", "DescribeBeta", nil)
+
+	families, err := reg.Gather()
+	require.NoError(err)
+	services := map[string]bool{}
+	for _, mf := range families {
+		if mf.GetName() != "ack_outbound_api_requests_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "service" {
+					services[l.GetValue()] = true
+				}
+			}
+		}
+	}
+	require.True(services["alpha"])
+	require.True(services["beta"])
+}
+
+// TestWithPrometheusRegistry_ConflictingCollectorPanics checks that a
+// registration conflict with a collector the runtime does not own still panics,
+// as it did with MustRegister.
+func TestWithPrometheusRegistry_ConflictingCollectorPanics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ack_outbound_api_requests_total",
+			Help: "Total number of outbound AWS API requests made by the controller.",
+		},
+		[]string{"service", "op_type", "op_id"},
+	))
+
+	sc := NewServiceController("gamma", "gamma.services.k8s.aws", acktypes.VersionInfo{})
+	require.Panics(t, func() { sc.WithPrometheusRegistry(reg) })
 }

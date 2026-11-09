@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -164,7 +165,15 @@ func (c *serviceController) WithPrometheusRegistry(
 		return c
 	}
 	for _, collector := range c.metrics.Collectors() {
-		reg.MustRegister(collector)
+		// The collectors are package-level and every series carries a
+		// "service" label, so the service controllers of a binary that hosts
+		// several services share them. The first one registers them.
+		if err := reg.Register(collector); err != nil {
+			var are prometheus.AlreadyRegisteredError
+			if !errors.As(err, &are) || are.ExistingCollector != collector {
+				panic(err)
+			}
+		}
 	}
 	return c
 }
