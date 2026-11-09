@@ -278,7 +278,7 @@ func mockSourceResource() (
 	res.On("RuntimeObject").Return(rtObj)
 	res.On("DeepCopy").Return(res)
 	// DoNothing on SetStatus call.
-	res.On("SetStatus", res).Return(func(res mocks.AWSResource) {})
+	res.On("SetStatus", res).Return()
 
 	return res, rtObj, metaObj
 }
