@@ -410,7 +410,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
-func setIAMRoleSelectorCondition(r acktypes.ConditionManager, selector *ackv1alpha1.IAMRoleSelector) {
+func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.IAMRoleSelector) {
 	if selector == nil {
 		return
 	}
