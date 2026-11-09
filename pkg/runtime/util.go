@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/util/retry"
@@ -260,6 +261,39 @@ func patchObject(
 		return kc.Status().Patch(patchCtx, obj, patch)
 	}
 	return kc.Patch(patchCtx, obj, patch)
+}
+
+// withShutdownGrace returns a context that carries the values and the deadline
+// of parent but is canceled only once grace has passed after parent is
+// canceled. The returned CancelFunc releases the context and must be called
+// when the work using it is done.
+//
+// controller-runtime cancels the context of in-flight reconciliations when the
+// controller shuts down, and waits for them to return before it gives up the
+// leader lease. With this context, a reconciliation that is almost done keeps
+// its AWS calls and finishes with the right conditions instead of failing with
+// "context canceled".
+func withShutdownGrace(
+	parent context.Context,
+	grace time.Duration,
+) (context.Context, context.CancelFunc) {
+	ctx := context.WithoutCancel(parent)
+	cancelDeadline := context.CancelFunc(func() {})
+	if deadline, ok := parent.Deadline(); ok {
+		ctx, cancelDeadline = context.WithDeadline(ctx, deadline)
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	stopGrace := context.AfterFunc(parent, func() {
+		timer := time.AfterFunc(grace, func() {
+			cancel(context.Cause(parent))
+		})
+		context.AfterFunc(ctx, func() { timer.Stop() })
+	})
+	return ctx, func() {
+		stopGrace()
+		cancel(nil)
+		cancelDeadline()
+	}
 }
 
 // patchWithRetry performs a patch operation with retry on conflicts using client-go's standard retry mechanism.

@@ -14,8 +14,12 @@
 package runtime
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -148,4 +152,74 @@ func TestExtractAdoptionFields_InvalidJSON(t *testing.T) {
 	_, err := ExtractAdoptionFields(res)
 	require.Error(err)
 	require.True(strings.Contains(err.Error(), "failed to parse services.k8s.aws/adoption-fields annotation as JSON"))
+}
+
+func TestWithShutdownGrace_CanceledOnceGracePassed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancelCause(context.Background())
+		ctx, cancel := withShutdownGrace(parent, 5*time.Second)
+		defer cancel()
+
+		// The grace period starts at the shutdown, not when the context is
+		// created.
+		time.Sleep(time.Minute)
+		errShutdown := errors.New("shutting down")
+		shutdown(errShutdown)
+		synctest.Wait()
+		require.NoError(t, ctx.Err(), "the context outlives its parent")
+
+		time.Sleep(5*time.Second - time.Nanosecond)
+		synctest.Wait()
+		require.NoError(t, ctx.Err())
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		require.Equal(t, errShutdown, context.Cause(ctx))
+	})
+}
+
+func TestWithShutdownGrace_KeepsValuesAndDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		type key struct{}
+		parent := context.WithValue(context.Background(), key{}, "value")
+		parent, cancelParent := context.WithTimeout(parent, time.Minute)
+		defer cancelParent()
+		ctx, cancel := withShutdownGrace(parent, time.Hour)
+		defer cancel()
+
+		require.Equal(t, "value", ctx.Value(key{}))
+		parentDeadline, _ := parent.Deadline()
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		require.Equal(t, parentDeadline, deadline)
+
+		// A reconciliation timeout is not a shutdown: it does not wait for
+		// the grace period.
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	})
+}
+
+func TestWithShutdownGrace_CancelFunc(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent, shutdown := context.WithCancel(context.Background())
+		defer shutdown()
+
+		// Released before the shutdown.
+		ctx, cancel := withShutdownGrace(parent, 5*time.Second)
+		cancel()
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		require.NoError(t, parent.Err())
+
+		// Released during the grace period, without waiting for it to pass.
+		ctx, cancel = withShutdownGrace(parent, 5*time.Second)
+		shutdown()
+		synctest.Wait()
+		require.NoError(t, ctx.Err())
+		cancel()
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+		require.Equal(t, context.Canceled, context.Cause(ctx))
+	})
 }
