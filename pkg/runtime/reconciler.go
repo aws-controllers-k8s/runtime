@@ -367,15 +367,15 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	// If the user has specified a region that is different from the
 	// region the resource currently exists in, we need to fail the
 	// reconciliation with a terminal error.
-	if r.regionDrifted(desired) {
+	if desiredRegion, drifted := r.regionDrifted(desired); drifted {
 		msg := fmt.Sprintf(
 			"Resource already exists in region %s, but the desired state specifies region %s. ",
-			region, desired.MetaObject().GetAnnotations()[ackv1alpha1.AnnotationRegion],
+			region, desiredRegion,
 		)
 		rlog.Info(
 			msg,
 			"current_region", region,
-			"desired_region", desired.Identifiers().Region(),
+			"desired_region", desiredRegion,
 		)
 		err = ackerr.NewTerminalError(errors.New(msg))
 		latest = withTerminalConditions(desired, err)
@@ -455,14 +455,15 @@ func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.I
 	condition.SetIAMRoleSelected(r, corev1.ConditionTrue, &condition.IAMRoleSelectedReason, &message)
 }
 
-// regionDrifted return true if the desired resource region is different
-// from the target region. Target region can be derived from the two places
-// in the following order:
+// regionDrifted returns the target region of the desired resource, and true
+// if it is different from the region the resource exists in. Target region
+// can be derived from the following places, in this order:
 // 1) the region annotation on the resource
 // 2) from the namespace annotation
-func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
+// 3) the controller's region
+func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) (ackv1alpha1.AWSRegion, bool) {
 	if desired.Identifiers() == nil || desired.Identifiers().Region() == nil {
-		return false
+		return "", false
 	}
 
 	currentRegion := desired.Identifiers().Region()
@@ -471,7 +472,7 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 	resAnnotations := desired.MetaObject().GetAnnotations()
 	region, ok := resAnnotations[ackv1alpha1.AnnotationRegion]
 	if ok {
-		return ackv1alpha1.AWSRegion(region) != *currentRegion
+		return ackv1alpha1.AWSRegion(region), ackv1alpha1.AWSRegion(region) != *currentRegion
 	}
 
 	// look for default region in namespace metadata annotations
@@ -481,11 +482,11 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 		nsRegion, ok = r.irsCache.Namespaces.GetDefaultRegion(ns)
 	}
 	if ok {
-		return ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
+		return ackv1alpha1.AWSRegion(nsRegion), ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
 	}
 
 	// use controller configuration region
-	return ackv1alpha1.AWSRegion(r.cfg.Region) != *currentRegion
+	return ackv1alpha1.AWSRegion(r.cfg.Region), ackv1alpha1.AWSRegion(r.cfg.Region) != *currentRegion
 }
 
 func (r *resourceReconciler) handleCacheError(

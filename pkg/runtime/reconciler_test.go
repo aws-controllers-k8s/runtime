@@ -2395,9 +2395,33 @@ func assertTerminalConditions(t *testing.T, res acktypes.AWSResource, err error)
 	assert.Equal(t, err.Error(), *ready.Message)
 }
 
-// The resource's region annotation no longer matches the region it exists in.
-// The reconciliation stops with a terminal error, and the CR shows it.
+// The resource's target region no longer matches the region it exists in. The
+// reconciliation stops with a terminal error, and the CR shows it.
 func TestReconcile_RegionDrifted(t *testing.T) {
+	t.Run("region annotation", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{
+			ackv1alpha1.AnnotationRegion: "eu-central-1",
+		})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-central-1. ", err.Error())
+		assertTerminalConditions(t, desired, err)
+	})
+	t.Run("controller region", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-west-1. ", err.Error())
+		assertTerminalConditions(t, desired, err)
+	})
+}
+
+// reconcileRegionDrift reconciles a resource that exists in us-west-2 and has
+// the supplied annotations, with a controller running in eu-west-1. It
+// returns the resource, with the conditions the reconciliation left on it,
+// and the reconciliation error.
+func reconcileRegionDrift(
+	t *testing.T,
+	annotations map[string]string,
+) (*ackmocks.AWSResource, error) {
 	ctx := context.TODO()
 	req := ctrlrt.Request{
 		NamespacedName: types.NamespacedName{Namespace: "default", Name: "mybook"},
@@ -2405,7 +2429,7 @@ func TestReconcile_RegionDrifted(t *testing.T) {
 
 	existingRegion := ackv1alpha1.AWSRegion("us-west-2")
 	desired, _, metaObj := resourceMocks()
-	metaObj.SetAnnotations(map[string]string{ackv1alpha1.AnnotationRegion: "eu-central-1"})
+	metaObj.SetAnnotations(annotations)
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("Region").Return(&existingRegion)
 	ids.On("OwnerAccountID").Return(nil)
@@ -2448,7 +2472,7 @@ func TestReconcile_RegionDrifted(t *testing.T) {
 			kc:        kc,
 			apiReader: apiReader,
 			log:       fakeLogger,
-			cfg:       ackcfg.Config{Region: "us-west-2"},
+			cfg:       ackcfg.Config{Region: "eu-west-1"},
 			carmCache: ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{}),
 			irsCache:  iamroleselector.NewCache(fakeLogger),
 			metrics:   ackmetrics.NewMetrics("test"),
@@ -2457,10 +2481,8 @@ func TestReconcile_RegionDrifted(t *testing.T) {
 	}
 
 	_, err := r.Reconcile(ctx, req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Resource already exists in region us-west-2")
-	assertTerminalConditions(t, desired, err)
 	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+	return desired, err
 }
 
 // preDeleteDescriptorMock implements both AWSResourceDescriptor and
