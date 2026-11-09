@@ -377,10 +377,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_region", region,
 			"desired_region", desiredRegion,
 		)
-		err = ackerr.NewTerminalError(errors.New(msg))
-		latest = withTerminalConditions(desired, err)
-		setIAMRoleSelectorCondition(latest, selector)
-		return r.HandleReconcileError(ctx, desired, latest, err)
+		return r.failBeforeSync(ctx, desired, selector, ackerr.NewTerminalError(errors.New(msg)))
 	}
 
 	// Similarly, if the user has specified an account ID that is different
@@ -396,10 +393,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_account", *desired.Identifiers().OwnerAccountID(),
 			"desired_account", acctID,
 		)
-		err = ackerr.NewTerminalError(errors.New(msg))
-		latest = withTerminalConditions(desired, err)
-		setIAMRoleSelectorCondition(latest, selector)
-		return r.HandleReconcileError(ctx, desired, latest, err)
+		return r.failBeforeSync(ctx, desired, selector, ackerr.NewTerminalError(errors.New(msg)))
 	}
 
 	// The config pivot to the roleARN will happen if it is not empty.
@@ -428,22 +422,24 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
-// withTerminalConditions returns a copy of res whose conditions report err, a
-// terminal error found before the resource is synced: ACK.Terminal is True
-// with the error, and ACK.ResourceSynced and Ready are False, as when Sync
-// stops on a terminal error. The conditions res had are dropped, as every
-// reconciliation does before it sets new ones.
-func withTerminalConditions(
-	res acktypes.AWSResource,
+// failBeforeSync stops the reconciliation on err, a terminal error found
+// before the resource is synced, and patches the resource's conditions to
+// report it the way Sync does: ACK.Terminal is True with the error, and
+// ACK.ResourceSynced and Ready are False. The returned error and the requeue
+// are those of err.
+func (r *resourceReconciler) failBeforeSync(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	selector *ackv1alpha1.IAMRoleSelector,
 	err error,
-) acktypes.AWSResource {
-	latest := res.DeepCopy()
-	ackcondition.Clear(latest)
-	reason := err.Error()
-	ackcondition.SetTerminal(latest, corev1.ConditionTrue, &reason, nil)
-	ackcondition.SetSynced(latest, corev1.ConditionFalse, &ackcondition.NotSyncedMessage, &reason)
-	ackcondition.SetReady(latest, corev1.ConditionFalse, &reason, ptr.To(string(ackv1alpha1.ConditionTypeTerminal)))
-	return latest
+) (ctrlrt.Result, error) {
+	r.resetConditions(ctx, desired)
+	latest := ackcondition.WithTerminalCondition(desired, err)
+	// There is no resource manager yet, and ensureConditions does not need
+	// one when the reconciliation failed.
+	r.ensureConditions(ctx, nil, latest, err)
+	setIAMRoleSelectorCondition(latest, selector)
+	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
 func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.IAMRoleSelector) {
@@ -767,6 +763,8 @@ func (r *resourceReconciler) resetConditions(
 
 // ensureConditions examines the supplied resource's collection of Condition
 // objects and ensures that an ACK.ResourceSynced condition is present.
+//
+// rm is used only when reconcileErr is nil, and may be nil otherwise.
 func (r *resourceReconciler) ensureConditions(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -791,18 +789,19 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
-		rlog.Enter("rm.IsSynced")
-		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
-			condStatus = corev1.ConditionTrue
-			condMessage = ackcondition.SyncedMessage
-		} else if err != nil {
-			condReason = err.Error()
-		}
-		rlog.Exit("rm.IsSynced", err)
-
-		if reconcileErr != nil {
+		var terminalErr *ackerr.TerminalError
+		if reconcileErr == nil {
+			rlog.Enter("rm.IsSynced")
+			if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
+				condStatus = corev1.ConditionTrue
+				condMessage = ackcondition.SyncedMessage
+			} else if err != nil {
+				condReason = err.Error()
+			}
+			rlog.Exit("rm.IsSynced", err)
+		} else {
 			condReason = reconcileErr.Error()
-			if reconcileErr == ackerr.Terminal {
+			if reconcileErr == ackerr.Terminal || errors.As(reconcileErr, &terminalErr) {
 				// A terminal condition is a stable state for a resource.
 				// Terminal conditions indicate that without changes to the
 				// desired state of a resource, the resource's desired state
