@@ -1489,11 +1489,18 @@ func (r *resourceReconciler) deleteResource(
 		// may have set a Spec field or metadata on the CR during `rm.Delete`,
 		// so we make sure to save any of those Spec/Metadata changes here.
 		//
+		// The patch is computed against `observed`, the resource rm.Delete
+		// received, so it carries only what rm.Delete changed. `observed`
+		// holds the state read from AWS: computed against `current`, the
+		// patch would write that state over the user's spec on every failed
+		// or asynchronous delete, since a failing Delete returns the resource
+		// it was given.
+		//
 		// NOTE(jaypipes): The `HandleReconcilerError` wrapper *always* saves
 		// any changes to Status fields that may have been made by the resource
 		// manager if the returned `latest` resource is non-nil, so we don't
 		// have to worry about saving status stuff here.
-		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, current, latest)
+		latest, _ = r.patchResourceMetadataAndSpec(ctx, rm, observed, latest)
 	}
 	if err != nil {
 		// NOTE: Delete() implementations that have asynchronously-completing
