@@ -56,8 +56,8 @@ const (
 	// overriden by RequeueOnSuccessSeconds configuration for that resource.
 	defaultResyncPeriod = 10 * time.Hour
 	// roleARNNotAvailableRequeueDelay is the default duration to requeue the
-	// resource if the CARM cache is not synced yet, or if the roleARN is not
-	// available.
+	// resource if the CARM or IAMRoleSelector cache is not synced yet, or if
+	// the roleARN is not available.
 	roleARNNotAvailableRequeueDelay = 15 * time.Second
 )
 
@@ -322,6 +322,13 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	var selector *ackv1alpha1.IAMRoleSelector
 
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IAMRoleSelector) {
+		// Until the cache has synced, Matches finds no selector, and the
+		// resource would be reconciled with the controller's own role. Nothing
+		// was observed yet, so requeue without touching the conditions.
+		if !r.irsCache.HasSynced() {
+			rlog.Info("IAMRoleSelector cache has not synced yet, requeueing")
+			return ctrlrt.Result{RequeueAfter: roleARNNotAvailableRequeueDelay}, nil
+		}
 		// If the IAMRoleSelector feature gate is enabled, we need to check if there
 		// are any matching IAMRoleSelectors for this resource. If there are, we
 		// override the roleARN from CARM (if any) with the one from the selector.

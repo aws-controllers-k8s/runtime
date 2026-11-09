@@ -228,6 +228,12 @@ func (c *NamespaceCache) GetDeletionPolicy(namespace string, service string) (st
 	return "", false
 }
 
+// HasSynced returns true once the namespace informer has listed the
+// namespaces at least once.
+func (c *NamespaceCache) HasSynced() bool {
+	return c.hasSynced != nil && c.hasSynced()
+}
+
 // GetDeletionPolicy returns the deletion policy if it exists
 func (c *NamespaceCache) GetLabels(namespace string) map[string]string {
 	info, ok := c.getNamespaceInfo(namespace)

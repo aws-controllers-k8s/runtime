@@ -14,6 +14,7 @@
 package iamroleselector
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -49,7 +50,8 @@ func NewCache(log logr.Logger) *Cache {
 	}
 }
 
-// Run starts the cache and blocks until stopCh is closed
+// Run starts the informers of the cache and returns. They stop when stopCh is
+// closed.
 func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interface, stopCh <-chan struct{}) {
 	c.log.V(1).Info("Starting IAMRoleSelector cache")
 
@@ -139,12 +141,20 @@ func (c *Cache) handleDelete(obj interface{}) {
 	c.log.V(1).Info("removed IAMRoleSelector from cache", "name", name)
 }
 
-// HasSynced returns true if the cache has synced
+// HasSynced returns true once the IAMRoleSelector informer and the namespace
+// informer have both listed their objects at least once. Matches needs both:
+// the selectors, and the labels of the resource's namespace.
 func (c *Cache) HasSynced() bool {
 	if c.informer == nil {
 		return false
 	}
-	return c.informer.HasSynced()
+	return c.informer.HasSynced() && c.Namespaces.HasSynced()
+}
+
+// WaitForCacheSync waits until the cache has synced or ctx is done, and
+// returns whether the cache has synced.
+func (c *Cache) WaitForCacheSync(ctx context.Context) bool {
+	return cache.WaitForCacheSync(ctx.Done(), c.HasSynced)
 }
 
 // GetMatchingSelectors returns the list of IAMRoleSelectors that match the given context

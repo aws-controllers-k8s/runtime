@@ -278,6 +278,11 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 			return err
 		}
 		irsCache.Run(dynamicClient, clientSet, context.TODO().Done())
+		// Wait for the cache to sync, as for CARM above. Before that, Matches
+		// finds no selector, and a resource would be reconciled with the
+		// controller's own role, in its account and region.
+		synced := irsCache.WaitForCacheSync(context.TODO())
+		c.log.Info("Waited for the IAMRoleSelector cache to sync", "synced", synced)
 	}
 
 	// Filter the resource manager factories

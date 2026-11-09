@@ -14,6 +14,7 @@
 package iamroleselector
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func TestCache_Matches(t *testing.T) {
 	stopCh := make(chan struct{})
 	t.Cleanup(func() { close(stopCh) })
 
-	go cache.Run(client, k8sClient, stopCh)
+	cache.Run(client, k8sClient, stopCh)
 
 	// Wait for cache to sync
 	require.Eventually(t, func() bool {
@@ -343,4 +344,36 @@ func (o *testObjectKind) SetGroupVersionKind(gvk schema.GroupVersionKind) {
 
 func (o *testObjectKind) GroupVersionKind() schema.GroupVersionKind {
 	return o.gvk
+}
+
+// Matches needs the labels of the resource's namespace, so the cache has not
+// synced until the namespace informer has listed the namespaces too.
+func TestCache_HasSyncedWaitsForNamespaces(t *testing.T) {
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		testGVR: "IAMRoleSelectorList",
+	}
+	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
+	k8sClient := k8sfake.NewSimpleClientset()
+	release := make(chan struct{})
+	k8sClient.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		<-release // a slow LIST of the namespaces
+		return false, nil, nil
+	})
+
+	cache := NewCache(zapr.NewLogger(zap.NewNop()))
+	stopCh := make(chan struct{})
+	t.Cleanup(func() { close(stopCh) })
+	cache.Run(client, k8sClient, stopCh)
+
+	require.Eventually(t, cache.informer.HasSynced, 5*time.Second, 10*time.Millisecond)
+	require.False(t, cache.HasSynced(), "the namespaces have not been listed yet")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	require.False(t, cache.WaitForCacheSync(ctx), "WaitForCacheSync returns false when ctx is done first")
+
+	close(release)
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, cache.WaitForCacheSync(ctx))
+	require.True(t, cache.HasSynced())
 }
