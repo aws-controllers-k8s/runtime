@@ -21,6 +21,7 @@ import (
 	"github.com/go-logr/zapr"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -56,6 +57,7 @@ func TestCache_Matches(t *testing.T) {
 	client.PrependWatchReactor("iamroleselectors", k8stesting.DefaultWatchReactor(watcher, nil))
 
 	k8sClient := k8sfake.NewSimpleClientset()
+	serveIAMRoleSelectors(k8sClient)
 	k8sClient.PrependWatchReactor("production", k8stesting.DefaultWatchReactor(watcher, nil))
 
 	logger := zapr.NewLogger(zap.NewNop())
@@ -354,6 +356,7 @@ func TestCache_HasSyncedWaitsForNamespaces(t *testing.T) {
 	}
 	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
 	k8sClient := k8sfake.NewSimpleClientset()
+	serveIAMRoleSelectors(k8sClient)
 	release := make(chan struct{})
 	k8sClient.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
 		<-release // a slow LIST of the namespaces
@@ -376,4 +379,42 @@ func TestCache_HasSyncedWaitsForNamespaces(t *testing.T) {
 	defer cancel()
 	require.True(t, cache.WaitForCacheSync(ctx))
 	require.True(t, cache.HasSynced())
+}
+
+// Without the IAMRoleSelector CRD there can be no selectors. The cache does
+// not start an informer that would never sync: it syncs once the namespaces
+// are listed, and matches no selectors.
+func TestCache_CRDNotInstalled(t *testing.T) {
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		testGVR: "IAMRoleSelectorList",
+	}
+	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
+	k8sClient := k8sfake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "production"},
+	})
+
+	cache := NewCache(zapr.NewLogger(zap.NewNop()))
+	stopCh := make(chan struct{})
+	t.Cleanup(func() { close(stopCh) })
+	cache.Run(client, k8sClient, stopCh)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, cache.WaitForCacheSync(ctx))
+	require.Empty(t, client.Actions(), "no LIST or WATCH of IAMRoleSelectors")
+
+	selectors, err := cache.GetMatchingSelectors(
+		"production", nil, schema.GroupVersionKind{Group: "s3.services.k8s.aws", Version: "v1alpha1", Kind: "Bucket"}, nil,
+	)
+	require.NoError(t, err)
+	require.Empty(t, selectors)
+}
+
+// serveIAMRoleSelectors makes the fake API server list IAMRoleSelectors in its
+// discovery, as a cluster with the IAMRoleSelector CRD does.
+func serveIAMRoleSelectors(c *k8sfake.Clientset) {
+	c.Resources = append(c.Resources, &metav1.APIResourceList{
+		GroupVersion: testGVR.GroupVersion().String(),
+		APIResources: []metav1.APIResource{{Name: testGVR.Resource, Kind: "IAMRoleSelector"}},
+	})
 }

@@ -19,10 +19,12 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
@@ -39,6 +41,9 @@ type Cache struct {
 	log        logr.Logger
 	informer   cache.SharedIndexInformer
 	selectors  map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
+	// notServed is true when the API server does not serve IAMRoleSelectors
+	// because their CRD is not installed: there can be no selectors.
+	notServed bool
 }
 
 // NewCache creates a new IAMRoleSelector cache
@@ -52,17 +57,36 @@ func NewCache(log logr.Logger) *Cache {
 
 // Run starts the informers of the cache and returns. They stop when stopCh is
 // closed.
+//
+// If the API server does not serve IAMRoleSelectors, because their CRD is not
+// installed, there can be no selectors: Run does not start an informer that
+// would never sync, and the cache syncs with the namespaces alone and matches
+// no selectors. This happens when a controller installed before the CRD
+// existed was upgraded with `helm upgrade`, which does not install new CRDs.
 func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interface, stopCh <-chan struct{}) {
 	c.log.V(1).Info("Starting IAMRoleSelector cache")
-
-	// Create dynamic informer factory
-	factory := dynamicinformer.NewDynamicSharedInformerFactory(client, 0)
 
 	gvr := schema.GroupVersionResource{
 		Group:    "services.k8s.aws",
 		Version:  "v1alpha1",
 		Resource: "iamroleselectors",
 	}
+
+	served, err := isServed(namespaceClient.Discovery(), gvr)
+	if err != nil {
+		// Not knowing is not knowing there are none: watch the selectors and
+		// wait for them as usual.
+		c.log.Error(err, "unable to check whether the API server serves IAMRoleSelectors")
+	} else if !served {
+		c.log.Info("The IAMRoleSelector feature gate is enabled, but the IAMRoleSelector CRD is not installed. " +
+			"No IAMRoleSelectors are used; restart the controller after installing the CRD.")
+		c.notServed = true
+		c.Namespaces.Run(namespaceClient, stopCh)
+		return
+	}
+
+	// Create dynamic informer factory
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(client, 0)
 
 	c.informer = factory.ForResource(gvr).Informer()
 
@@ -145,6 +169,9 @@ func (c *Cache) handleDelete(obj interface{}) {
 // informer have both listed their objects at least once. Matches needs both:
 // the selectors, and the labels of the resource's namespace.
 func (c *Cache) HasSynced() bool {
+	if c.notServed {
+		return c.Namespaces.HasSynced()
+	}
 	if c.informer == nil {
 		return false
 	}
@@ -164,6 +191,9 @@ func (c *Cache) GetMatchingSelectors(
 	gvk schema.GroupVersionKind,
 	resourceLabels map[string]string,
 ) ([]*ackv1alpha1.IAMRoleSelector, error) {
+	if c.notServed {
+		return nil, nil
+	}
 	if c.informer == nil {
 		return nil, fmt.Errorf("cache not initialized")
 	}
@@ -235,4 +265,21 @@ func (c *Cache) Matches(resource runtime.Object) ([]*ackv1alpha1.IAMRoleSelector
 	// TODO: get namespace labels from a namespace lister/cache
 	// For now, pass empty namespace labels
 	return c.GetMatchingSelectors(namespaceName, namespaceLabels, gvk, resourceLabels)
+}
+
+// isServed reports whether the API server serves the resource gvr.
+func isServed(d discovery.DiscoveryInterface, gvr schema.GroupVersionResource) (bool, error) {
+	resources, err := d.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, r := range resources.APIResources {
+		if r.Name == gvr.Resource {
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -25,11 +25,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -49,17 +51,41 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
-// A resource that a selector maps to another account is reconciled before the
-// IAMRoleSelector cache has synced. Matching against the empty cache would use
-// the controller's own role, account and region, so the reconcile is requeued
-// without any AWS call or status change, and the next one, after the sync,
-// uses the selector's role.
-func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
-	const (
-		controllerAccount = "111111111111"
-		teamAccount       = "222222222222"
-		teamRoleARN       = "arn:aws:iam::222222222222:role/team-a"
-	)
+const (
+	irsControllerAccount = "111111111111"
+	irsTeamAccount       = "222222222222"
+	irsTeamRoleARN       = "arn:aws:iam::222222222222:role/team-a"
+)
+
+// managerForCall records the account, region and role a resource manager was
+// requested for.
+type managerForCall struct {
+	account ackv1alpha1.AWSAccountID
+	region  ackv1alpha1.AWSRegion
+	role    ackv1alpha1.AWSResourceName
+}
+
+// irsFixture is a reconciler with the IAMRoleSelector feature gate on, in
+// account 111111111111 and region us-west-2, and a real IAMRoleSelector cache
+// on fake clients. An IAMRoleSelector maps namespace team-a, whose default
+// region is eu-central-1, to a role in account 222222222222. The fake API
+// server answers the LISTs of IAMRoleSelectors and namespaces only once
+// release is closed.
+type irsFixture struct {
+	r         *resourceReconciler
+	req       ctrlrt.Request
+	dyn       *dynamicfake.FakeDynamicClient
+	irsCache  *iamroleselector.Cache
+	release   chan struct{}
+	sc        *ackmocks.ServiceController
+	sw        *ctrlrtclientmock.SubResourceWriter
+	calls     []managerForCall
+	createdIn []string
+}
+
+// newIRSFixture builds an irsFixture. crdInstalled says whether the API
+// server serves IAMRoleSelectors.
+func newIRSFixture(t *testing.T, crdInstalled bool) *irsFixture {
 	logger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}))
 
 	// An IAMRoleSelector sends every resource in namespace team-a to the team
@@ -67,7 +93,7 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 	selector := &ackv1alpha1.IAMRoleSelector{
 		ObjectMeta: metav1.ObjectMeta{Name: "team-a"},
 		Spec: ackv1alpha1.IAMRoleSelectorSpec{
-			ARN:               teamRoleARN,
+			ARN:               irsTeamRoleARN,
 			NamespaceSelector: ackv1alpha1.NamespaceSelector{Names: []string{"team-a"}},
 		},
 	}
@@ -88,6 +114,21 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 		Name:        "team-a",
 		Annotations: map[string]string{ackv1alpha1.AnnotationDefaultRegion: "eu-central-1"},
 	}})
+	if crdInstalled {
+		nsClient.Resources = []*metav1.APIResourceList{{
+			GroupVersion: gvr.GroupVersion().String(),
+			APIResources: []metav1.APIResource{{Name: gvr.Resource, Kind: "IAMRoleSelector"}},
+		}}
+	} else {
+		// Without the CRD, the API server answers 404 to IAMRoleSelectors.
+		notFound := apierrors.NewNotFound(gvr.GroupResource(), "")
+		dyn.PrependReactor("list", "iamroleselectors", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
+			return true, nil, notFound
+		})
+		dyn.PrependWatchReactor("iamroleselectors", func(k8stesting.Action) (bool, watch.Interface, error) {
+			return true, nil, notFound
+		})
+	}
 	nsClient.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
 		<-release
 		return false, nil, nil
@@ -95,7 +136,7 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 
 	irsCache := iamroleselector.NewCache(logger)
 	stop := make(chan struct{})
-	defer close(stop)
+	t.Cleanup(func() { close(stop) })
 	irsCache.Run(dyn, nsClient, stop)
 
 	// The CR: a Book in namespace team-a. Its status gets the owner account
@@ -129,14 +170,14 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 
 	// The resource manager the reconciler gets is bound to an account and a
 	// role. Create records where the resource lands.
-	var createdIn []string
+	f := &irsFixture{dyn: dyn, irsCache: irsCache, release: release}
 	newRM := func(acct ackv1alpha1.AWSAccountID) *ackmocks.AWSResourceManager {
 		rm := &ackmocks.AWSResourceManager{}
 		rm.On("ResolveReferences", mock.Anything, mock.Anything, mock.Anything).Return(desired, false, nil)
 		rm.On("EnsureTags", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 		rm.On("ReadOne", mock.Anything, mock.Anything).Return(nil, ackerr.NotFound).Once()
 		rm.On("Create", mock.Anything, mock.Anything).Run(func(mock.Arguments) {
-			createdIn = append(createdIn, string(acct))
+			f.createdIn = append(f.createdIn, string(acct))
 			a := acct
 			ownerAccount = &a // the generated manager sets status.ackResourceMetadata.ownerAccountID
 		}).Return(desired, nil)
@@ -147,12 +188,6 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 		rm.On("FilterSystemTags", mock.Anything, mock.Anything)
 		return rm
 	}
-	type call struct {
-		account ackv1alpha1.AWSAccountID
-		region  ackv1alpha1.AWSRegion
-		role    ackv1alpha1.AWSResourceName
-	}
-	var calls []call
 	rmf := &ackmocks.AWSResourceManagerFactory{}
 	rmf.On("ResourceDescriptor").Return(rd)
 	rmf.On("RequeueOnSuccessSeconds").Return(0)
@@ -161,7 +196,7 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 	).Return(func(_ ackcfg.Config, _ aws.Config, _ logr.Logger, _ *ackmetrics.Metrics, _ acktypes.Reconciler,
 		acct ackv1alpha1.AWSAccountID, region ackv1alpha1.AWSRegion, role ackv1alpha1.AWSResourceName,
 	) (acktypes.AWSResourceManager, error) {
-		calls = append(calls, call{acct, region, role})
+		f.calls = append(f.calls, managerForCall{acct, region, role})
 		return newRM(acct), nil
 	})
 
@@ -180,7 +215,7 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 		reconciler: reconciler{
 			kc: kc, apiReader: apiReader, sc: sc, log: logger,
 			cfg: ackcfg.Config{
-				AccountID:       controllerAccount,
+				AccountID:       irsControllerAccount,
 				Region:          "us-west-2",
 				ResourceTagKeys: []string{},
 				FeatureGates:    featuregate.FeatureGates{featuregate.IAMRoleSelector: {Enabled: true}},
@@ -192,27 +227,61 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 		rmf: rmf,
 		rd:  rd,
 	}
-	req := ctrlrt.Request{NamespacedName: types.NamespacedName{Namespace: "team-a", Name: "mybook"}}
+	f.r, f.sc, f.sw = r, sc, sw
+	f.req = ctrlrt.Request{NamespacedName: types.NamespacedName{Namespace: "team-a", Name: "mybook"}}
+	return f
+
+}
+
+// sync releases the LISTs and waits for the IAMRoleSelector cache to sync.
+func (f *irsFixture) sync(t *testing.T) {
+	close(f.release)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, f.irsCache.WaitForCacheSync(ctx))
+}
+
+// A resource that a selector maps to another account is reconciled before the
+// IAMRoleSelector cache has synced. Matching against the empty cache would use
+// the controller's own role, account and region, so the reconcile is requeued
+// without any AWS call or status change, and the next one, after the sync,
+// uses the selector's role.
+func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
+	f := newIRSFixture(t, true)
 
 	// 1. The cache has not synced: requeue, no AWS call, no status patch.
-	require.False(t, irsCache.HasSynced())
-	res, err := r.Reconcile(context.Background(), req)
+	require.False(t, f.irsCache.HasSynced())
+	res, err := f.r.Reconcile(context.Background(), f.req)
 	require.NoError(t, err)
 	assert.Equal(t, ctrlrt.Result{RequeueAfter: roleARNNotAvailableRequeueDelay}, res)
-	assert.Empty(t, calls, "no resource manager before the cache has synced")
-	sc.AssertNotCalled(t, "NewAWSConfig", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	sw.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+	assert.Empty(t, f.calls, "no resource manager before the cache has synced")
+	f.sc.AssertNotCalled(t, "NewAWSConfig", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	f.sw.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
 
 	// 2. The LISTs complete and the cache syncs: the resource is reconciled
 	// with the selector's role, in the team account and the namespace's
 	// default region.
-	close(release)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.True(t, irsCache.WaitForCacheSync(ctx))
-	_, err = r.Reconcile(context.Background(), req)
+	f.sync(t)
+	_, err = f.r.Reconcile(context.Background(), f.req)
 	require.NoError(t, err)
-	require.Len(t, calls, 1)
-	assert.Equal(t, call{teamAccount, "eu-central-1", teamRoleARN}, calls[0])
-	assert.Equal(t, []string{teamAccount}, createdIn)
+	require.Len(t, f.calls, 1)
+	assert.Equal(t, managerForCall{irsTeamAccount, "eu-central-1", irsTeamRoleARN}, f.calls[0])
+	assert.Equal(t, []string{irsTeamAccount}, f.createdIn)
+}
+
+// The feature gate is on but the IAMRoleSelector CRD is not installed, as after
+// a `helm upgrade` from a chart that did not have it. There can be no
+// selectors: the cache syncs with the namespaces alone, without waiting for
+// IAMRoleSelectors, and the resource is reconciled with the controller's role,
+// in the namespace's default region, as before.
+func TestReconcile_IAMRoleSelectorCRDNotInstalled(t *testing.T) {
+	f := newIRSFixture(t, false)
+	f.sync(t)
+	assert.Empty(t, f.dyn.Actions(), "no LIST or WATCH of IAMRoleSelectors, which would fail forever")
+
+	_, err := f.r.Reconcile(context.Background(), f.req)
+	require.NoError(t, err)
+	require.Len(t, f.calls, 1)
+	assert.Equal(t, managerForCall{irsControllerAccount, "eu-central-1", ""}, f.calls[0])
+	assert.Equal(t, []string{irsControllerAccount}, f.createdIn)
 }
