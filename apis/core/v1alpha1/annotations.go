@@ -102,4 +102,9 @@ const (
 	// the baseline and is late-initialized normally. This annotation is only
 	// honored when the IgnoreFieldDrift feature gate is enabled.
 	AnnotationIgnoreFieldDrift = AnnotationPrefix + "ignore-field-drift"
+	// AnnotationConvergence is set by the controller, never by users. It holds
+	// the convergence record: a hash of the delta at the last counted Update,
+	// the AWS write calls that Update made, and how many successful Updates in
+	// a row matched both. The controller removes it once the delta is empty.
+	AnnotationConvergence = AnnotationPrefix + "convergence"
 )

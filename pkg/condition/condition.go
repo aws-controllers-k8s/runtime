@@ -77,6 +77,13 @@ func LateInitialized(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
 	return FirstOfType(subject, ackv1alpha1.ConditionTypeLateInitialized)
 }
 
+// NotConverging returns the Condition in the resource's Conditions collection
+// that is of type ConditionTypeResourceNotConverging. If no such condition is
+// found, returns nil.
+func NotConverging(subject acktypes.ConditionManager) *ackv1alpha1.Condition {
+	return FirstOfType(subject, ackv1alpha1.ConditionTypeResourceNotConverging)
+}
+
 // ReferencesResolved returns the Condition in the resource's Conditions collection
 // that is of type ConditionTypeReferencesResolved. If no such condition is found,
 // returns nil.
@@ -252,6 +259,32 @@ func SetLateInitialized(
 	if c = LateInitialized(subject); c == nil {
 		c = &ackv1alpha1.Condition{
 			Type: ackv1alpha1.ConditionTypeLateInitialized,
+		}
+		allConds = append(allConds, c)
+	}
+	now := metav1.Now()
+	c.LastTransitionTime = &now
+	c.Status = status
+	c.ObservedGeneration = subject.MetaObject().GetGeneration()
+	c.Message = message
+	c.Reason = reason
+	subject.ReplaceConditions(allConds)
+}
+
+// SetNotConverging sets the resource's Condition of type
+// ConditionTypeResourceNotConverging to the supplied status, optional message
+// and reason.
+func SetNotConverging(
+	subject acktypes.AWSResource,
+	status corev1.ConditionStatus,
+	message *string,
+	reason *string,
+) {
+	allConds := subject.Conditions()
+	var c *ackv1alpha1.Condition
+	if c = NotConverging(subject); c == nil {
+		c = &ackv1alpha1.Condition{
+			Type: ackv1alpha1.ConditionTypeResourceNotConverging,
 		}
 		allConds = append(allConds, c)
 	}

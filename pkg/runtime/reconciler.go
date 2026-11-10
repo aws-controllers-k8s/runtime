@@ -1130,19 +1130,64 @@ func (r *resourceReconciler) updateResource(
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
+	convergence := r.cfg.FeatureGates.IsEnabled(featuregate.ConvergenceDetection)
 	if delta.DifferentAt("Spec") {
+		// Convergence detection: skip an Update that already succeeded
+		// convergenceSkipThreshold times in a row with this same delta and the
+		// same write calls, unless the read says the resource is changing state.
+		updateCtx := ctx
+		var hash string
+		var record *convergenceRecord
+		var recorder *apiCallRecorder
+		if convergence {
+			hash = deltaHash(delta)
+			record = convergenceRecordFrom(desired)
+			if shouldSkipUpdate(record, hash) && !isTransitioning(ctx, rm, latest) {
+				rlog.Info(
+					"skipping update: the same update already succeeded "+
+						"without changing anything",
+					"diff", delta.Differences,
+					"api_calls", record.APICalls,
+				)
+				ackcondition.SetNotConverging(
+					latest, corev1.ConditionTrue, &notConvergingMessage, nil,
+				)
+				return latest, nil
+			}
+			updateCtx, recorder = withAPICallRecorder(ctx)
+		}
+
 		rlog.Info(
 			"desired resource state has changed",
 			"diff", delta.Differences,
 		)
 		rlog.Enter("rm.Update")
-		updated, err = rm.Update(ctx, reconcileDesired, latest, delta)
+		updated, err = rm.Update(updateCtx, reconcileDesired, latest, delta)
 		rlog.Exit("rm.Update", err, "latest", latest)
 
 		// `desired`, not `reconcileDesired`; before the error check. See ensureReferences.
 		updated = r.ensureReferences(ctx, rm, desired, updated)
 
+		// An Update counts only when it made a successful write call and
+		// returned nil or asked to be requeued.
+		var nextRecord *convergenceRecord
+		if recorder != nil && hash != "" && (err == nil || isRequeueError(err)) {
+			if calls := recorder.Calls(); len(calls) > 0 {
+				nextRecord = nextConvergenceRecord(record, hash, calls)
+			}
+		}
+
 		if err != nil {
+			// The spec patch below doesn't run on the error path, so a counted
+			// Update that asked to be requeued stores its record on its own.
+			if nextRecord != nil {
+				if pErr := r.patchConvergenceRecord(ctx, rm, desired, nextRecord); pErr != nil {
+					rlog.Info(
+						"failed to store convergence record; continuing",
+						"error", pErr.Error(),
+					)
+				}
+			}
 			return updated, err
 		}
 		// Ignore-field-drift, RETAIN write-back: the anti-clobber merge
@@ -1172,11 +1217,27 @@ func (r *resourceReconciler) updateResource(
 		if IsAdopted(latest) {
 			r.rd.MarkAdopted(updated)
 		}
+		if nextRecord != nil {
+			if sErr := setConvergenceRecord(updated, nextRecord); sErr != nil {
+				rlog.Info(
+					"failed to set convergence record; continuing",
+					"error", sErr.Error(),
+				)
+			}
+		}
 		updated, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, updated)
 		if err != nil {
 			return updated, err
 		}
 		rlog.Info("updated resource")
+	} else if convergence && convergenceRecordFrom(desired) != nil {
+		// The spec and AWS agree, so the record is no longer needed.
+		if err = r.patchConvergenceRecord(ctx, rm, desired, nil); err != nil {
+			return latest, err
+		}
+		if err = setConvergenceRecord(latest, nil); err != nil {
+			return latest, err
+		}
 	}
 	return updated, nil
 }
