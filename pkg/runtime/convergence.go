@@ -50,6 +50,16 @@ type convergenceRecord struct {
 	SuccessfulUpdates int `json:"successfulUpdates"`
 }
 
+// equal reports whether two records, either of which may be nil, are the same.
+func (r *convergenceRecord) equal(o *convergenceRecord) bool {
+	if r == nil || o == nil {
+		return r == o
+	}
+	return r.DeltaHash == o.DeltaHash &&
+		r.SuccessfulUpdates == o.SuccessfulUpdates &&
+		slices.Equal(r.APICalls, o.APICalls)
+}
+
 // deltaHash returns a SHA-256 of the delta's differences, independent of
 // their order. It returns "" when a value can't be serialized; the caller then
 // neither records nor skips.

@@ -1169,25 +1169,32 @@ func (r *resourceReconciler) updateResource(
 		updated = r.ensureReferences(ctx, rm, desired, updated)
 
 		// An Update counts only when it made a successful write call and
-		// returned nil or asked to be requeued.
-		var nextRecord *convergenceRecord
-		if recorder != nil && hash != "" && (err == nil || isRequeueError(err)) {
-			if calls := recorder.Calls(); len(calls) > 0 {
-				nextRecord = nextConvergenceRecord(record, hash, calls)
+		// returned nil or asked to be requeued; it then replaces the record. A
+		// record for a different delta no longer applies, so it is dropped even
+		// when this Update isn't counted. The record is stored with its own
+		// annotation-only patch: setting it on `updated` would change the
+		// metadata, and with it how the spec patch below is computed.
+		if convergence {
+			next := record
+			if recorder != nil && hash != "" && (err == nil || isRequeueError(err)) {
+				if calls := recorder.Calls(); len(calls) > 0 {
+					next = nextConvergenceRecord(record, hash, calls)
+				}
 			}
-		}
-
-		if err != nil {
-			// The spec patch below doesn't run on the error path, so a counted
-			// Update that asked to be requeued stores its record on its own.
-			if nextRecord != nil {
-				if pErr := r.patchConvergenceRecord(ctx, rm, desired, nextRecord); pErr != nil {
+			if next == record && record != nil && record.DeltaHash != hash {
+				next = nil
+			}
+			if !next.equal(record) {
+				if pErr := r.patchConvergenceRecord(ctx, rm, desired, next); pErr != nil {
 					rlog.Info(
 						"failed to store convergence record; continuing",
 						"error", pErr.Error(),
 					)
 				}
 			}
+		}
+
+		if err != nil {
 			return updated, err
 		}
 		// Ignore-field-drift, RETAIN write-back: the anti-clobber merge
@@ -1216,14 +1223,6 @@ func (r *resourceReconciler) updateResource(
 		// Update call above.
 		if IsAdopted(latest) {
 			r.rd.MarkAdopted(updated)
-		}
-		if nextRecord != nil {
-			if sErr := setConvergenceRecord(updated, nextRecord); sErr != nil {
-				rlog.Info(
-					"failed to set convergence record; continuing",
-					"error", sErr.Error(),
-				)
-			}
 		}
 		updated, err = r.patchResourceMetadataAndSpec(ctx, rm, desired, updated)
 		if err != nil {

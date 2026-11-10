@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -117,19 +119,22 @@ func TestIsRequeueError(t *testing.T) {
 }
 
 // convergenceHarness drives updateResource across syncs. The CR's annotations
-// live in stored, which every metadata patch overwrites, standing in for the
-// API server.
+// live in stored, to which every metadata patch applies its merge patch,
+// standing in for the API server.
 type convergenceHarness struct {
-	t        *testing.T
-	rr       *resourceReconciler
-	stored   map[string]string
-	delta    *ackcompare.Delta
-	calls    []string // write calls the fake Update makes
-	err      error    // what the fake Update returns
-	synced   bool     // what IsSynced returns
-	updates  int
-	patches  int
-	sawNoRec bool // an Update ran without a recorder in its context
+	t             *testing.T
+	rr            *resourceReconciler
+	stored        map[string]string
+	delta         *ackcompare.Delta
+	calls         []string // write calls the fake Update makes
+	err           error    // what the fake Update returns
+	synced        bool     // what IsSynced returns
+	preCompare    func(a acktypes.AWSResource)
+	updates       int
+	patches       int
+	recordPatches int      // patches that change the convergence annotation
+	patchData     []string // every metadata+spec patch body
+	sawNoRec      bool     // an Update ran without a recorder in its context
 }
 
 func newConvergenceHarness(t *testing.T, gateOn bool) *convergenceHarness {
@@ -148,7 +153,12 @@ func newConvergenceHarness(t *testing.T, gateOn bool) *convergenceHarness {
 	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
 	rd.On("IsManaged", mock.Anything).Return(true)
 	rd.On("Delta", mock.Anything, mock.Anything).Return(
-		func(a, b acktypes.AWSResource) *ackcompare.Delta { return h.delta },
+		func(a, b acktypes.AWSResource) *ackcompare.Delta {
+			if h.preCompare != nil {
+				h.preCompare(a)
+			}
+			return h.delta
+		},
 	)
 	rmf := &ackmocks.AWSResourceManagerFactory{}
 	rmf.On("ResourceDescriptor").Return(rd)
@@ -157,9 +167,24 @@ func newConvergenceHarness(t *testing.T, gateOn bool) *convergenceHarness {
 	r, kc, _ := reconcilerMocks(rmf)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		h.patches++
-		h.stored = map[string]string{}
-		for k, v := range args.Get(1).(client.Object).GetAnnotations() {
-			h.stored[k] = v
+		data, err := args.Get(2).(client.Patch).Data(args.Get(1).(client.Object))
+		require.NoError(t, err)
+		h.patchData = append(h.patchData, string(data))
+		var p struct {
+			Metadata struct {
+				Annotations map[string]*string `json:"annotations"`
+			} `json:"metadata"`
+		}
+		require.NoError(t, json.Unmarshal(data, &p))
+		for k, v := range p.Metadata.Annotations {
+			if k == ackv1alpha1.AnnotationConvergence {
+				h.recordPatches++
+			}
+			if v == nil {
+				delete(h.stored, k)
+			} else {
+				h.stored[k] = *v
+			}
 		}
 	}).Return(nil)
 
@@ -171,8 +196,9 @@ func newConvergenceHarness(t *testing.T, gateOn bool) *convergenceHarness {
 
 func (h *convergenceHarness) rm() *ackmocks.AWSResourceManager {
 	rm := &ackmocks.AWSResourceManager{}
+	// Generated ClearResolvedReferences returns a copy.
 	rm.On("ClearResolvedReferences", mock.Anything).Return(
-		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r.DeepCopy() },
 	)
 	rm.On("FilterSystemTags", mock.Anything, mock.Anything).Return()
 	rm.On("IsSynced", mock.Anything, mock.Anything).Return(
@@ -327,6 +353,7 @@ func TestConvergence_TransitioningDoesNotSkip(t *testing.T) {
 	require.NoError(err)
 	require.False(notConverging(out))
 	require.Equal(3, h.updates)
+	require.Equal(2, h.recordPatches, "an unchanged record isn't written again")
 
 	h.synced = true
 	out, err = h.sync()
@@ -383,4 +410,87 @@ func TestConvergence_GateOffBehavesAsToday(t *testing.T) {
 	require.Equal(4, h.updates)
 	require.Nil(h.record())
 	require.True(h.sawNoRec, "no recorder in the Update's context")
+}
+
+// The record is dropped when the delta changes, even if that Update isn't
+// counted. Otherwise a record left by an earlier change skips the same change
+// the next time it happens: a Subnet whose perpetual delta makes no write call
+// never replaces the record of a corrected outside change.
+func TestConvergence_RecordDroppedWhenDeltaChanges(t *testing.T) {
+	require := require.New(t)
+	h := newConvergenceHarness(t, true)
+	outside := twoDiffDelta("true", "perQueue")
+	perpetual := twoDiffDelta("false", "perQueue")
+
+	for i := 0; i < 2; i++ { // the outside change, corrected twice
+		h.delta, h.calls = outside, []string{"EC2.ModifySubnetAttribute"}
+		_, err := h.sync()
+		require.NoError(err)
+		h.delta, h.calls = perpetual, nil
+		_, err = h.sync()
+		require.NoError(err)
+		require.Nil(h.record(), "a different delta drops the record")
+	}
+
+	h.delta, h.calls = outside, []string{"EC2.ModifySubnetAttribute"}
+	out, err := h.sync()
+	require.NoError(err)
+	require.False(notConverging(out), "the third outside change is corrected")
+	require.Equal(5, h.updates)
+}
+
+func TestConvergence_FailedUpdateOnNewDeltaDropsRecord(t *testing.T) {
+	require := require.New(t)
+	h := newConvergenceHarness(t, true)
+	_, _ = h.sync()
+	_, _ = h.sync()
+	require.Equal(2, h.record().SuccessfulUpdates)
+
+	h.delta = twoDiffDelta("true", "perQueue")
+	h.err = errors.New("ValidationException")
+	_, err := h.sync()
+	require.Error(err)
+	require.Nil(h.record())
+}
+
+// An Update with no write call on the same delta, such as a guard that
+// requeues while the resource is modifying, keeps the record.
+func TestConvergence_SameDeltaWithoutCallsKeepsRecord(t *testing.T) {
+	require := require.New(t)
+	h := newConvergenceHarness(t, true)
+	_, _ = h.sync()
+	require.Equal(1, h.record().SuccessfulUpdates)
+
+	h.calls = nil
+	h.err = requeue.NeededAfter(nil, time.Second)
+	_, _ = h.sync()
+	require.Equal(1, h.record().SuccessfulUpdates)
+
+	h.calls, h.err = []string{"SQS.SetQueueAttributes"}, nil
+	_, _ = h.sync()
+	require.Equal(2, h.record().SuccessfulUpdates)
+}
+
+// Writing the record must not change what the spec patch writes. A compare
+// hook that fills a default into its first argument in place (ec2 VPC
+// customPreCompare) also fills the patch base, so the default isn't written
+// to the spec. That holds only if the record isn't on the patch target: a
+// metadata difference makes the patch skip the compare.
+func TestConvergence_RecordWriteDoesNotChangeSpecPatch(t *testing.T) {
+	for _, gateOn := range []bool{false, true} {
+		h := newConvergenceHarness(t, gateOn)
+		h.preCompare = func(a acktypes.AWSResource) {
+			obj := a.RuntimeObject().(*unstructured.Unstructured).Object
+			if _, found, _ := unstructured.NestedString(obj, "spec", "dflt"); !found {
+				_ = unstructured.SetNestedField(obj, "aws-default", "spec", "dflt")
+			}
+		}
+		for i := 0; i < 3; i++ {
+			_, err := h.sync()
+			require.NoError(t, err)
+		}
+		for _, d := range h.patchData {
+			require.NotContains(t, d, "dflt", "gate=%v: patch %s", gateOn, d)
+		}
+	}
 }
