@@ -349,11 +349,13 @@ func TestConvergence_TransitioningDoesNotSkip(t *testing.T) {
 	_, _ = h.sync()
 
 	h.synced = false
+	before := h.patches
 	out, err := h.sync()
 	require.NoError(err)
 	require.False(notConverging(out))
 	require.Equal(3, h.updates)
-	require.Equal(2, h.recordPatches, "an unchanged record isn't written again")
+	require.Equal(2, h.recordPatches)
+	require.Equal(1, h.patches-before, "only the spec patch: an unchanged record isn't patched again")
 
 	h.synced = true
 	out, err = h.sync()
