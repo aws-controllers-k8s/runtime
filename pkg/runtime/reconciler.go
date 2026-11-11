@@ -899,6 +899,9 @@ func (r *resourceReconciler) createResource(
 	}
 
 	if err != nil {
+		if latest == nil {
+			latest = desired.DeepCopy()
+		}
 		// Here we're deciding to set a resource as unmanaged
 		// if the error is an AWS API Error. This will ensure
 		// that we're only managing (put finalizer) the resources
@@ -1143,6 +1146,9 @@ func (r *resourceReconciler) updateResource(
 		updated = r.ensureReferences(ctx, rm, desired, updated)
 
 		if err != nil {
+			if updated == nil {
+				updated = latest
+			}
 			return updated, err
 		}
 		// Ignore-field-drift, RETAIN write-back: the anti-clobber merge
