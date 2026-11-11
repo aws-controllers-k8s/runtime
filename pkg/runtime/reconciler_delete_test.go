@@ -31,31 +31,43 @@ import (
 	acktypes "github.com/aws-controllers-k8s/runtime/pkg/types"
 )
 
-// deletingResources returns the CR of a resource being deleted (current) and
-// the resource ReadOne returns for it (observed), which shares the CR's
-// metadata, as a generated ReadOne does. The state in AWS differs from the
+// deletingResources returns the CR of a resource being deleted (current), the
+// resource ReadOne returns for it (observed), which shares the CR's metadata,
+// as a generated ReadOne does, and the copy of observed that deleteResource
+// takes before calling Delete (beforeDelete). The state in AWS differs from the
 // spec: the delta between current and observed has a spec difference.
-func deletingResources(rd *ackmocks.AWSResourceDescriptor) (*ackmocks.AWSResource, *ackmocks.AWSResource) {
+func deletingResources(rd *ackmocks.AWSResourceDescriptor) (current, observed, beforeDelete *ackmocks.AWSResource) {
 	current, metaObj := newMockRes()
 	current.On("IsBeingDeleted").Return(true)
-	observed := resourceSharingMetadata(metaObj)
+	beforeDelete = resourceSharingMetadata(metaObj, nil)
+	observed = resourceSharingMetadata(metaObj, beforeDelete)
 	drift := ackcompare.NewDelta()
 	drift.Add("Spec.Tags", "set by the user", "found in AWS")
-	rd.On("Delta", current, observed).Return(drift)
-	rd.On("Delta", observed, observed).Return(ackcompare.NewDelta())
-	return current, observed
+	rd.On("Delta", same(current), same(observed)).Return(drift)
+	rd.On("Delta", same(observed), same(observed)).Return(ackcompare.NewDelta())
+	return current, observed, beforeDelete
 }
 
 // resourceSharingMetadata returns a resource mock with the supplied metadata.
-func resourceSharingMetadata(metaObj *k8sobj.Unstructured) *ackmocks.AWSResource {
+// Its DeepCopy returns copied, or the mock itself when copied is nil.
+func resourceSharingMetadata(metaObj *k8sobj.Unstructured, copied *ackmocks.AWSResource) *ackmocks.AWSResource {
 	rtObj := &ctrlrtclientmock.Object{}
 	rtObj.On("DeepCopyObject").Return(rtObj)
 	res := &ackmocks.AWSResource{}
+	if copied == nil {
+		copied = res
+	}
 	res.On("MetaObject").Return(metaObj)
 	res.On("RuntimeObject").Return(rtObj)
-	res.On("DeepCopy").Return(res)
+	res.On("DeepCopy").Return(copied)
 	res.On("SetStatus", mock.Anything).Return()
 	return res
+}
+
+// same matches the supplied resource itself, not a resource equal to it: the
+// mocks above differ only by identity.
+func same(res acktypes.AWSResource) interface{} {
+	return mock.MatchedBy(func(r acktypes.AWSResource) bool { return r == res })
 }
 
 func deleteResourceMocks(current acktypes.AWSResource) *ackmocks.AWSResourceManager {
@@ -75,12 +87,13 @@ func TestDeleteResource_FailedDeleteKeepsSpec(t *testing.T) {
 	rd := &ackmocks.AWSResourceDescriptor{}
 	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{Group: "bookstore.services.k8s.aws", Kind: "Book"})
 	rd.On("IsManaged", mock.Anything).Return(true)
-	current, observed := deletingResources(rd)
+	current, observed, beforeDelete := deletingResources(rd)
+	rd.On("Delta", same(beforeDelete), same(observed)).Return(ackcompare.NewDelta())
 
 	rm := deleteResourceMocks(current)
 	rm.On("ReadOne", mock.Anything, current).Return(observed, nil)
 	deleteErr := errors.New("DeleteConflict: Cannot delete a policy attached to entities.")
-	rm.On("Delete", mock.Anything, observed).Return(observed, deleteErr)
+	rm.On("Delete", mock.Anything, same(observed)).Return(observed, deleteErr)
 
 	rec, kc := newPreDeleteReconciler(rd)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -88,26 +101,25 @@ func TestDeleteResource_FailedDeleteKeepsSpec(t *testing.T) {
 	_, err := rec.reconcile(context.Background(), rm, current)
 	require.ErrorIs(t, err, deleteErr)
 	kc.AssertNotCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
-	rd.AssertNotCalled(t, "Delta", current, observed)
+	rd.AssertNotCalled(t, "Delta", same(current), same(observed))
 }
 
-// An asynchronous Delete may set Spec fields or metadata on the resource it
-// returns. Those changes are still saved, as a patch computed against the
-// resource rm.Delete received.
-func TestDeleteResource_SavesWhatDeleteChanged(t *testing.T) {
+// A generated Delete does not copy the resource it receives, and delete hooks
+// change it in place: CloudFront's Distribution sets Enabled to false on it,
+// disables the distribution and returns the same resource with a requeue. That
+// change is saved, as a patch computed against the copy taken before Delete.
+func TestDeleteResource_SavesWhatDeleteChangedInPlace(t *testing.T) {
 	rd := &ackmocks.AWSResourceDescriptor{}
 	rd.On("GroupVersionKind").Return(k8srtschema.GroupVersionKind{Group: "bookstore.services.k8s.aws", Kind: "Book"})
 	rd.On("IsManaged", mock.Anything).Return(true)
-	current, observed := deletingResources(rd)
-	deleting := resourceSharingMetadata(current.MetaObject().(*k8sobj.Unstructured))
+	current, observed, beforeDelete := deletingResources(rd)
 	changed := ackcompare.NewDelta()
-	changed.Add("Spec.FinalSnapshotIdentifier", nil, "set by Delete")
-	rd.On("Delta", observed, deleting).Return(changed)
-	rd.On("Delta", current, deleting).Return(changed)
+	changed.Add("Spec.DistributionConfig.Enabled", true, false)
+	rd.On("Delta", same(beforeDelete), same(observed)).Return(changed)
 
 	rm := deleteResourceMocks(current)
 	rm.On("ReadOne", mock.Anything, current).Return(observed, nil)
-	rm.On("Delete", mock.Anything, observed).Return(deleting, requeue.NeededAfter(nil, time.Minute))
+	rm.On("Delete", mock.Anything, same(observed)).Return(observed, requeue.NeededAfter(nil, time.Minute))
 
 	rec, kc := newPreDeleteReconciler(rd)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -116,6 +128,6 @@ func TestDeleteResource_SavesWhatDeleteChanged(t *testing.T) {
 	var requeueNeededAfter *requeue.RequeueNeededAfter
 	require.ErrorAs(t, err, &requeueNeededAfter)
 	kc.AssertNumberOfCalls(t, "Patch", 1)
-	rd.AssertCalled(t, "Delta", observed, deleting)
-	rd.AssertNotCalled(t, "Delta", current, deleting)
+	rd.AssertCalled(t, "Delta", same(beforeDelete), same(observed))
+	rd.AssertNotCalled(t, "Delta", same(current), same(observed))
 }
