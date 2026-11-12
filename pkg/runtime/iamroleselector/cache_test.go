@@ -383,6 +383,41 @@ func TestCache_HasSyncedWaitsForNamespaces(t *testing.T) {
 	require.True(t, cache.HasSynced())
 }
 
+// The informer delivers the selectors of its first LIST to the event handler
+// asynchronously. The cache has not synced until the handler has stored them,
+// or Matches would not find them.
+func TestCache_HasSyncedWaitsForHandler(t *testing.T) {
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		testGVR: "IAMRoleSelectorList",
+	}
+	selector := createSelector("prod-s3", ackv1alpha1.IAMRoleSelector{
+		Spec: ackv1alpha1.IAMRoleSelectorSpec{
+			ARN:               "arn:aws:iam::123456789012:role/prod-s3-role",
+			NamespaceSelector: ackv1alpha1.NamespaceSelector{Names: []string{"production"}},
+		},
+	})
+	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind, selector)
+	k8sClient := k8sfake.NewSimpleClientset()
+	serveIAMRoleSelectors(k8sClient)
+
+	cache := NewCache(zapr.NewLogger(zap.NewNop()))
+	stopCh := make(chan struct{})
+	t.Cleanup(func() { close(stopCh) })
+	cache.Lock() // the handler cannot store the selector until Unlock
+	cache.Run(client, k8sClient, stopCh)
+
+	require.Eventually(t, func() bool {
+		return cache.informer.HasSynced() && cache.Namespaces.HasSynced()
+	}, 5*time.Second, 10*time.Millisecond)
+	require.False(t, cache.HasSynced(), "the handler has not stored the selector yet")
+
+	cache.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, cache.WaitForCacheSync(ctx))
+	require.Len(t, cache.ListSelectors(), 1)
+}
+
 // Without the IAMRoleSelector CRD there can be no selectors: the API server
 // answers the LIST of IAMRoleSelectors with 404, and the cache syncs once the
 // namespaces are listed, and matches no selectors. The informer keeps retrying

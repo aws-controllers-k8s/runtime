@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
@@ -330,4 +331,30 @@ func newNamespace(name string) *corev1.Namespace {
 			},
 		},
 	}
+}
+
+// The informer delivers the namespaces of its first LIST to the event handler
+// asynchronously. The cache has not synced until the handler has stored them,
+// or GetDefaultRegion would not find them.
+func TestNamespaceCache_HasSyncedWaitsForHandler(t *testing.T) {
+	k8sClient := k8sfake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        testNamespace1,
+			Annotations: map[string]string{ackv1alpha1.AnnotationDefaultRegion: "us-west-2"},
+		},
+	})
+	namespaceCache := ackrtcache.NewNamespaceCache(logr.Discard(), nil, nil)
+	stopCh := make(chan struct{})
+	t.Cleanup(func() { close(stopCh) })
+	namespaceCache.Lock() // the handler cannot store the namespace until Unlock
+	namespaceCache.Run(k8sClient, stopCh)
+
+	require.Never(t, namespaceCache.HasSynced, 500*time.Millisecond, 10*time.Millisecond,
+		"the handler has not stored the namespace yet")
+
+	namespaceCache.Unlock()
+	require.Eventually(t, namespaceCache.HasSynced, 5*time.Second, 10*time.Millisecond)
+	defaultRegion, ok := namespaceCache.GetDefaultRegion(testNamespace1)
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", defaultRegion)
 }

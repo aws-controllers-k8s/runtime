@@ -41,7 +41,11 @@ type Cache struct {
 	Namespaces *ackcache.NamespaceCache
 	log        logr.Logger
 	informer   cache.SharedIndexInformer
-	selectors  map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
+	// handler is the registration of the event handler that fills selectors.
+	// The informer delivers events to it asynchronously, so the informer may
+	// have synced before the handler has stored the selectors.
+	handler   cache.ResourceEventHandlerRegistration
+	selectors map[string]*ackv1alpha1.IAMRoleSelector // name -> selector
 	// notServed is true when the API server did not serve IAMRoleSelectors,
 	// because their CRD was not installed, when the cache started. Until the
 	// CRD is installed there can be no selectors, so the cache does not wait
@@ -95,7 +99,7 @@ func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interfa
 	c.informer = factory.ForResource(gvr).Informer()
 
 	// Add event handlers that update our internal map
-	c.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	c.handler, _ = c.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			c.handleAdd(obj)
 		},
@@ -111,7 +115,7 @@ func (c *Cache) Run(client dynamic.Interface, namespaceClient kubernetes.Interfa
 
 	if c.notServed {
 		go func() {
-			if cache.WaitForCacheSync(stopCh, c.informer.HasSynced) {
+			if cache.WaitForCacheSync(stopCh, c.handler.HasSynced) {
 				c.log.Info("The IAMRoleSelector CRD is installed, IAMRoleSelectors are now used")
 			}
 		}()
@@ -178,14 +182,15 @@ func (c *Cache) handleDelete(obj interface{}) {
 }
 
 // HasSynced returns true once the IAMRoleSelector informer and the namespace
-// informer have both listed their objects at least once. Matches needs both:
-// the selectors, and the labels of the resource's namespace. While the
-// IAMRoleSelector CRD is not installed, there are no selectors to wait for.
+// informer have both listed their objects at least once, and the cache has
+// stored them. Matches needs both: the selectors, and the labels of the
+// resource's namespace. While the IAMRoleSelector CRD is not installed, there
+// are no selectors to wait for.
 func (c *Cache) HasSynced() bool {
-	if c.informer == nil {
+	if c.handler == nil {
 		return false
 	}
-	return (c.informer.HasSynced() || c.notServed) && c.Namespaces.HasSynced()
+	return (c.handler.HasSynced() || c.notServed) && c.Namespaces.HasSynced()
 }
 
 // WaitForCacheSync waits until the cache has synced or ctx is done, and

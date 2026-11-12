@@ -96,8 +96,9 @@ type NamespaceCache struct {
 	watchScope []string
 	// ignored is the list of namespaces we are ignoring
 	ignored []string
-	// hasSynced is a function that will return true if namespace informer
-	// has received "at least" once the full list of the namespaces.
+	// hasSynced is a function that will return true once the namespace
+	// informer has received "at least" once the full list of the namespaces,
+	// and the event handler has stored them in namespaceInfos.
 	hasSynced func() bool
 }
 
@@ -149,7 +150,7 @@ func (c *NamespaceCache) Run(clientSet kubernetes.Interface, stopCh <-chan struc
 			k8scache.NamespaceIndex: k8scache.MetaNamespaceIndexFunc,
 		},
 	)
-	informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
+	handler, _ := informer.AddEventHandler(k8scache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			// It is guaranteed that the object is of type corev1.Namespace
 			ns := obj.(*corev1.Namespace)
@@ -175,7 +176,9 @@ func (c *NamespaceCache) Run(clientSet kubernetes.Interface, stopCh <-chan struc
 		},
 	})
 	go informer.Run(stopCh)
-	c.hasSynced = informer.HasSynced
+	// The informer has synced once it has listed the namespaces, but the
+	// handler stores them asynchronously: wait for the handler.
+	c.hasSynced = handler.HasSynced
 }
 
 // GetDefaultRegion returns the default region if it it exists
@@ -229,7 +232,7 @@ func (c *NamespaceCache) GetDeletionPolicy(namespace string, service string) (st
 }
 
 // HasSynced returns true once the namespace informer has listed the
-// namespaces at least once.
+// namespaces at least once, and the cache has stored them.
 func (c *NamespaceCache) HasSynced() bool {
 	return c.hasSynced != nil && c.hasSynced()
 }
