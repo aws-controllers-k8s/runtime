@@ -365,8 +365,8 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	gvk := r.rd.GroupVersionKind()
 
 	// If the user has specified a region that is different from the
-	// region the resource currently exists in, we need to fail the
-	// reconciliation with a terminal error.
+	// region the resource currently exists in, we need to stop the
+	// reconciliation and report the drift on the resource.
 	if desiredRegion, drifted := r.regionDrifted(desired); drifted {
 		msg := fmt.Sprintf(
 			"Resource already exists in region %s, but the desired state specifies region %s. ",
@@ -377,12 +377,12 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_region", region,
 			"desired_region", desiredRegion,
 		)
-		return r.failBeforeSync(ctx, desired, selector, ackerr.NewTerminalError(errors.New(msg)))
+		return r.failBeforeSync(ctx, desired, selector, errors.New(msg))
 	}
 
 	// Similarly, if the user has specified an account ID that is different
 	// from the account ID the resource currently exists in, we need to
-	// fail the reconciliation with a terminal error.
+	// stop the reconciliation and report the drift on the resource.
 	if desired.Identifiers() != nil && desired.Identifiers().OwnerAccountID() != nil && *desired.Identifiers().OwnerAccountID() != acctID {
 		msg := fmt.Sprintf(
 			"Resource already exists in account %s, but the role used for reconciliation is in account %s. ",
@@ -393,7 +393,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_account", *desired.Identifiers().OwnerAccountID(),
 			"desired_account", acctID,
 		)
-		return r.failBeforeSync(ctx, desired, selector, ackerr.NewTerminalError(errors.New(msg)))
+		return r.failBeforeSync(ctx, desired, selector, errors.New(msg))
 	}
 
 	// The config pivot to the roleARN will happen if it is not empty.
@@ -422,11 +422,16 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
-// failBeforeSync stops the reconciliation on err, a terminal error found
-// before the resource is synced, and patches the resource's conditions to
-// report it the way Sync does: ACK.Terminal is True with the error, and
-// ACK.ResourceSynced and Ready are False. The returned error and the requeue
-// are those of err.
+// failBeforeSync stops the reconciliation on err, a drift found before the
+// resource is synced, and patches the resource's conditions to report it the
+// way Sync reports an error it can recover from: ACK.Recoverable is True with
+// the error, ACK.ResourceSynced is Unknown and Ready is False.
+//
+// err is returned, so the resource is requeued with a backoff and goes back
+// to synced on its own once the drift is fixed. A drift is usually fixed
+// outside of the spec, in the region annotation, the namespace's default
+// region, CARM or an IAMRoleSelector, and none of these changes the
+// resource's generation.
 func (r *resourceReconciler) failBeforeSync(
 	ctx context.Context,
 	desired acktypes.AWSResource,
@@ -434,7 +439,9 @@ func (r *resourceReconciler) failBeforeSync(
 	err error,
 ) (ctrlrt.Result, error) {
 	r.resetConditions(ctx, desired)
-	latest := ackcondition.WithTerminalCondition(desired, err)
+	latest := desired.DeepCopy()
+	reason := err.Error()
+	ackcondition.SetRecoverable(latest, corev1.ConditionTrue, &reason, nil)
 	// There is no resource manager yet, and ensureConditions does not need
 	// one when the reconciliation failed.
 	r.ensureConditions(ctx, nil, latest, err)
@@ -789,7 +796,6 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
-		var terminalErr *ackerr.TerminalError
 		if reconcileErr == nil {
 			rlog.Enter("rm.IsSynced")
 			if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
@@ -801,7 +807,7 @@ func (r *resourceReconciler) ensureConditions(
 			rlog.Exit("rm.IsSynced", err)
 		} else {
 			condReason = reconcileErr.Error()
-			if reconcileErr == ackerr.Terminal || errors.As(reconcileErr, &terminalErr) {
+			if reconcileErr == ackerr.Terminal {
 				// A terminal condition is a stable state for a resource.
 				// Terminal conditions indicate that without changes to the
 				// desired state of a resource, the resource's desired state
