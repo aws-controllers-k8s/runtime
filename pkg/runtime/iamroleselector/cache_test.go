@@ -15,6 +15,7 @@ package iamroleselector
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -381,14 +383,30 @@ func TestCache_HasSyncedWaitsForNamespaces(t *testing.T) {
 	require.True(t, cache.HasSynced())
 }
 
-// Without the IAMRoleSelector CRD there can be no selectors. The cache does
-// not start an informer that would never sync: it syncs once the namespaces
-// are listed, and matches no selectors.
-func TestCache_CRDNotInstalled(t *testing.T) {
+// Without the IAMRoleSelector CRD there can be no selectors: the API server
+// answers the LIST of IAMRoleSelectors with 404, and the cache syncs once the
+// namespaces are listed, and matches no selectors. The informer keeps retrying
+// its LIST, so when the CRD is installed later, the selectors are used without
+// a restart.
+func TestCache_CRDInstalledLater(t *testing.T) {
 	gvrToListKind := map[schema.GroupVersionResource]string{
 		testGVR: "IAMRoleSelectorList",
 	}
-	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind)
+	selector := createSelector("prod-s3", ackv1alpha1.IAMRoleSelector{
+		Spec: ackv1alpha1.IAMRoleSelectorSpec{
+			ARN:               "arn:aws:iam::123456789012:role/prod-s3-role",
+			NamespaceSelector: ackv1alpha1.NamespaceSelector{Names: []string{"production"}},
+		},
+	})
+	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind, selector)
+	var installed atomic.Bool
+	notFound := apierrors.NewNotFound(testGVR.GroupResource(), "")
+	client.PrependReactor("list", "iamroleselectors", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return !installed.Load(), nil, notFound
+	})
+	client.PrependWatchReactor("iamroleselectors", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return !installed.Load(), nil, notFound
+	})
 	k8sClient := k8sfake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "production"},
 	})
@@ -398,16 +416,20 @@ func TestCache_CRDNotInstalled(t *testing.T) {
 	t.Cleanup(func() { close(stopCh) })
 	cache.Run(client, k8sClient, stopCh)
 
+	bucket := schema.GroupVersionKind{Group: "s3.services.k8s.aws", Version: "v1alpha1", Kind: "Bucket"}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.True(t, cache.WaitForCacheSync(ctx))
-	require.Empty(t, client.Actions(), "no LIST or WATCH of IAMRoleSelectors")
-
-	selectors, err := cache.GetMatchingSelectors(
-		"production", nil, schema.GroupVersionKind{Group: "s3.services.k8s.aws", Version: "v1alpha1", Kind: "Bucket"}, nil,
-	)
+	require.NotEmpty(t, client.Actions(), "the informer tries to list IAMRoleSelectors")
+	selectors, err := cache.GetMatchingSelectors("production", nil, bucket, nil)
 	require.NoError(t, err)
 	require.Empty(t, selectors)
+
+	installed.Store(true)
+	require.Eventually(t, func() bool {
+		selectors, err := cache.GetMatchingSelectors("production", nil, bucket, nil)
+		return err == nil && len(selectors) == 1
+	}, 10*time.Second, 50*time.Millisecond, "the selector is used once the CRD is installed")
 }
 
 // serveIAMRoleSelectors makes the fake API server list IAMRoleSelectors in its

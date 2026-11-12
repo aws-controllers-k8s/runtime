@@ -271,13 +271,12 @@ func TestReconcile_IAMRoleSelectorCacheNotSynced(t *testing.T) {
 
 // The feature gate is on but the IAMRoleSelector CRD is not installed, as after
 // a `helm upgrade` from a chart that did not have it. There can be no
-// selectors: the cache syncs with the namespaces alone, without waiting for
-// IAMRoleSelectors, and the resource is reconciled with the controller's role,
-// in the namespace's default region, as before.
+// selectors: the cache syncs with the namespaces alone, although the LIST of
+// IAMRoleSelectors fails, and the resource is reconciled with the controller's
+// role, in the namespace's default region, as before.
 func TestReconcile_IAMRoleSelectorCRDNotInstalled(t *testing.T) {
 	f := newIRSFixture(t, false)
 	f.sync(t)
-	assert.Empty(t, f.dyn.Actions(), "no LIST or WATCH of IAMRoleSelectors, which would fail forever")
 
 	_, err := f.r.Reconcile(context.Background(), f.req)
 	require.NoError(t, err)
