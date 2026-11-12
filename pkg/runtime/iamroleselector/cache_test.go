@@ -455,7 +455,8 @@ func TestCache_CRDInstalledLater(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.True(t, cache.WaitForCacheSync(ctx))
-	require.NotEmpty(t, client.Actions(), "the informer tries to list IAMRoleSelectors")
+	require.Eventually(t, func() bool { return len(client.Actions()) > 0 }, 5*time.Second, 10*time.Millisecond,
+		"the informer tries to list IAMRoleSelectors")
 	selectors, err := cache.GetMatchingSelectors("production", nil, bucket, nil)
 	require.NoError(t, err)
 	require.Empty(t, selectors)

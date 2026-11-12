@@ -349,6 +349,16 @@ func TestNamespaceCache_HasSyncedWaitsForHandler(t *testing.T) {
 	namespaceCache.Lock() // the handler cannot store the namespace until Unlock
 	namespaceCache.Run(k8sClient, stopCh)
 
+	// The informer watches the namespaces once it has listed them, and has
+	// synced right after.
+	require.Eventually(t, func() bool {
+		for _, a := range k8sClient.Actions() {
+			if a.GetVerb() == "watch" && a.GetResource().Resource == "namespaces" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Never(t, namespaceCache.HasSynced, 500*time.Millisecond, 10*time.Millisecond,
 		"the handler has not stored the namespace yet")
 
