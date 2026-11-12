@@ -606,16 +606,20 @@ func (r *resourceReconciler) Sync(
 	// Fail fast on a syntactically malformed ignore-field-drift annotation
 	// before any AWS call or mutation. A malformed path means the user's intent
 	// is unclear, and proceeding (create OR update) could reconcile a field the
-	// user meant to ignore. Returning a terminal error here surfaces the problem
-	// on the CR and stops the reconcile before create/update/read-only handling.
+	// user meant to ignore. The ACK.Terminal condition surfaces the problem on
+	// the CR, and the reconcile stops before create/update/read-only handling.
+	//
+	// It is not requeued: only a change to the annotation can fix it, and with
+	// this feature gate enabled an annotation change triggers a reconcile (see
+	// BindControllerManager).
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
 		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
-			err = ackerr.NewTerminalError(fmt.Errorf(
+			err = fmt.Errorf(
 				"ignore-field-drift annotation contains malformed paths %v; "+
 					"fix the annotation before reconciliation can proceed", bad,
-			))
-			return ackcondition.WithTerminalCondition(desired, err), err
+			)
+			return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 		}
 	}
 

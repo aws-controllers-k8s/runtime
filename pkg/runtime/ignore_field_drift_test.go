@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -33,6 +34,7 @@ import (
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
@@ -1613,10 +1615,11 @@ func TestIgnoreFieldDrift_Ignored_CustomUpdateFromLatestIsAlsoSafe(t *testing.T)
 }
 
 // =============================================================================
-// Malformed annotation path — the reconciler must return a terminal error
-// without proceeding to the Update call. This validates the fail-fast behavior:
-// if the user put a syntactically invalid path in the annotation, continuing
-// could silently mutate fields the user intended to protect.
+// Malformed annotation path — the reconciler must stop with ACK.Terminal
+// without proceeding to the Update call, and without a requeue. This validates
+// the fail-fast behavior: if the user put a syntactically invalid path in the
+// annotation, continuing could silently mutate fields the user intended to
+// protect.
 // =============================================================================
 func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 	require := require.New(t)
@@ -1651,14 +1654,24 @@ func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 		func(_ context.Context, r acktypes.AWSResource) acktypes.AWSResource { return r }, nil,
 	)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	_, err := rec.Sync(ctx, rm, desired)
+	res, err := rec.Sync(ctx, rm, desired)
 
-	// Must return a terminal error.
-	require.Error(err)
-	var termErr *ackerr.TerminalError
-	require.ErrorAs(err, &termErr)
-	assert.Contains(t, err.Error(), "malformed")
+	// Must stop with ackerr.Terminal, which HandleReconcileError does not
+	// requeue: fixing the annotation triggers the next reconcile.
+	require.ErrorIs(err, ackerr.Terminal)
+	result, err := rec.HandleReconcileError(ctx, desired, res, err)
+	require.NoError(err)
+	assert.Equal(t, ctrlrt.Result{}, result)
+
+	// The CR says why.
+	terminal := ackcondition.Terminal(res)
+	require.NotNil(terminal)
+	assert.Equal(t, corev1.ConditionTrue, terminal.Status)
+	assert.Contains(t, *terminal.Message, "malformed paths [spec/bad]")
 
 	// Update must NOT have been called.
 	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
