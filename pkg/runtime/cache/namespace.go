@@ -166,11 +166,14 @@ func (c *NamespaceCache) Run(clientSet kubernetes.Interface, stopCh <-chan struc
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			ns := obj.(*corev1.Namespace)
-			if c.approvedNamespace(ns.ObjectMeta.Name) {
-				ns := obj.(*corev1.Namespace)
-				c.deleteNamespaceInfo(ns.ObjectMeta.Name)
-				c.log.V(1).Info("deleted namespace", "name", ns.ObjectMeta.Name)
+			name, err := deletedName(obj)
+			if err != nil {
+				c.log.Error(err, "unable to get the name of a deleted namespace")
+				return
+			}
+			if c.approvedNamespace(name) {
+				c.deleteNamespaceInfo(name)
+				c.log.V(1).Info("deleted namespace", "name", name)
 			}
 		},
 	})
