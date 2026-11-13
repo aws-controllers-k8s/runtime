@@ -540,10 +540,19 @@ func (r *resourceReconciler) reconcile(
 			// If the ReadOnly feature gate is enabled, and the resource is read-only,
 			// we don't delete the resource.
 			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) && IsReadOnly(res)) {
+			// The ACK.ResourceSynced condition left by the last Sync does not
+			// describe a resource that is being deleted. Drop it so that a
+			// value set during this delete attempt (by ReadOne or a delete
+			// hook) can be told apart from a stale one.
+			ackcondition.RemoveSynced(res)
 			// Resolve references before deleting the resource.
 			// Ignore any errors while resolving the references
 			resolved, _, _ := rm.ResolveReferences(ctx, r.apiReader, res)
-			return r.deleteResource(ctx, rm, resolved)
+			latest, err := r.deleteResource(ctx, rm, resolved)
+			if err != nil {
+				latest = r.ensureDeletingConditions(ctx, resolved, latest)
+			}
+			return latest, err
 		}
 
 		rlog := ackrtlog.FromContext(ctx)
@@ -796,6 +805,50 @@ func (r *resourceReconciler) ensureConditions(
 		ackcondition.SetSynced(res, condStatus, &condMessage, &condReason)
 	}
 
+	ensureReadyCondition(res)
+}
+
+// ensureDeletingConditions sets the conditions of a resource whose deletion
+// has not completed: the AWS delete failed, is still in progress, or the
+// finalizer could not be removed.
+//
+// ACK.ResourceSynced is set to False, unless it was already set to False or
+// Unknown during this delete attempt (for example by a delete hook waiting
+// for the AWS resource to reach a deletable state), and Ready is recomputed.
+// Without this, the resource keeps the ACK.ResourceSynced=True and Ready=True
+// conditions from its last Sync, and resources referencing it keep resolving
+// it as usable.
+//
+// It returns a copy of latest, or of current if latest is nil, so that the
+// status patch in HandleReconcileError is never empty.
+func (r *resourceReconciler) ensureDeletingConditions(
+	ctx context.Context,
+	current acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) acktypes.AWSResource {
+	rlog := ackrtlog.FromContext(ctx)
+	exit := rlog.Trace("r.ensureDeletingConditions")
+	defer exit(nil)
+
+	if ackcompare.IsNil(latest) {
+		latest = current
+	}
+	// current may share its underlying object with the desired resource that
+	// HandleReconcileError uses as the base of the status patch.
+	latest = latest.DeepCopy()
+
+	if synced := ackcondition.Synced(latest); synced == nil || synced.Status == corev1.ConditionTrue {
+		// The delete error itself is in the ACK.Recoverable or ACK.Terminal
+		// condition, which ensureReadyCondition copies to Ready.
+		ackcondition.SetSynced(latest, corev1.ConditionFalse, &ackcondition.DeletingMessage, &ackcondition.DeletingReason)
+	}
+	ensureReadyCondition(latest)
+	return latest
+}
+
+// ensureReadyCondition sets the Ready condition from the ACK.Terminal,
+// ACK.Recoverable and ACK.ResourceSynced conditions of the resource.
+func ensureReadyCondition(res acktypes.AWSResource) {
 	terminal := ackcondition.Terminal(res)
 	recoverable := ackcondition.Recoverable(res)
 	synced := ackcondition.Synced(res)
