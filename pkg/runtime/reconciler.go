@@ -536,7 +536,11 @@ func (r *resourceReconciler) reconcile(
 		}
 		// We only delete resources that are not read-only and have a deletion
 		// policy set to delete.
-		if r.getDeletionPolicy(res) == ackv1alpha1.DeletionPolicyDelete &&
+		deletionPolicy, err := r.getDeletionPolicy(ctx, res)
+		if err != nil {
+			return res, err
+		}
+		if deletionPolicy == ackv1alpha1.DeletionPolicyDelete &&
 			// If the ReadOnly feature gate is enabled, and the resource is read-only,
 			// we don't delete the resource.
 			!(r.cfg.FeatureGates.IsEnabled(featuregate.ReadOnlyResources) && IsReadOnly(res)) {
@@ -1888,28 +1892,56 @@ func (r *resourceReconciler) getRegion(
 //   - The resource's `services.k8s.aws/deletion-policy` annotation, if present
 //   - The resource's Namespace's `{service}.services.k8s.aws/deletion-policy` annotation, if present
 //   - The controller's `--deletion-policy` CLI flag
+//
+// The Namespace is read directly from the API server rather than from the
+// CARM or IAMRoleSelector namespace caches, because those caches only run
+// when their feature is enabled, and the namespace deletion policy must be
+// honoured regardless. This only happens while a resource is being deleted,
+// so the cost is a single GET per delete attempt. Reading a single Namespace
+// only needs `get` on `namespaces` in that namespace, which a namespaced Role
+// can grant.
+//
+// If the controller is not allowed to read the Namespace, the namespace
+// annotation is ignored (logged) and the `--deletion-policy` flag applies; the
+// same applies if the Namespace no longer exists. Any other error is returned so the delete is retried instead of risking a
+// deletion the namespace annotation would have prevented.
 func (r *resourceReconciler) getDeletionPolicy(
+	ctx context.Context,
 	res acktypes.AWSResource,
-) ackv1alpha1.DeletionPolicy {
+) (ackv1alpha1.DeletionPolicy, error) {
 	// look for deletion policy in CR metadata annotations
 	resAnnotations := res.MetaObject().GetAnnotations()
 	deletionPolicy, ok := resAnnotations[ackv1alpha1.AnnotationDeletionPolicy]
 	if ok {
-		return ackv1alpha1.DeletionPolicy(deletionPolicy)
+		return ackv1alpha1.DeletionPolicy(deletionPolicy), nil
 	}
 
 	// look for default deletion policy in namespace metadata annotations
-	ns := res.MetaObject().GetNamespace()
-	deletionPolicy, ok = r.carmCache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
-	if !ok {
-		deletionPolicy, ok = r.irsCache.Namespaces.GetDeletionPolicy(ns, r.sc.GetMetadata().ServiceAlias)
-	}
-	if ok {
-		return ackv1alpha1.DeletionPolicy(deletionPolicy)
+	nsName := res.MetaObject().GetNamespace()
+	ns := &corev1.Namespace{}
+	err := r.apiReader.Get(ctx, client.ObjectKey{Name: nsName}, ns)
+	switch {
+	case apierrors.IsForbidden(err):
+		ackrtlog.FromContext(ctx).Info(
+			"not allowed to read the namespace; ignoring the namespace "+
+				"deletion-policy annotation and using the --deletion-policy flag",
+			"namespace", nsName,
+			"deletion_policy", r.cfg.DeletionPolicy,
+			"error", err.Error(),
+		)
+	case apierrors.IsNotFound(err):
+		// The Namespace is gone, so there is no annotation to honour.
+	case err != nil:
+		return "", fmt.Errorf("reading namespace %q for its deletion policy: %w", nsName, err)
+	default:
+		key := r.sc.GetMetadata().ServiceAlias + "." + ackv1alpha1.AnnotationDeletionPolicy
+		if deletionPolicy, ok := ns.GetAnnotations()[key]; ok {
+			return ackv1alpha1.DeletionPolicy(deletionPolicy), nil
+		}
 	}
 
 	// use controller configuration policy
-	return r.cfg.DeletionPolicy
+	return r.cfg.DeletionPolicy, nil
 }
 
 // getEndpointURL returns the AWS account that owns the supplied resource.
