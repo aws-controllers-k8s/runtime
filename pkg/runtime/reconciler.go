@@ -365,24 +365,24 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	gvk := r.rd.GroupVersionKind()
 
 	// If the user has specified a region that is different from the
-	// region the resource currently exists in, we need to fail the
-	// reconciliation with a terminal error.
-	if r.regionDrifted(desired) {
+	// region the resource currently exists in, we need to stop the
+	// reconciliation and report the drift on the resource.
+	if desiredRegion, drifted := r.regionDrifted(desired); drifted {
 		msg := fmt.Sprintf(
 			"Resource already exists in region %s, but the desired state specifies region %s. ",
-			region, desired.MetaObject().GetAnnotations()[ackv1alpha1.AnnotationRegion],
+			region, desiredRegion,
 		)
 		rlog.Info(
 			msg,
 			"current_region", region,
-			"desired_region", desired.Identifiers().Region(),
+			"desired_region", desiredRegion,
 		)
-		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+		return r.failBeforeSync(ctx, desired, selector, errors.New(msg))
 	}
 
 	// Similarly, if the user has specified an account ID that is different
 	// from the account ID the resource currently exists in, we need to
-	// fail the reconciliation with a terminal error.
+	// stop the reconciliation and report the drift on the resource.
 	if desired.Identifiers() != nil && desired.Identifiers().OwnerAccountID() != nil && *desired.Identifiers().OwnerAccountID() != acctID {
 		msg := fmt.Sprintf(
 			"Resource already exists in account %s, but the role used for reconciliation is in account %s. ",
@@ -393,7 +393,7 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 			"current_account", *desired.Identifiers().OwnerAccountID(),
 			"desired_account", acctID,
 		)
-		return ctrlrt.Result{}, ackerr.NewTerminalError(errors.New(msg))
+		return r.failBeforeSync(ctx, desired, selector, errors.New(msg))
 	}
 
 	// The config pivot to the roleARN will happen if it is not empty.
@@ -422,6 +422,33 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	return r.HandleReconcileError(ctx, desired, latest, err)
 }
 
+// failBeforeSync stops the reconciliation on err, a drift found before the
+// resource is synced, and patches the resource's conditions to report it the
+// way Sync reports an error it can recover from: ACK.Recoverable is True with
+// the error, ACK.ResourceSynced is Unknown and Ready is False.
+//
+// err is returned, so the resource is requeued with a backoff and goes back
+// to synced on its own once the drift is fixed. A drift is usually fixed
+// outside of the spec, in the region annotation, the namespace's default
+// region, CARM or an IAMRoleSelector, and none of these changes the
+// resource's generation.
+func (r *resourceReconciler) failBeforeSync(
+	ctx context.Context,
+	desired acktypes.AWSResource,
+	selector *ackv1alpha1.IAMRoleSelector,
+	err error,
+) (ctrlrt.Result, error) {
+	r.resetConditions(ctx, desired)
+	latest := desired.DeepCopy()
+	reason := err.Error()
+	ackcondition.SetRecoverable(latest, corev1.ConditionTrue, &reason, nil)
+	// There is no resource manager yet, and ensureConditions does not need
+	// one when the reconciliation failed.
+	r.ensureConditions(ctx, nil, latest, err)
+	setIAMRoleSelectorCondition(latest, selector)
+	return r.HandleReconcileError(ctx, desired, latest, err)
+}
+
 func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.IAMRoleSelector) {
 	if selector == nil {
 		return
@@ -431,14 +458,15 @@ func setIAMRoleSelectorCondition(r acktypes.AWSResource, selector *ackv1alpha1.I
 	condition.SetIAMRoleSelected(r, corev1.ConditionTrue, &condition.IAMRoleSelectedReason, &message)
 }
 
-// regionDrifted return true if the desired resource region is different
-// from the target region. Target region can be derived from the two places
-// in the following order:
+// regionDrifted returns the target region of the desired resource, and true
+// if it is different from the region the resource exists in. Target region
+// can be derived from the following places, in this order:
 // 1) the region annotation on the resource
 // 2) from the namespace annotation
-func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
+// 3) the controller's region
+func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) (ackv1alpha1.AWSRegion, bool) {
 	if desired.Identifiers() == nil || desired.Identifiers().Region() == nil {
-		return false
+		return "", false
 	}
 
 	currentRegion := desired.Identifiers().Region()
@@ -447,7 +475,7 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 	resAnnotations := desired.MetaObject().GetAnnotations()
 	region, ok := resAnnotations[ackv1alpha1.AnnotationRegion]
 	if ok {
-		return ackv1alpha1.AWSRegion(region) != *currentRegion
+		return ackv1alpha1.AWSRegion(region), ackv1alpha1.AWSRegion(region) != *currentRegion
 	}
 
 	// look for default region in namespace metadata annotations
@@ -457,11 +485,11 @@ func (r *resourceReconciler) regionDrifted(desired acktypes.AWSResource) bool {
 		nsRegion, ok = r.irsCache.Namespaces.GetDefaultRegion(ns)
 	}
 	if ok {
-		return ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
+		return ackv1alpha1.AWSRegion(nsRegion), ackv1alpha1.AWSRegion(nsRegion) != *currentRegion
 	}
 
 	// use controller configuration region
-	return ackv1alpha1.AWSRegion(r.cfg.Region) != *currentRegion
+	return ackv1alpha1.AWSRegion(r.cfg.Region), ackv1alpha1.AWSRegion(r.cfg.Region) != *currentRegion
 }
 
 func (r *resourceReconciler) handleCacheError(
@@ -568,17 +596,16 @@ func (r *resourceReconciler) Sync(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
-) (acktypes.AWSResource, error) {
-	var err error
+) (latest acktypes.AWSResource, err error) {
 	rlog := ackrtlog.FromContext(ctx)
 	exit := rlog.Trace("r.Sync")
 	defer func() {
 		exit(err)
 	}()
 
-	var latest acktypes.AWSResource // the newly created or mutated resource
-
 	r.resetConditions(ctx, desired)
+	// latest and err are the results Sync returns, so the conditions are
+	// ensured on the resource it returns, whichever path it takes.
 	defer func() {
 		r.ensureConditions(ctx, rm, latest, err)
 	}()
@@ -606,16 +633,20 @@ func (r *resourceReconciler) Sync(
 	// Fail fast on a syntactically malformed ignore-field-drift annotation
 	// before any AWS call or mutation. A malformed path means the user's intent
 	// is unclear, and proceeding (create OR update) could reconcile a field the
-	// user meant to ignore. Returning a terminal error here surfaces the problem
-	// on the CR and stops the reconcile before create/update/read-only handling.
+	// user meant to ignore. The ACK.Terminal condition surfaces the problem on
+	// the CR, and the reconcile stops before create/update/read-only handling.
+	//
+	// It is not requeued: only a change to the annotation can fix it, and with
+	// this feature gate enabled an annotation change triggers a reconcile (see
+	// BindControllerManager).
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
 		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
-			err = ackerr.NewTerminalError(fmt.Errorf(
+			err = fmt.Errorf(
 				"ignore-field-drift annotation contains malformed paths %v; "+
 					"fix the annotation before reconciliation can proceed", bad,
-			))
-			return ackcondition.WithTerminalCondition(desired, err), err
+			)
+			return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 		}
 	}
 
@@ -649,7 +680,10 @@ func (r *resourceReconciler) Sync(
 		err = rm.EnsureTags(ctx, resolved, r.sc.GetMetadata())
 		rlog.Exit("rm.EnsureTags", err)
 		if err != nil {
-			return resolved, err
+			// resolved can be desired itself, or share its spec and status,
+			// so return a copy: otherwise the conditions set on it are set
+			// on desired too, and the status patch sees no change.
+			return resolved.DeepCopy(), err
 		}
 	}
 
@@ -742,6 +776,8 @@ func (r *resourceReconciler) resetConditions(
 
 // ensureConditions examines the supplied resource's collection of Condition
 // objects and ensures that an ACK.ResourceSynced condition is present.
+//
+// rm is used only when reconcileErr is nil, and may be nil otherwise.
 func (r *resourceReconciler) ensureConditions(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -766,16 +802,16 @@ func (r *resourceReconciler) ensureConditions(
 		synced := false
 		condMessage := ackcondition.NotSyncedMessage
 		var condReason string
-		rlog.Enter("rm.IsSynced")
-		if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
-			condStatus = corev1.ConditionTrue
-			condMessage = ackcondition.SyncedMessage
-		} else if err != nil {
-			condReason = err.Error()
-		}
-		rlog.Exit("rm.IsSynced", err)
-
-		if reconcileErr != nil {
+		if reconcileErr == nil {
+			rlog.Enter("rm.IsSynced")
+			if synced, err = rm.IsSynced(ctx, res); err == nil && synced {
+				condStatus = corev1.ConditionTrue
+				condMessage = ackcondition.SyncedMessage
+			} else if err != nil {
+				condReason = err.Error()
+			}
+			rlog.Exit("rm.IsSynced", err)
+		} else {
 			condReason = reconcileErr.Error()
 			if reconcileErr == ackerr.Terminal {
 				// A terminal condition is a stable state for a resource.

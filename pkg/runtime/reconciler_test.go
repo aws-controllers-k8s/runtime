@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -613,27 +615,14 @@ func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionPolicy: "invalid-policy",
 	})
 
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		hasTerminal := false
-		for _, condition := range conditions {
-			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
-				continue
-			}
-			hasTerminal = true
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Contains(*condition.Message, "unrecognized adoption policy invalid-policy")
-		}
-		assert.True(hasTerminal)
-	}).Once()
-	desired.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rmf, rd := managerFactoryMocks(desired, nil, false)
@@ -651,6 +640,19 @@ func TestReconcilerAdopt_InvalidAdoptionPolicy_TerminalCondition(t *testing.T) {
 	rm.AssertNotCalled(t, "ReadOne")
 	rm.AssertNotCalled(t, "Create")
 	rm.AssertNotCalled(t, "Update")
+
+	// The resource reports the terminal error, and that it is not synced
+	terminal := ackcondition.Terminal(latest)
+	require.NotNil(terminal)
+	assert.Equal(corev1.ConditionTrue, terminal.Status)
+	assert.Contains(*terminal.Message, "unrecognized adoption policy invalid-policy")
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(latest)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionFalse, ready.Status)
+	assert.Equal(terminal.Message, ready.Message)
 }
 
 func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
@@ -666,27 +668,14 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 		ackv1alpha1.AnnotationAdoptionFields: "not-valid-json",
 	})
 
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		hasTerminal := false
-		for _, condition := range conditions {
-			if condition.Type != ackv1alpha1.ConditionTypeTerminal {
-				continue
-			}
-			hasTerminal = true
-			assert.Equal(corev1.ConditionTrue, condition.Status)
-			assert.Contains(*condition.Message, "failed to parse services.k8s.aws/adoption-fields annotation as JSON")
-		}
-		assert.True(hasTerminal)
-	}).Once()
-	desired.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -707,6 +696,19 @@ func TestReconcilerAdopt_InvalidAdoptionFields_TerminalCondition(t *testing.T) {
 	rm.AssertNotCalled(t, "ReadOne")
 	rm.AssertNotCalled(t, "Create")
 	rm.AssertNotCalled(t, "Update")
+
+	// The resource reports the terminal error, and that it is not synced
+	terminal := ackcondition.Terminal(latest)
+	require.NotNil(terminal)
+	assert.Equal(corev1.ConditionTrue, terminal.Status)
+	assert.Contains(*terminal.Message, "failed to parse services.k8s.aws/adoption-fields annotation as JSON")
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionFalse, synced.Status)
+	ready := ackcondition.Ready(latest)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionFalse, ready.Status)
+	assert.Equal(terminal.Message, ready.Message)
 }
 
 func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
@@ -2051,7 +2053,6 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2061,25 +2062,14 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 
 	resolveReferenceError := errors.New("failed to resolve reference")
 
-	// resourceReconciler.ensureConditions will ensure that if the resource
-	// manager has not set any Conditions on the resource, that at least an
-	// ACK.ResourceSynced condition with status Unknown will be set on the
-	// resource.
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		assert.Equal(t, 1, len(conditions))
-		cond := conditions[0]
-		assert.Equal(t, ackv1alpha1.ConditionTypeReferencesResolved, cond.Type)
-		// The non-terminal reconciler error causes the ReferencesResolved
-		// condition to be Unknown
-		assert.Equal(t, corev1.ConditionUnknown, cond.Status)
-		assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
-		assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
-	})
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -2127,6 +2117,22 @@ func TestReconcilerUpdate_ResolveReferencesError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertNotCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	// The non-terminal reconciler error causes the ReferencesResolved
+	// condition to be Unknown
+	cond := ackcondition.ReferencesResolved(desired)
+	require.NotNil(cond)
+	assert.Equal(t, corev1.ConditionUnknown, cond.Status)
+	assert.Equal(t, ackcondition.FailedReferenceResolutionMessage, *cond.Message)
+	assert.Equal(t, resolveReferenceError.Error(), *cond.Reason)
+	// resourceReconciler.ensureConditions sets ACK.ResourceSynced and Ready to
+	// Unknown, since the resource's sync state could not be determined.
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(t, corev1.ConditionUnknown, ready.Status)
 }
 
 func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
@@ -2139,8 +2145,14 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	delta.Add("Spec.A", "val1", "val2")
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	ids := &ackmocks.AWSResourceIdentifiers{}
 	ids.On("ARN").Return(&arn)
@@ -2149,26 +2161,6 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	latest.On("Identifiers").Return(ids)
 
 	ensureControllerTagsError := errors.New("failed to ensure controller tags")
-
-	// resourceReconciler.ensureConditions will ensure that if the resource
-	// manager has not set any Conditions on the resource, that at least an
-	// ACK.ResourceSynced condition with status Unknown will be set on the
-	// resource.
-	latest.On("Conditions").Return([]*ackv1alpha1.Condition{})
-	latest.On(
-		"ReplaceConditions",
-		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		assert.Equal(t, 1, len(conditions))
-		cond := conditions[0]
-		assert.Equal(t, ackv1alpha1.ConditionTypeResourceSynced, cond.Type)
-		// The non-terminal reconciler error causes the ResourceSynced
-		// condition to be False
-		assert.Equal(t, corev1.ConditionFalse, cond.Status)
-		assert.Equal(t, ackcondition.NotSyncedMessage, *cond.Message)
-		assert.Equal(t, ensureControllerTagsError.Error(), *cond.Reason)
-	})
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
@@ -2216,6 +2208,45 @@ func TestReconcilerUpdate_EnsureControllerTagsError(t *testing.T) {
 	kc.AssertNotCalled(t, "Status")
 	rm.AssertNotCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	// resourceReconciler.ensureConditions sets ACK.ResourceSynced and Ready to
+	// Unknown with the error, since the resource's sync state could not be
+	// determined.
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Equal(t, ackcondition.UnknownSyncedMessage, *synced.Message)
+	assert.Equal(t, ensureControllerTagsError.Error(), *synced.Reason)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(t, corev1.ConditionUnknown, ready.Status)
+}
+
+// rm.ResolveReferences can return desired itself, and the status patch diffs
+// desired against the resource Sync returns. When EnsureTags fails, Sync
+// returns a copy, so the conditions it sets reach the CR.
+func TestReconcilerSync_EnsureControllerTagsError_ConditionsOnCopy(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	desired := newUResource(nil, map[string]interface{}{"description": "X"})
+
+	r, rm, rd, _, scmd := ignoreDriftReconcilerMocks(t, false)
+	wireDescriptorCommon(rd)
+	rm.On("ResolveReferences", ctx, mock.Anything, desired).Return(desired, false, nil)
+	ensureControllerTagsError := errors.New("failed to ensure controller tags")
+	rm.On("EnsureTags", ctx, desired, scmd).Return(ensureControllerTagsError)
+
+	latest, err := r.Sync(ctx, rm, desired)
+	require.Equal(ensureControllerTagsError, err)
+	require.NotNil(latest)
+
+	synced := ackcondition.Synced(latest)
+	require.NotNil(synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	assert.Equal(t, ensureControllerTagsError.Error(), *synced.Reason)
+	// desired, the base of the status patch, keeps the reset conditions
+	assert.Empty(t, desired.Conditions())
 }
 
 func TestReconcile_AccountDrifted(t *testing.T) {
@@ -2239,11 +2270,18 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	ids.On("Region").Return(nil)
 	ids.On("OwnerAccountID").Return(&existingAccount)
 	desired.On("Identifiers").Return(ids)
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// The resource was in sync before the account changed.
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 	desired.On("IsBeingDeleted").Return(false)
 
 	// Setup resource descriptor
@@ -2360,10 +2398,207 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	// Call Reconcile
 	_, err := r.Reconcile(ctx, req)
 
-	// Should get terminal error for account drift
+	// Should get an error for the account drift
 	require.NotNil(err)
 	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
 	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
+
+	// The CR shows it, instead of keeping the conditions it had.
+	assertDriftConditions(t, desired, err)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertDriftConditions checks that res reports err, a drift, as an error the
+// controller recovers from: ACK.Recoverable is True with the error,
+// ACK.ResourceSynced is Unknown, Ready is False with the error, and there is
+// no ACK.Terminal. It also checks that err is not terminal, so the resource
+// is requeued.
+func assertDriftConditions(t *testing.T, res acktypes.AWSResource, err error) {
+	t.Helper()
+	assert.NotErrorIs(t, err, ackerr.Terminal)
+	var terminalErr *ackerr.TerminalError
+	assert.False(t, errors.As(err, &terminalErr), "a drift must not be a terminal error")
+
+	assert.Nil(t, ackcondition.Terminal(res))
+	recoverable := ackcondition.Recoverable(res)
+	require.NotNil(t, recoverable)
+	assert.Equal(t, corev1.ConditionTrue, recoverable.Status)
+	assert.Equal(t, err.Error(), *recoverable.Message)
+	synced := ackcondition.Synced(res)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(res)
+	require.NotNil(t, ready)
+	assert.Equal(t, corev1.ConditionFalse, ready.Status)
+	assert.Equal(t, err.Error(), *ready.Message)
+	assert.Equal(t, string(ackv1alpha1.ConditionTypeRecoverable), *ready.Reason)
+}
+
+// The resource's target region no longer matches the region it exists in. The
+// reconciliation stops, and the CR shows the drift.
+func TestReconcile_RegionDrifted(t *testing.T) {
+	t.Run("region annotation", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{
+			ackv1alpha1.AnnotationRegion: "eu-central-1",
+		})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-central-1. ", err.Error())
+		assertDriftConditions(t, desired, err)
+	})
+	t.Run("controller region", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-west-1. ", err.Error())
+		assertDriftConditions(t, desired, err)
+	})
+}
+
+// reconcileRegionDrift reconciles a resource that exists in us-west-2 and has
+// the supplied annotations, with a controller running in eu-west-1. It
+// returns the resource, with the conditions the reconciliation left on it,
+// and the reconciliation error.
+func reconcileRegionDrift(
+	t *testing.T,
+	annotations map[string]string,
+) (*ackmocks.AWSResource, error) {
+	ctx := context.TODO()
+	req := ctrlrt.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "mybook"},
+	}
+
+	existingRegion := ackv1alpha1.AWSRegion("us-west-2")
+	desired, _, metaObj := resourceMocks()
+	metaObj.SetAnnotations(annotations)
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("Region").Return(&existingRegion)
+	ids.On("OwnerAccountID").Return(nil)
+	desired.On("Identifiers").Return(ids)
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(schema.GroupVersionKind{
+		Group:   "test.services.k8s.aws",
+		Kind:    "Book",
+		Version: "v1alpha1",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	apiReader := &ctrlrtclientmock.Reader{}
+	apiReader.On("Get", mock.Anything, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
+
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:        kc,
+			apiReader: apiReader,
+			log:       fakeLogger,
+			cfg:       ackcfg.Config{Region: "eu-west-1"},
+			carmCache: ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{}),
+			irsCache:  iamroleselector.NewCache(fakeLogger),
+			metrics:   ackmetrics.NewMetrics("test"),
+		},
+		rd: rd,
+	}
+
+	_, err := r.Reconcile(ctx, req)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+	return desired, err
+}
+
+// conditionsInStatus is an AWSResource that keeps its conditions in the
+// status.conditions of its object, as the generated resources do, so that a
+// status patch built from it carries them. Its DeepCopy is a real copy, which
+// the mocks' is not.
+type conditionsInStatus struct{ *uResource }
+
+func (r conditionsInStatus) Conditions() []*ackv1alpha1.Condition {
+	raw, _, _ := k8sobj.NestedSlice(r.obj.Object, "status", "conditions")
+	b, _ := json.Marshal(raw)
+	var conditions []*ackv1alpha1.Condition
+	_ = json.Unmarshal(b, &conditions)
+	return conditions
+}
+
+func (r conditionsInStatus) ReplaceConditions(conditions []*ackv1alpha1.Condition) {
+	b, _ := json.Marshal(conditions)
+	var raw []interface{}
+	_ = json.Unmarshal(b, &raw)
+	_ = k8sobj.SetNestedSlice(r.obj.Object, raw, "status", "conditions")
+}
+
+func (r conditionsInStatus) DeepCopy() acktypes.AWSResource {
+	return conditionsInStatus{&uResource{obj: r.obj.DeepCopy()}}
+}
+
+// The status patch for a drift replaces the conditions the resource had with
+// the three that report the drift, and changes nothing else.
+func TestFailBeforeSync_PatchesOnlyTheConditions(t *testing.T) {
+	desired := conditionsInStatus{newUResource(nil, map[string]interface{}{"name": "mybook"})}
+	desired.obj.SetNamespace("default")
+	desired.obj.SetName("mybook")
+	desired.obj.SetGeneration(3)
+	require.NoError(t, k8sobj.SetNestedField(desired.obj.Object, "arn:aws:iam::111111111111:policy/mybook", "status", "ackResourceMetadata", "arn"))
+	desired.ReplaceConditions([]*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReferencesResolved, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeLateInitialized, Status: corev1.ConditionTrue},
+	})
+
+	var sent map[string]interface{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		data, err := args.Get(2).(client.Patch).Data(args.Get(1).(client.Object))
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &sent))
+	}).Return(nil)
+	kc := &ctrlrtclientmock.Client{}
+	kc.On("Status").Return(statusWriter)
+	zapOptions := ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:  kc,
+			log: ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions)),
+		},
+	}
+
+	result, err := r.failBeforeSync(context.TODO(), desired, nil, errors.New("drifted"))
+	require.EqualError(t, err, "drifted")
+	assert.Equal(t, ctrlrt.Result{}, result)
+
+	require.Len(t, sent, 1, "the patch changes only the status: %v", sent)
+	status, ok := sent["status"].(map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, status, 1, "the patch changes only the conditions: %v", status)
+	got := map[string]string{}
+	for _, c := range status["conditions"].([]interface{}) {
+		c := c.(map[string]interface{})
+		got[c["type"].(string)] = fmt.Sprintf("%v %v %v %v", c["status"], c["reason"], c["message"], c["observedGeneration"])
+	}
+	assert.Equal(t, map[string]string{
+		"ACK.Recoverable":    "True <nil> drifted 3",
+		"ACK.ResourceSynced": "Unknown drifted " + ackcondition.UnknownSyncedMessage + " 3",
+		"Ready":              "False ACK.Recoverable drifted 3",
+	}, got)
 }
 
 // preDeleteDescriptorMock implements both AWSResourceDescriptor and
@@ -2765,7 +3000,6 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	ctx := context.TODO()
 
 	desired, _, _ := resourceMocks()
-	desired.On("ReplaceConditions", []*ackv1alpha1.Condition{}).Return()
 
 	crossNsErr := ackerr.ResourceReferenceCrossNamespaceNotAllowedFor(
 		"default", "other-ns", "my-ref",
@@ -2774,29 +3008,14 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	// When ResolveReferences returns a cross-namespace error, the reconciler
 	// should set ReferencesResolved=False on the resource and return the
 	// error without calling ReadOne.
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	conditions := []*ackv1alpha1.Condition{}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return().Run(func(args mock.Arguments) {
-		conditions := args.Get(0).([]*ackv1alpha1.Condition)
-		// Find the ReferencesResolved condition
-		var refCond *ackv1alpha1.Condition
-		for _, c := range conditions {
-			if c.Type == ackv1alpha1.ConditionTypeReferencesResolved {
-				refCond = c
-				break
-			}
-		}
-		require.NotNil(refCond, "expected ReferencesResolved condition to be set")
-		assert.Equal(corev1.ConditionFalse, refCond.Status,
-			"ReferencesResolved should be False for cross-namespace rejection")
-		assert.Equal(ackcondition.FailedReferenceResolutionMessage, *refCond.Message)
-		assert.Contains(*refCond.Reason, "cross-namespace resource reference is not allowed")
-		assert.Contains(*refCond.Reason, "default")
-		assert.Contains(*refCond.Reason, "other-ns")
-		assert.Contains(*refCond.Reason, "my-ref")
-	})
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 
 	rm := &ackmocks.AWSResourceManager{}
 	rm.On("ResolveReferences", ctx, nil, desired).Return(
@@ -2827,6 +3046,24 @@ func TestReconcilerSync_CrossNamespaceReferenceRejected(t *testing.T) {
 	rm.AssertNotCalled(t, "Update")
 	rm.AssertNotCalled(t, "LateInitialize")
 	rm.AssertNotCalled(t, "EnsureTags", ctx, desired, scmd)
+
+	refCond := ackcondition.ReferencesResolved(desired)
+	require.NotNil(refCond, "expected ReferencesResolved condition to be set")
+	assert.Equal(corev1.ConditionFalse, refCond.Status,
+		"ReferencesResolved should be False for cross-namespace rejection")
+	assert.Equal(ackcondition.FailedReferenceResolutionMessage, *refCond.Message)
+	assert.Contains(*refCond.Reason, "cross-namespace resource reference is not allowed")
+	assert.Contains(*refCond.Reason, "default")
+	assert.Contains(*refCond.Reason, "other-ns")
+	assert.Contains(*refCond.Reason, "my-ref")
+	// The returned error is not terminal, so ACK.ResourceSynced and Ready
+	// are Unknown
+	synced := ackcondition.Synced(desired)
+	require.NotNil(synced)
+	assert.Equal(corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(desired)
+	require.NotNil(ready)
+	assert.Equal(corev1.ConditionUnknown, ready.Status)
 }
 
 // secretReconciler builds a minimal reconciler with the supplied
