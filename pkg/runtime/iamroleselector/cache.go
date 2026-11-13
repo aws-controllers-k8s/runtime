@@ -129,8 +129,19 @@ func (c *Cache) handleUpdate(_, newObj interface{}) {
 }
 
 func (c *Cache) handleDelete(obj interface{}) {
-	u := obj.(*unstructured.Unstructured)
-	name := u.GetName()
+	// The notification carries the selector, or a DeletedFinalStateUnknown
+	// tombstone when the informer missed the deletion while its watch was
+	// broken, and found it when it listed the selectors again.
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		c.log.Error(err, "unable to get the name of a deleted IAMRoleSelector")
+		return
+	}
+	_, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		c.log.Error(err, "unable to get the name of a deleted IAMRoleSelector")
+		return
+	}
 
 	c.Lock()
 	delete(c.selectors, name)
