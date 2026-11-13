@@ -102,4 +102,8 @@ const (
 	// the baseline and is late-initialized normally. This annotation is only
 	// honored when the IgnoreFieldDrift feature gate is enabled.
 	AnnotationIgnoreFieldDrift = AnnotationPrefix + "ignore-field-drift"
+	// AnnotationSecretResourceVersions is an annotation whose value is a JSON
+	// map of "namespace/secretName" to the Secret's metadata.resourceVersion.
+	// Used to detect when a referenced Secret's data has changed.
+	AnnotationSecretResourceVersions = AnnotationPrefix + "secret-resource-versions"
 )
