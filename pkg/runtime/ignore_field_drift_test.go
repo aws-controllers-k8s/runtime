@@ -898,6 +898,7 @@ func TestIgnoreFieldDrift_Ignored_CreateStillSendsDeclaredValue(t *testing.T) {
 	ctx := context.TODO()
 
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
+	acceptStatusPatches(kc)
 	wireDescriptorCommon(rd)
 	wireManagerCommon(rm, scmd)
 

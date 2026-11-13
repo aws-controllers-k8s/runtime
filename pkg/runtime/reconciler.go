@@ -28,6 +28,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,6 +68,20 @@ const (
 	// so the reconciliation can still patch the resource's status before the
 	// Pod is killed, and below the leader election lease duration (15s).
 	shutdownGracePeriod = 5 * time.Second
+)
+
+// statusAfterCreateBackoff spaces the attempts of patchStatusAfterCreate, and
+// statusAfterCreateTimeout is when it stops retrying: a single attempt is not
+// canceled with the reconcile's context, so with timeouts on the API server
+// side the waits between attempts are not the whole time spent.
+var (
+	statusAfterCreateBackoff = wait.Backoff{
+		Steps:    5,
+		Duration: 200 * time.Millisecond,
+		Factor:   2,
+		Jitter:   0.1,
+	}
+	statusAfterCreateTimeout = shutdownGracePeriod
 )
 
 // reconciler describes a generic reconciler within ACK.
@@ -666,7 +683,7 @@ func (r *resourceReconciler) Sync(
 		if isReadOnly {
 			return nil, ackerr.ReadOnlyResourceNotFound
 		}
-		if latest, err = r.createResource(ctx, rm, resolved); err != nil {
+		if latest, err = r.createResource(ctx, rm, resolved, desired); err != nil {
 			return latest, err
 		}
 	} else if adoptionPolicy == AdoptionPolicy_Adopt {
@@ -823,10 +840,15 @@ func (r *resourceReconciler) ensureConditions(
 //
 // The function returns a copy of the CR that has most recently been patched
 // back to the Kubernetes API.
+//
+// stored is the CR with the status the API server holds, the base of the
+// status patch at the end of the reconcile (Sync's desired). Once the status
+// is patched right after Create, stored's status is moved forward to match.
 func (r *resourceReconciler) createResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
 	desired acktypes.AWSResource,
+	stored acktypes.AWSResource,
 ) (acktypes.AWSResource, error) {
 	var err error
 	rlog := ackrtlog.FromContext(ctx)
@@ -912,6 +934,11 @@ func (r *resourceReconciler) createResource(
 		return latest, err
 	}
 
+	// The resource now exists in AWS. Record what Create returned, its
+	// identifiers above all, before anything else can fail or stop the
+	// controller.
+	r.patchStatusAfterCreate(ctx, stored, latest)
+
 	rlog.Enter("rm.ReadOne")
 	observed, err := rm.ReadOne(ctx, latest)
 	rlog.Exit("rm.ReadOne", err)
@@ -951,6 +978,68 @@ func (r *resourceReconciler) createResource(
 	rlog.Info("created new resource")
 
 	return latest, nil
+}
+
+// patchStatusAfterCreate patches the status of the CR with that of latest, the
+// resource that Create returned, and retries on errors that may pass.
+//
+// Otherwise the status of a new resource reaches the CR only at the end of the
+// reconcile: after ReadOne, which retries for up to backoffReadOneTimeout on
+// eventually consistent APIs, and after the metadata and spec patch. A
+// controller that stopped before then, killed, out of memory or on a node that
+// was lost, left a resource in AWS whose identifier the CR did not have, and
+// the next reconcile created it again.
+//
+// stored is the CR with the status the API server holds. The conditions are
+// left out: they are those of the previous reconcile until the end of this
+// one. Once the patch succeeds, stored's status is set to what it wrote, so
+// that the status patch at the end of the reconcile, which is computed from
+// stored, also writes back any field that ReadOne returns to its earlier value,
+// such as a state that Create reported as pending.
+//
+// A failure is only logged: the status patch at the end of the reconcile tries
+// again.
+func (r *resourceReconciler) patchStatusAfterCreate(
+	ctx context.Context,
+	stored acktypes.AWSResource,
+	latest acktypes.AWSResource,
+) {
+	rlog := ackrtlog.FromContext(ctx)
+	written := stored.DeepCopy()
+	setStatusWithoutConditions(written, latest)
+
+	// Not canceled with ctx: a shutdown is when this patch matters most.
+	ctx = context.WithoutCancel(ctx)
+	deadline := time.Now().Add(statusAfterCreateTimeout)
+	retriable := func(err error) bool {
+		return isTransientAPIError(err) && time.Now().Before(deadline)
+	}
+	err := retry.OnError(statusAfterCreateBackoff, retriable, func() error {
+		return r.patchResourceStatus(ctx, stored, written)
+	})
+	if err != nil {
+		rlog.Info(
+			"unable to patch the status right after create, the end of the reconcile tries again",
+			"error", err.Error(),
+		)
+		return
+	}
+	setStatusWithoutConditions(stored, written)
+}
+
+// isTransientAPIError returns true if err, returned by the Kubernetes API
+// server or on the way to it, may pass when the request is sent again.
+func isTransientAPIError(err error) bool {
+	return apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) ||
+		utilnet.IsConnectionRefused(err) ||
+		utilnet.IsConnectionReset(err) ||
+		utilnet.IsHTTP2ConnectionLost(err) ||
+		utilnet.IsProbableEOF(err) ||
+		utilnet.IsTimeout(err)
 }
 
 // delayedReadOneAfterCreate is a helper function called when a ReadOne call
