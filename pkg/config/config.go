@@ -70,6 +70,8 @@ const (
 	flagReconcileResourceMaxConcurrency = "reconcile-resource-max-concurrent-syncs"
 	flagFeatureGates                    = "feature-gates"
 	flagReconcileResources              = "reconcile-resources"
+	flagLazyBindReconcilers             = "lazy-bind-reconcilers"
+	flagLazyBindRetryInterval           = "lazy-bind-retry-interval"
 	envVarAWSRegion                     = "AWS_REGION"
 )
 
@@ -117,6 +119,8 @@ type Config struct {
 	ReconcileDefaultMaxConcurrency  int
 	ReconcileResourceMaxConcurrency []string
 	ReconcileResources              string
+	LazyBindReconcilers             bool
+	LazyBindRetryInterval           time.Duration
 	// TODO(a-hilaly): migrate to k8s.io/component-base and implement a proper parser for feature gates.
 	FeatureGates    featuregate.FeatureGates
 	featureGatesRaw string
@@ -290,6 +294,17 @@ func (cfg *Config) BindFlags() {
 		"",
 		"A comma-separated list of resource kinds to reconcile. If unspecified, all resources will be reconciled.",
 	)
+	flag.BoolVar(
+		&cfg.LazyBindReconcilers, flagLazyBindReconcilers,
+		false,
+		"When enabled, reconcilers for CRDs that are not yet installed in the cluster will be started "+
+			"in the background once the CRDs become available, instead of failing at startup.",
+	)
+	flag.DurationVar(
+		&cfg.LazyBindRetryInterval, flagLazyBindRetryInterval,
+		10*time.Second,
+		"The interval (as a duration string, e.g. '10s', '1m') at which the controller checks for CRD availability when lazy-bind-reconcilers is enabled.",
+	)
 }
 
 // SetupLogger initializes the logger used in the service controller
@@ -399,6 +414,10 @@ func (cfg *Config) Validate(ctx context.Context, options ...Option) error {
 
 	if cfg.DeletionPolicy == "" {
 		cfg.DeletionPolicy = ackv1alpha1.DeletionPolicyDelete
+	}
+
+	if cfg.LazyBindReconcilers && cfg.LazyBindRetryInterval <= 0 {
+		return fmt.Errorf("invalid value for flag '%s': must be greater than 0 when lazy-bind-reconcilers is enabled", flagLazyBindRetryInterval)
 	}
 
 	if cfg.ReconcileDefaultResyncSeconds < 0 {
