@@ -37,6 +37,8 @@ var (
 	SyncedMessage                    = "Resource synced successfully"
 	FailedReferenceResolutionMessage = "Reference resolution failed"
 	UnavailableIAMRoleMessage        = "IAM Role is not available"
+	DeletingMessage                  = "deletion in progress"
+	DeletingReason                   = "Deleting"
 
 	IAMRoleSelectedReason  = "Selected"
 	IAMRoleSelectedMessage = "roleARN: %s, selectorName: %s, selectorResourceVersion: %s"
@@ -347,6 +349,24 @@ func SetAdvisory(
 	c.Message = message
 	c.Reason = reason
 	subject.ReplaceConditions(allConds)
+}
+
+// RemoveSynced removes the condition of type ConditionTypeResourceSynced
+// from the supplied resource's Conditions collection, if present.
+func RemoveSynced(
+	subject acktypes.ConditionManager,
+) {
+	allConds := subject.Conditions()
+	if Synced(subject) == nil {
+		return
+	}
+	newConds := make([]*ackv1alpha1.Condition, 0, len(allConds))
+	for _, cond := range allConds {
+		if cond.Type != ackv1alpha1.ConditionTypeResourceSynced {
+			newConds = append(newConds, cond)
+		}
+	}
+	subject.ReplaceConditions(newConds)
 }
 
 // RemoveReferencesResolved removes the condition of type ConditionTypeReferencesResolved
