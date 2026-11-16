@@ -39,6 +39,11 @@ func (p Path) MarshalJSON() ([]byte, error) {
 	)
 }
 
+// String returns the Path in dotted notation, e.g. "Author.Name".
+func (p Path) String() string {
+	return strings.Join(p.parts, ".")
+}
+
 // Push adds a new part to the Path.
 func (p Path) Push(part string) {
 	p.parts = append(p.parts, part)

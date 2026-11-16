@@ -91,6 +91,8 @@ type resourceReconciler struct {
 	rmf          acktypes.AWSResourceManagerFactory
 	rd           acktypes.AWSResourceDescriptor
 	resyncPeriod time.Duration
+	// convergence holds the convergence records of this kind's CRs.
+	convergence convergenceStore
 }
 
 // GroupVersionKind returns the string containing the API group, version and
@@ -274,7 +276,9 @@ func (r *resourceReconciler) Reconcile(ctx context.Context, req ctrlrt.Request) 
 	desired, err := r.getAWSResource(ctx, req)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// resource wasn't found. just ignore these.
+			// resource wasn't found. just ignore these. The CR is gone, so
+			// its convergence record is no longer needed.
+			r.convergence.delete(req.NamespacedName)
 			return ctrlrt.Result{}, nil
 		}
 		return ctrlrt.Result{}, err
@@ -1130,27 +1134,25 @@ func (r *resourceReconciler) updateResource(
 	// Check to see if the latest observed state already matches the
 	// desired state and if not, update the resource
 	delta := r.filteredDelta(reconcileDesired, latest)
-	convergence := r.cfg.FeatureGates.IsEnabled(featuregate.ConvergenceDetection)
+	convergenceOn := r.cfg.FeatureGates.IsEnabled(featuregate.ConvergenceDetection)
 	if delta.DifferentAt("Spec") {
-		// Convergence detection: skip an Update that already succeeded
+		// Convergence detection: skip an Update that was already counted
 		// convergenceSkipThreshold times in a row with this same delta and the
-		// same write calls, unless the read says the resource is changing state.
+		// same write calls. See skipUpdate.
 		updateCtx := ctx
+		var key types.NamespacedName
 		var hash string
-		var record *convergenceRecord
+		var record convergenceRecord
 		var recorder *apiCallRecorder
-		if convergence {
+		if convergenceOn {
+			key = convergenceKey(desired)
 			hash = deltaHash(delta)
-			record = convergenceRecordFrom(desired)
-			if shouldSkipUpdate(record, hash) && !isTransitioning(ctx, rm, latest) {
+			record, _ = r.convergence.get(key, desired.MetaObject().GetUID())
+			if r.skipUpdate(ctx, rm, key, record, hash, latest) {
 				rlog.Info(
 					"skipping update: the same update already succeeded "+
-						"without changing anything",
-					"diff", delta.Differences,
-					"api_calls", record.APICalls,
-				)
-				ackcondition.SetNotConverging(
-					latest, corev1.ConditionTrue, &notConvergingMessage, nil,
+						"twice without changing anything",
+					"fields", deltaFieldPaths(delta),
 				)
 				return latest, nil
 			}
@@ -1169,28 +1171,16 @@ func (r *resourceReconciler) updateResource(
 		updated = r.ensureReferences(ctx, rm, desired, updated)
 
 		// An Update counts only when it made a successful write call and
-		// returned nil or asked to be requeued; it then replaces the record. A
-		// record for a different delta no longer applies, so it is dropped even
-		// when this Update isn't counted. The record is stored with its own
-		// annotation-only patch: setting it on `updated` would change the
-		// metadata, and with it how the spec patch below is computed.
-		if convergence {
-			next := record
-			if recorder != nil && hash != "" && (err == nil || isRequeueError(err)) {
-				if calls := recorder.Calls(); len(calls) > 0 {
-					next = nextConvergenceRecord(record, hash, calls)
-				}
-			}
-			if next == record && record != nil && record.DeltaHash != hash {
-				next = nil
-			}
-			if !next.equal(record) {
-				if pErr := r.patchConvergenceRecord(ctx, rm, desired, next); pErr != nil {
-					rlog.Info(
-						"failed to store convergence record; continuing",
-						"error", pErr.Error(),
-					)
-				}
+		// returned nil or asked to be requeued; it then replaces the record.
+		// Otherwise the record is kept only if it describes this same delta.
+		if convergenceOn {
+			calls := recorder.Calls()
+			if hash != "" && len(calls) > 0 && (err == nil || isRequeueError(err)) {
+				r.convergence.set(key, nextConvergenceRecord(
+					record, desired.MetaObject().GetUID(), hash, calls,
+				))
+			} else if record.deltaHash != hash {
+				r.convergence.delete(key)
 			}
 		}
 
@@ -1229,14 +1219,9 @@ func (r *resourceReconciler) updateResource(
 			return updated, err
 		}
 		rlog.Info("updated resource")
-	} else if convergence && convergenceRecordFrom(desired) != nil {
+	} else if convergenceOn {
 		// The spec and AWS agree, so the record is no longer needed.
-		if err = r.patchConvergenceRecord(ctx, rm, desired, nil); err != nil {
-			return latest, err
-		}
-		if err = setConvergenceRecord(latest, nil); err != nil {
-			return latest, err
-		}
+		r.convergence.delete(convergenceKey(desired))
 	}
 	return updated, nil
 }

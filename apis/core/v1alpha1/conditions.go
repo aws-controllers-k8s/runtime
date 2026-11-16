@@ -56,11 +56,6 @@ const (
 	// "True" status indicates that the resource fields have been late initialized
 	// "False" status indicates that the resource fields are in process of being late initialized.
 	ConditionTypeLateInitialized ConditionType = "ACK.LateInitialized"
-	// ConditionTypeResourceNotConverging indicates that ACK skipped the Update
-	// because the same Update already succeeded twice with the same delta and
-	// the same AWS write calls without changing anything. ACK sends the Update
-	// again once the delta changes.
-	ConditionTypeResourceNotConverging ConditionType = "ACK.ResourceNotConverging"
 	// ConditionTypeReferencesResolved indicates whether all the references of
 	// type AWSResourceReference have been resolved or not.
 	//
