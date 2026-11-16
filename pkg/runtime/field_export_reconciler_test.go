@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -343,6 +344,43 @@ func TestSync_FailureInGetField(t *testing.T) {
 	assertRecoverableCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
 	assertPatchedConfigMap(false, t, ctx, kc)
 	assertPatchedSecret(false, t, ctx, kc)
+}
+
+func TestSync_CrossNamespaceTargetNotAllowed(t *testing.T) {
+	// Setup
+	require := require.New(t)
+	// Mock resource creation; cross-namespace exports are disabled by default
+	r, kc, apiReader := mockFieldExportReconciler()
+	descriptor, res, _ := mockDescriptorAndAWSResource()
+	manager := mockManager()
+	fieldExport := fieldExportConfigMap(FieldExportNamespace, FieldExportName)
+	fieldExport.Spec.To.Namespace = strPtr("other-namespace")
+	sourceResource, _, _ := mockSourceResource()
+	ctx := context.TODO()
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+
+	//Mock behavior setup
+	setupMockClientForFieldExport(kc, statusWriter, ctx, fieldExport)
+	setupMockApiReaderForFieldExport(apiReader, ctx, res)
+	setupMockManager(manager, ctx, res)
+	setupMockDescriptor(descriptor, res)
+	setupMockUnstructuredConverter()
+
+	// Call
+	latest, err := r.Sync(ctx, sourceResource, *fieldExport)
+
+	//Assertions
+	require.NotNil(err)
+	var terminalErr *ackerr.TerminalError
+	require.ErrorAs(err, &terminalErr)
+	assertTerminalCondition(string(corev1.ConditionTrue), require, t, ctx, kc, statusWriter, fieldExport, &latest)
+	assertPatchedConfigMap(false, t, ctx, kc)
+	assertPatchedSecret(false, t, ctx, kc)
+
+	// A terminal error is not requeued
+	result, err := r.(*fieldExportReconciler).handleReconcileError(err)
+	require.Nil(err)
+	require.Equal(ctrlrt.Result{}, result)
 }
 
 func TestSync_FailureInPatchConfigMap(t *testing.T) {

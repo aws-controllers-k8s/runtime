@@ -449,8 +449,7 @@ func (r *fieldExportReconciler) onError(
 	res *ackv1alpha1.FieldExport,
 	err error,
 ) error {
-	var terminal ackerr.TerminalError
-	if errors.As(err, &terminal) {
+	if isTerminalError(err) {
 		r.patchTerminalCondition(ctx, res, err)
 	} else {
 		r.patchRecoverableCondition(ctx, res, err)
@@ -648,12 +647,20 @@ func (r *fieldExportReconciler) handleReconcileError(err error) (ctrlrt.Result, 
 		return ctrlrt.Result{}, nil
 	}
 
-	var term ackerr.TerminalError
-	if errors.As(err, &term) {
+	if isTerminalError(err) {
 		return ctrlrt.Result{}, nil
 	}
 
 	return ctrlrt.Result{}, err
+}
+
+// isTerminalError returns true if err is a TerminalError, held by value like
+// the FieldExport errors in pkg/errors, or by pointer like the ones
+// ackerr.NewTerminalError returns.
+func isTerminalError(err error) bool {
+	var value ackerr.TerminalError
+	var pointer *ackerr.TerminalError
+	return errors.As(err, &value) || errors.As(err, &pointer)
 }
 
 // fieldExportResourceReconciler is responsible for reconciling the state of any
