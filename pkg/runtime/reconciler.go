@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -843,7 +844,8 @@ func (r *resourceReconciler) ensureConditions(
 //
 // stored is the CR with the status the API server holds, the base of the
 // status patch at the end of the reconcile (Sync's desired). Once the status
-// is patched right after Create, stored's status is moved forward to match.
+// is patched right after Create, stored's status is moved forward to match;
+// see patchStatusAfterCreate.
 func (r *resourceReconciler) createResource(
 	ctx context.Context,
 	rm acktypes.AWSResourceManager,
@@ -998,7 +1000,11 @@ func (r *resourceReconciler) createResource(
 // such as a state that Create reported as pending.
 //
 // A failure is only logged: the status patch at the end of the reconcile tries
-// again.
+// again. When the failure does not show that the API server rejected the
+// patch, such as a timeout or a dropped connection, the patch may have been
+// applied all the same, and stored's status is read again from the API server;
+// failing that, it is emptied, so that the status patch at the end of the
+// reconcile writes every field that is set.
 func (r *resourceReconciler) patchStatusAfterCreate(
 	ctx context.Context,
 	stored acktypes.AWSResource,
@@ -1014,17 +1020,53 @@ func (r *resourceReconciler) patchStatusAfterCreate(
 	retriable := func(err error) bool {
 		return isTransientAPIError(err) && time.Now().Before(deadline)
 	}
+	// Any attempt counts, not only the last: an earlier one may have been
+	// applied before a later one was rejected.
+	maybeApplied := false
 	err := retry.OnError(statusAfterCreateBackoff, retriable, func() error {
-		return r.patchResourceStatus(ctx, stored, written)
+		err := r.patchResourceStatus(ctx, stored, written)
+		if err != nil && !isRejectedPatch(err) {
+			maybeApplied = true
+		}
+		return err
+	})
+	if err == nil {
+		setStatusWithoutConditions(stored, written)
+		return
+	}
+	rlog.Info(
+		"unable to patch the status right after create, the end of the reconcile tries again",
+		"error", err.Error(),
+	)
+	if !maybeApplied {
+		return
+	}
+	current, err := r.getAWSResource(ctx, ctrlrt.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: stored.MetaObject().GetNamespace(),
+			Name:      stored.MetaObject().GetName(),
+		},
 	})
 	if err != nil {
 		rlog.Info(
-			"unable to patch the status right after create, the end of the reconcile tries again",
+			"unable to read the status after a failed patch, the end of the reconcile writes all of it",
 			"error", err.Error(),
 		)
-		return
+		current = r.rd.ResourceFromRuntimeObject(r.rd.EmptyRuntimeObject())
 	}
-	setStatusWithoutConditions(stored, written)
+	setStatusWithoutConditions(stored, current)
+}
+
+// isRejectedPatch returns true if err shows that the API server did not apply
+// the patch: a 4xx status other than 408 and 429.
+func isRejectedPatch(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	code := status.Status().Code
+	return code >= 400 && code < 500 &&
+		code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 
 // isTransientAPIError returns true if err, returned by the Kubernetes API
