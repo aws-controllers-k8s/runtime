@@ -2721,6 +2721,7 @@ func TestPreDeleteSync_UpdateAndDeleteBothFail(t *testing.T) {
 	desired.On("ReplaceConditions", mock.Anything).Return()
 
 	observed, _ := newMockRes()
+	statefulConditions(observed, nil)
 
 	rd.On("IsManaged", mock.Anything).Return(true)
 	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
@@ -3966,4 +3967,145 @@ func TestReconcile_ShutdownDuringDelayedReadOneAfterCreate(t *testing.T) {
 		statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, createdRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 		assert.Equal(t, shutdownGracePeriod, patchedAt.Sub(shutdownAt))
 	})
+}
+
+// statefulConditions makes the mocked resource's Conditions method return
+// what ReplaceConditions last stored, starting with initial.
+func statefulConditions(res *ackmocks.AWSResource, initial []*ackv1alpha1.Condition) {
+	state := initial
+	res.On("Conditions").Return(func() []*ackv1alpha1.Condition { return state })
+	res.On("ReplaceConditions", mock.AnythingOfType("[]*v1alpha1.Condition")).Run(func(args mock.Arguments) {
+		state = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+}
+
+// TestReconcile_DeleteNotCompleteSetsConditions verifies that a resource
+// whose AWS delete fails or is still in progress does not keep the
+// ACK.ResourceSynced=True and Ready=True conditions of its last Sync, and that
+// the conditions are written even when Delete returns no resource.
+func TestReconcile_DeleteNotCompleteSetsConditions(t *testing.T) {
+	ctx := context.TODO()
+	errConflict := errors.New("DeleteConflict: Cannot delete a policy attached to entities.")
+	hookMsg := "Distribution is in 'InProgress' status"
+
+	conds := func(cs ...*ackv1alpha1.Condition) []*ackv1alpha1.Condition { return cs }
+	cond := func(t ackv1alpha1.ConditionType, s corev1.ConditionStatus, msg string) *ackv1alpha1.Condition {
+		return &ackv1alpha1.Condition{Type: t, Status: s, Message: &msg}
+	}
+	lastSync := conds(
+		cond(ackv1alpha1.ConditionTypeResourceSynced, corev1.ConditionTrue, ackcondition.SyncedMessage),
+		cond(ackv1alpha1.ConditionTypeReady, corev1.ConditionTrue, ackcondition.SyncedMessage),
+	)
+
+	for _, tc := range []struct {
+		name string
+		// conditions on the resource returned by Delete; nil means Delete
+		// returns no resource
+		deleteReturns []*ackv1alpha1.Condition
+		deleteErr     error
+		wantSyncedMsg string
+		wantReady     corev1.ConditionStatus
+		wantReadyMsg  string
+	}{
+		{
+			name: "Delete returns the resource with a recoverable error",
+			deleteReturns: append(conds(
+				cond(ackv1alpha1.ConditionTypeRecoverable, corev1.ConditionTrue, errConflict.Error()),
+			), lastSync...),
+			deleteErr:     errConflict,
+			wantSyncedMsg: ackcondition.DeletingMessage,
+			wantReady:     corev1.ConditionFalse,
+			wantReadyMsg:  errConflict.Error(),
+		},
+		{
+			name:          "Delete returns no resource",
+			deleteReturns: nil,
+			deleteErr:     errConflict,
+			wantSyncedMsg: ackcondition.DeletingMessage,
+			wantReady:     corev1.ConditionFalse,
+			wantReadyMsg:  ackcondition.DeletingMessage,
+		},
+		{
+			name: "Delete returns a terminal error",
+			deleteReturns: append(conds(
+				cond(ackv1alpha1.ConditionTypeTerminal, corev1.ConditionTrue, "InvalidParameter"),
+			), lastSync...),
+			deleteErr:     ackerr.Terminal,
+			wantSyncedMsg: ackcondition.DeletingMessage,
+			wantReady:     corev1.ConditionFalse,
+			wantReadyMsg:  "InvalidParameter",
+		},
+		{
+			name: "a delete hook set ACK.ResourceSynced=False itself",
+			deleteReturns: conds(
+				cond(ackv1alpha1.ConditionTypeResourceSynced, corev1.ConditionFalse, hookMsg),
+				cond(ackv1alpha1.ConditionTypeReady, corev1.ConditionTrue, ackcondition.SyncedMessage),
+			),
+			deleteErr:     requeue.NeededAfter(errors.New("waiting for distribution"), time.Second),
+			wantSyncedMsg: hookMsg,
+			wantReady:     corev1.ConditionFalse,
+			wantReadyMsg:  hookMsg,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			desired, desiredRTObj, meta := resourceMocks()
+			meta.SetAnnotations(map[string]string{ackv1alpha1.AnnotationDeletionPolicy: "delete"})
+			statefulConditions(desired, lastSync)
+			desired.On("IsBeingDeleted").Return(true)
+
+			// Like a generated ReadOne, the observed resource carries the
+			// conditions of the CR.
+			observed, _, _ := resourceMocks()
+			statefulConditions(observed, lastSync)
+
+			rm := &ackmocks.AWSResourceManager{}
+			rm.On("ResolveReferences", ctx, nil, desired).Return(desired, false, nil)
+			rm.On("ReadOne", ctx, desired).Return(observed, nil)
+			wantPatched := desiredRTObj
+			if tc.deleteReturns != nil {
+				deleted, deletedRTObj, _ := resourceMocks()
+				statefulConditions(deleted, tc.deleteReturns)
+				rm.On("Delete", ctx, observed).Return(deleted, tc.deleteErr)
+				wantPatched = deletedRTObj
+			} else {
+				rm.On("Delete", ctx, observed).Return(nil, tc.deleteErr)
+			}
+			rm.On("ClearResolvedReferences", mock.Anything).Return(func(r acktypes.AWSResource) acktypes.AWSResource { return r })
+			rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+			rmf, rd := managedResourceManagerFactoryMocks(desired, observed)
+			rd.On("IsManaged", desired).Return(true)
+			rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+			r, kc, _ := reconcilerMocks(rmf)
+			rr := r.(*resourceReconciler)
+			kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+			kc.On("Status").Return(statusWriter)
+			statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+			latest, err := rr.reconcile(ctx, rm, desired)
+			require.ErrorIs(err, tc.deleteErr)
+			require.NotNil(latest)
+
+			_, _ = rr.HandleReconcileError(ctx, desired, latest, err)
+			statusWriter.AssertCalled(t, "Patch", mock.Anything, wantPatched, mock.Anything)
+
+			synced := ackcondition.Synced(latest)
+			require.NotNil(synced)
+			assert.Equal(corev1.ConditionFalse, synced.Status)
+			assert.Equal(tc.wantSyncedMsg, *synced.Message)
+			if tc.wantSyncedMsg == ackcondition.DeletingMessage {
+				require.NotNil(synced.Reason)
+				assert.Equal(ackcondition.DeletingReason, *synced.Reason)
+			}
+
+			ready := ackcondition.Ready(latest)
+			require.NotNil(ready)
+			assert.Equal(tc.wantReady, ready.Status)
+			assert.Equal(tc.wantReadyMsg, *ready.Message)
+		})
+	}
 }
