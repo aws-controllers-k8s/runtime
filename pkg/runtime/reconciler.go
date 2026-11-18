@@ -114,32 +114,39 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	rd := r.rmf.ResourceDescriptor()
 	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
 
-	// By default only spec/generation changes trigger a reconcile. The
-	// ignore-field-drift feature is configured via an annotation, and changing
-	// (or removing) that annotation must trigger a reconcile so the new set of
-	// ignored fields takes effect promptly rather than waiting for the next
-	// resync or spec edit. We therefore add AnnotationChangedPredicate ONLY when
-	// the feature gate is enabled, so controllers that do not use the feature
-	// keep the prior (spec/generation-only) trigger behavior.
-	eventFilter := predicate.Predicate(predicate.GenerationChangedPredicate{})
-	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
-		eventFilter = predicate.Or(
-			predicate.GenerationChangedPredicate{},
-			predicate.AnnotationChangedPredicate{},
-		)
-	}
-
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
-		eventFilter,
+		eventFilterFor(r.cfg),
 	).WithOptions(
 		ctrlrtcontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 		},
 	).Complete(r)
+}
+
+// eventFilterFor returns the predicate that decides which events for a
+// resource trigger a reconcile.
+//
+// By default only spec/generation changes trigger a reconcile. The
+// ignore-field-drift feature is configured via an annotation, and changing
+// (or removing) that annotation must trigger a reconcile so the new set of
+// ignored fields takes effect promptly rather than waiting for the next
+// resync or spec edit. A malformed annotation is not requeued at all, so an
+// annotation change is the only way out of its ACK.Terminal condition. We
+// therefore add AnnotationChangedPredicate ONLY when the feature gate is
+// enabled, so controllers that do not use the feature keep the prior
+// (spec/generation-only) trigger behavior.
+func eventFilterFor(cfg ackcfg.Config) predicate.Predicate {
+	if cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		)
+	}
+	return predicate.GenerationChangedPredicate{}
 }
 
 // SecretValueFromReference fetches the value of a Secret given a
@@ -639,7 +646,7 @@ func (r *resourceReconciler) Sync(
 	//
 	// It is not requeued: only a change to the annotation can fix it, and with
 	// this feature gate enabled an annotation change triggers a reconcile (see
-	// BindControllerManager).
+	// eventFilterFor).
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
 		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
