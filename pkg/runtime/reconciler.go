@@ -103,6 +103,20 @@ func (r *resourceReconciler) GroupVersionKind() *schema.GroupVersionKind {
 	return &gvk
 }
 
+// controllerName returns the name under which the reconciler of a resource
+// kind is bound to the controller-runtime manager. By default it is the
+// lowercased kind, which is what controller-runtime picks when no name is
+// given. A kind is only unique within one service (EKS, ECS and MemoryDB all
+// have a Cluster), so with cfg.QualifiedControllerNames the API group is
+// appended.
+func controllerName(cfg ackcfg.Config, gvk schema.GroupVersionKind) string {
+	name := strings.ToLower(gvk.Kind)
+	if cfg.QualifiedControllerNames {
+		name += "." + gvk.Group
+	}
+	return name
+}
+
 // BindControllerManager sets up the AWSResourceReconciler with an instance
 // of an upstream controller-runtime.Manager
 func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
@@ -135,6 +149,8 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
 		eventFilter,
+	).Named(
+		controllerName(r.cfg, rd.GroupVersionKind()),
 	).WithOptions(
 		ctrlrtcontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,

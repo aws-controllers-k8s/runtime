@@ -65,6 +65,14 @@ func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error 
 	r.kc = mgr.GetClient()
 	r.apiReader = mgr.GetAPIReader()
 
+	// Every service controller binds its own FieldExport reconciler, which
+	// skips the FieldExports whose source belongs to another service. They
+	// need distinct names when several services share one manager.
+	name := "fieldexport"
+	if r.cfg.QualifiedControllerNames {
+		name += "." + r.sc.GetMetadata().ServiceAPIGroup
+	}
+
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
@@ -72,6 +80,8 @@ func (r *fieldExportReconciler) BindControllerManager(mgr ctrlrt.Manager) error 
 		&ackv1alpha1.FieldExport{},
 	).WithEventFilter(
 		predicate.GenerationChangedPredicate{},
+	).Named(
+		name,
 	).Complete(r)
 }
 
