@@ -1749,8 +1749,9 @@ func (r *resourceReconciler) HandleReconcileError(
 		// before resource is marked as managed.
 		// It is okay to patch status when resource is not present due to deletion
 		// because a NotFound error is thrown which will be ignored.
-		// TODO(jaypipes): We ignore error handling here but I don't know if
-		// there is a more robust way to handle failures in the patch operation
+		// TODO(jaypipes): A failed patch is ignored here, except for
+		// ackerr.Terminal below; there may be a more robust way to handle
+		// failures of the patch for the other results.
 		patchErr := r.patchResourceStatus(ctx, desired, latest)
 		// A resource that ends with ackerr.Terminal is not requeued, and only
 		// this patch stores the ACK.Terminal condition that says why. If it
