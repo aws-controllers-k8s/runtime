@@ -1744,7 +1744,14 @@ func (r *resourceReconciler) HandleReconcileError(
 		// because a NotFound error is thrown which will be ignored.
 		// TODO(jaypipes): We ignore error handling here but I don't know if
 		// there is a more robust way to handle failures in the patch operation
-		_ = r.patchResourceStatus(ctx, desired, latest)
+		patchErr := r.patchResourceStatus(ctx, desired, latest)
+		// A resource that ends with ackerr.Terminal is not requeued, and only
+		// this patch stores the ACK.Terminal condition that says why. If it
+		// fails, return its error, so the reconcile is retried until the
+		// condition is stored.
+		if patchErr != nil && err == ackerr.Terminal {
+			return ctrlrt.Result{}, patchErr
+		}
 	}
 	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
