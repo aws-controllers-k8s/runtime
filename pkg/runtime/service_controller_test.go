@@ -15,9 +15,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +57,7 @@ var (
 func init() {
 	groupVersion := schema.GroupVersion{Group: "bookstore.services.k8s.aws", Version: "v1alpha1"}
 	schemeBuilder := &k8sscheme.Builder{GroupVersion: groupVersion}
-	schemeBuilder.Register(&fakeBook{})
+	schemeBuilder.Register(&fakeBook{}, &fakeLazyBook{}, &fakeCancelBook{})
 
 	_ = schemeBuilder.AddToScheme(scheme)
 	_ = clientgoscheme.AddToScheme(scheme)
@@ -105,11 +104,35 @@ func (b *fakeBook) DeepCopy() *fakeBook              { return nil }
 func (b *fakeBook) DeepCopyInto(*fakeBook)           {}
 func (b *fakeBook) DeepCopyObject() runtime.Object   { return nil }
 
+type fakeLazyBook struct{ fakeBook }
+
+func (b *fakeLazyBook) DeepCopyObject() runtime.Object { return nil }
+
+type fakeCancelBook struct{ fakeBook }
+
+func (b *fakeCancelBook) DeepCopyObject() runtime.Object { return nil }
+
+// fakeUnregisteredBook is intentionally NOT registered with the scheme so that
+// binding its reconciler fails deterministically inside controller-runtime's
+// builder, exercising the fatal-bind graceful-shutdown path.
+type fakeUnregisteredBook struct{ fakeBook }
+
+func (b *fakeUnregisteredBook) DeepCopyObject() runtime.Object { return nil }
+
+type fakeRESTMapper struct {
+	meta.RESTMapper
+	kindForFunc func(resource schema.GroupVersionResource) (schema.GroupVersionKind, error)
+}
+
+func (m *fakeRESTMapper) KindFor(resource schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+	if m.kindForFunc != nil {
+		return m.kindForFunc(resource)
+	}
+	return schema.GroupVersionKind{}, &meta.NoResourceMatchError{PartialResource: resource}
+}
+
 type fakeManager struct {
-	// restCfg, when non-nil, is returned by GetConfig. It lets a test point
-	// the manager (and therefore the discovery/RESTMapper clients built from
-	// it) at a fake API server.
-	restCfg *rest.Config
+	restMapper meta.RESTMapper
 	// skipNameValidation, when true, makes GetControllerOptions disable
 	// controller-runtime's process-global unique-name validation so a test can
 	// bind reconcilers for the same GVK as other tests without collisions.
@@ -138,23 +161,23 @@ func (m *fakeManager) AddMetricsExtraHandler(path string, handler http.Handler) 
 func (m *fakeManager) AddHealthzCheck(name string, check healthz.Checker) error       { return nil }
 func (m *fakeManager) AddReadyzCheck(name string, check healthz.Checker) error        { return nil }
 func (m *fakeManager) Start(ctx context.Context) error                                { return nil }
-func (m *fakeManager) GetConfig() *rest.Config {
-	if m.restCfg != nil {
-		return m.restCfg
-	}
-	return &rest.Config{}
-}
+func (m *fakeManager) GetConfig() *rest.Config                                        { return &rest.Config{} }
 func (m *fakeManager) GetScheme() *runtime.Scheme                                     { return scheme }
 func (m *fakeManager) GetClient() client.Client                                       { return nil }
 func (m *fakeManager) GetFieldIndexer() client.FieldIndexer                           { return nil }
 func (m *fakeManager) GetCache() cache.Cache                                          { return nil }
 func (m *fakeManager) GetEventRecorderFor(name string) record.EventRecorder           { return nil }
 func (m *fakeManager) GetEventRecorder(name string) events.EventRecorder              { return nil }
-func (m *fakeManager) GetRESTMapper() meta.RESTMapper                                 { return nil }
-func (m *fakeManager) GetAPIReader() client.Reader                                    { return nil }
-func (m *fakeManager) GetWebhookServer() webhook.Server                               { return nil }
-func (m *fakeManager) AddMetricsServerExtraHandler(string, http.Handler) error        { return nil }
-func (m *fakeManager) GetConverterRegistry() conversion.Registry                      { return nil }
+func (m *fakeManager) GetRESTMapper() meta.RESTMapper {
+	if m.restMapper != nil {
+		return m.restMapper
+	}
+	return &fakeRESTMapper{}
+}
+func (m *fakeManager) GetAPIReader() client.Reader                             { return nil }
+func (m *fakeManager) GetWebhookServer() webhook.Server                        { return nil }
+func (m *fakeManager) AddMetricsServerExtraHandler(string, http.Handler) error { return nil }
+func (m *fakeManager) GetConverterRegistry() conversion.Registry               { return nil }
 
 func TestServiceController(t *testing.T) {
 	require := require.New(t)
@@ -164,6 +187,13 @@ func TestServiceController(t *testing.T) {
 		schema.GroupVersionKind{
 			Group: "bookstore.services.k8s.aws",
 			Kind:  "fakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "fakebooks",
 		},
 	)
 	rd.On("EmptyRuntimeObject").Return(
@@ -204,7 +234,9 @@ func TestServiceController(t *testing.T) {
 		// Disable caches, by setting EnableCARM to false
 		EnableCARM: false,
 	}
-	err := sc.BindControllerManager(mgr, cfg)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
 	require.Nil(err)
 
 	recons = sc.GetReconcilers()
@@ -242,76 +274,226 @@ func TestBindControllerManagerStashesCfg(t *testing.T) {
 		EnableCARM:        false,
 		HTTPClientTimeout: 7 * time.Second,
 	}
-	err := sc.BindControllerManager(mgr, cfg)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
 	require.Nil(err)
 
 	require.Equal(7*time.Second, sc.cfg.HTTPClientTimeout)
 }
 
-// newFieldExportInstalledAPIServer starts an httptest server that serves the
-// minimal Kubernetes discovery documents needed for
-// (*serviceController).GetFieldExportInstalled to report the FieldExport CRD as
-// installed: the services.k8s.aws/v1alpha1 group must be discoverable and it
-// must contain the "fieldexports" resource. It returns a *rest.Config pointed at
-// the server so a fakeManager can hand it to the discovery/RESTMapper clients.
-func newFieldExportInstalledAPIServer(t *testing.T) *rest.Config {
-	t.Helper()
+func TestBindControllerManager_LazyBind_CRDNotInstalled(t *testing.T) {
+	require := require.New(t)
 
-	gv := ackv1alpha1.GroupVersion // services.k8s.aws/v1alpha1
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "lazyFakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "lazyfakebooks",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(&fakeLazyBook{})
 
-	writeJSON := func(w http.ResponseWriter, obj interface{}) {
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(obj); err != nil {
-			t.Errorf("encoding discovery response: %v", err)
-		}
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	var installCallCount int32
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "lazytest",
+			ServiceAPIGroup: "bookstore.services.k8s.aws",
+		},
+		rmFactories: map[string]acktypes.AWSResourceManagerFactory{
+			"lazyFakeBook.bookstore.services.k8s.aws": rmf,
+		},
+	}
+	sc.log = ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}))
+
+	mapper := &fakeRESTMapper{
+		kindForFunc: func(_ schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+			atomic.AddInt32(&installCallCount, 1)
+			if atomic.LoadInt32(&installCallCount) >= 3 {
+				return schema.GroupVersionKind{Group: "bookstore.services.k8s.aws", Version: "v1alpha1", Kind: "lazyFakeBook"}, nil
+			}
+			return schema.GroupVersionKind{}, &meta.NoResourceMatchError{}
+		},
 	}
 
-	mux := http.NewServeMux()
-	// Legacy core discovery. Return an empty group list so the discovery client
-	// treats the server as reachable with no core resources.
-	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, &metav1.APIVersions{Versions: []string{}})
-	})
-	// Aggregated /apis discovery listing the services.k8s.aws group. This backs
-	// both discovery.ServerSupportsVersion and the dynamic RESTMapper's group
-	// lookup.
-	mux.HandleFunc("/apis", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, &metav1.APIGroupList{
-			Groups: []metav1.APIGroup{
-				{
-					Name: gv.Group,
-					Versions: []metav1.GroupVersionForDiscovery{
-						{GroupVersion: gv.String(), Version: gv.Version},
-					},
-					PreferredVersion: metav1.GroupVersionForDiscovery{
-						GroupVersion: gv.String(), Version: gv.Version,
-					},
-				},
-			},
-		})
-	})
-	// Per-group-version resource list containing the fieldexports resource, so
-	// RESTMapper.KindFor(fieldexports) resolves instead of returning a
-	// NoMatchError.
-	mux.HandleFunc("/apis/"+gv.String(), func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, &metav1.APIResourceList{
-			GroupVersion: gv.String(),
-			APIResources: []metav1.APIResource{
-				{
-					Name:       "fieldexports",
-					Namespaced: true,
-					Kind:       "FieldExport",
-					Group:      gv.Group,
-					Version:    gv.Version,
-				},
-			},
-		})
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	stopCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
 
-	return &rest.Config{Host: server.URL}
+	mgr := &fakeManager{restMapper: mapper}
+	cfg := ackcfg.Config{
+		EnableCARM:            false,
+		LazyBindReconcilers:   true,
+		LazyBindRetryInterval: 100 * time.Millisecond,
+	}
+
+	err := sc.BindControllerManager(stopCtx, stop, mgr, cfg)
+	require.Nil(err)
+
+	// Reconciler should not be bound yet (it's in the background)
+	require.Empty(sc.GetReconcilers())
+
+	// Once the CRD becomes available, the background goroutine should bind the
+	// reconciler.
+	require.Eventually(func() bool {
+		return len(sc.GetReconcilers()) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+
+	// A successful lazy bind must not trigger a shutdown.
+	require.NoError(context.Cause(stopCtx))
+}
+
+func TestBindControllerManager_LazyBind_ContextCancelled(t *testing.T) {
+	require := require.New(t)
+
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "cancelFakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "cancelfakebooks",
+		},
+	)
+	rd.On("EmptyRuntimeObject").Return(&fakeCancelBook{})
+
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "canceltest",
+			ServiceAPIGroup: "bookstore.services.k8s.aws",
+		},
+		rmFactories: map[string]acktypes.AWSResourceManagerFactory{
+			"cancelFakeBook.bookstore.services.k8s.aws": rmf,
+		},
+	}
+	sc.log = ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}))
+
+	mapper := &fakeRESTMapper{
+		kindForFunc: func(_ schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+			return schema.GroupVersionKind{}, &meta.NoResourceMatchError{}
+		},
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	mgr := &fakeManager{restMapper: mapper}
+	cfg := ackcfg.Config{
+		EnableCARM:            false,
+		LazyBindReconcilers:   true,
+		LazyBindRetryInterval: 100 * time.Millisecond,
+	}
+
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
+	require.Nil(err)
+	require.Empty(sc.GetReconcilers())
+
+	// Cancel context — goroutine should exit gracefully
+	cancel(nil)
+
+	// Give the goroutine time to exit, then confirm no reconciler was bound
+	time.Sleep(100 * time.Millisecond)
+	require.Empty(sc.GetReconcilers())
+}
+
+func TestBindControllerManager_LazyBind_FatalBindTriggersShutdown(t *testing.T) {
+	require := require.New(t)
+
+	rd := &mocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(
+		schema.GroupVersionKind{
+			Group: "bookstore.services.k8s.aws",
+			Kind:  "unregisteredFakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "unregisteredfakebooks",
+		},
+	)
+	// EmptyRuntimeObject returns a type that is not registered with the scheme,
+	// so binding the reconciler fails once the CRD becomes available.
+	rd.On("EmptyRuntimeObject").Return(&fakeUnregisteredBook{})
+
+	rmf := &mocks.AWSResourceManagerFactory{}
+	rmf.On("ResourceDescriptor").Return(rd)
+	rmf.On("RequeueOnSuccessSeconds").Return(0)
+
+	sc := &serviceController{
+		ServiceControllerMetadata: acktypes.ServiceControllerMetadata{
+			ServiceAlias:    "fataltest",
+			ServiceAPIGroup: "bookstore.services.k8s.aws",
+		},
+		rmFactories: map[string]acktypes.AWSResourceManagerFactory{
+			"unregisteredFakeBook.bookstore.services.k8s.aws": rmf,
+		},
+	}
+	sc.log = ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}))
+
+	// The CRD is reported missing on the first check (routing the resource into
+	// the lazy-bind goroutine), then installed, so the goroutine attempts to
+	// bind and fails.
+	var installCallCount int32
+	mapper := &fakeRESTMapper{
+		kindForFunc: func(_ schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+			if atomic.AddInt32(&installCallCount, 1) == 1 {
+				return schema.GroupVersionKind{}, &meta.NoResourceMatchError{}
+			}
+			return schema.GroupVersionKind{Group: "bookstore.services.k8s.aws", Version: "v1alpha1", Kind: "unregisteredFakeBook"}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+
+	mgr := &fakeManager{restMapper: mapper}
+	cfg := ackcfg.Config{
+		EnableCARM:            false,
+		LazyBindReconcilers:   true,
+		LazyBindRetryInterval: 50 * time.Millisecond,
+	}
+
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
+	require.Nil(err)
+
+	// The failed bind must trigger a graceful shutdown by cancelling the
+	// context with a non-nil cause.
+	require.Eventually(func() bool {
+		return context.Cause(ctx) != nil
+	}, 5*time.Second, 50*time.Millisecond)
+	require.ErrorContains(context.Cause(ctx), "unregisteredfakebooks")
+	require.Empty(sc.GetReconcilers())
 }
 
 // TestBindControllerManager_FieldExportReconcilersRegistered is a regression
@@ -321,7 +503,7 @@ func newFieldExportInstalledAPIServer(t *testing.T) *rest.Config {
 // therefore stayed false, so the per-resource field-export.<kind> reconcilers
 // were never registered even when the FieldExport CRD was installed.
 //
-// The test points the manager at a fake API server that reports the FieldExport
+// The test points the manager at a RESTMapper that reports the FieldExport
 // CRD as installed and asserts that binding registers a per-resource
 // FieldExport reconciler. With the shadowing bug this slice stays empty.
 func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
@@ -333,6 +515,13 @@ func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
 			Group:   "bookstore.services.k8s.aws",
 			Version: "v1alpha1",
 			Kind:    "fakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "fakebooks",
 		},
 	)
 	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
@@ -351,8 +540,13 @@ func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
 	}
 	sc.WithResourceManagerFactories([]acktypes.AWSResourceManagerFactory{rmf})
 
+	mapper := &fakeRESTMapper{
+		kindForFunc: func(gvr schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+			return schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version}, nil
+		},
+	}
 	mgr := &fakeManager{
-		restCfg:            newFieldExportInstalledAPIServer(t),
+		restMapper:         mapper,
 		skipNameValidation: true,
 	}
 	cfg := ackcfg.Config{
@@ -360,7 +554,9 @@ func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
 		EnableFieldExportReconciler: true,
 	}
 
-	err := sc.BindControllerManager(mgr, cfg)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
 	require.Nil(err)
 
 	// The CRD-level FieldExport reconciler is registered inside the
@@ -377,9 +573,8 @@ func TestBindControllerManager_FieldExportReconcilersRegistered(t *testing.T) {
 // TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing
 // verifies the complementary path: when the FieldExport CRD is not installed,
 // neither the CRD-level nor the per-resource FieldExport reconcilers are
-// registered even though EnableFieldExportReconciler is true. The default
-// fakeManager returns an empty rest.Config, so discovery reports the CRD as
-// absent.
+// registered even though EnableFieldExportReconciler is true. The RESTMapper
+// reports only the FieldExport resource as missing.
 func TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing(t *testing.T) {
 	require := require.New(t)
 
@@ -389,6 +584,13 @@ func TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing
 			Group:   "bookstore.services.k8s.aws",
 			Version: "v1alpha1",
 			Kind:    "fakeBook",
+		},
+	)
+	rd.On("GroupVersionResource").Return(
+		schema.GroupVersionResource{
+			Group:    "bookstore.services.k8s.aws",
+			Version:  "v1alpha1",
+			Resource: "fakebooks",
 		},
 	)
 	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
@@ -407,13 +609,26 @@ func TestBindControllerManager_FieldExportReconcilersNotRegisteredWhenCRDMissing
 	}
 	sc.WithResourceManagerFactories([]acktypes.AWSResourceManagerFactory{rmf})
 
-	mgr := &fakeManager{skipNameValidation: true}
+	mapper := &fakeRESTMapper{
+		kindForFunc: func(gvr schema.GroupVersionResource) (schema.GroupVersionKind, error) {
+			if gvr.Resource == "fieldexports" {
+				return schema.GroupVersionKind{}, &meta.NoResourceMatchError{PartialResource: gvr}
+			}
+			return schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version}, nil
+		},
+	}
+	mgr := &fakeManager{
+		restMapper:         mapper,
+		skipNameValidation: true,
+	}
 	cfg := ackcfg.Config{
 		EnableCARM:                  false,
 		EnableFieldExportReconciler: true,
 	}
 
-	err := sc.BindControllerManager(mgr, cfg)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	err := sc.BindControllerManager(ctx, cancel, mgr, cfg)
 	require.Nil(err)
 
 	require.Nil(sc.fieldExportReconciler)
