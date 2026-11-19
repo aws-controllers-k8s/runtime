@@ -15,6 +15,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ctrlrt "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -2239,11 +2241,18 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	ids.On("Region").Return(nil)
 	ids.On("OwnerAccountID").Return(&existingAccount)
 	desired.On("Identifiers").Return(ids)
-	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	// The resource was in sync before the account changed.
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
 	desired.On(
 		"ReplaceConditions",
 		mock.AnythingOfType("[]*v1alpha1.Condition"),
-	).Return()
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
 	desired.On("IsBeingDeleted").Return(false)
 
 	// Setup resource descriptor
@@ -2360,10 +2369,207 @@ func TestReconcile_AccountDrifted(t *testing.T) {
 	// Call Reconcile
 	_, err := r.Reconcile(ctx, req)
 
-	// Should get terminal error for account drift
+	// Should get an error for the account drift
 	require.NotNil(err)
 	assert.Contains(t, err.Error(), "Resource already exists in account 111111111111")
 	assert.Contains(t, err.Error(), "but the role used for reconciliation is in account 222222222222")
+
+	// The CR shows it, instead of keeping the conditions it had.
+	assertDriftConditions(t, desired, err)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertDriftConditions checks that res reports err, a drift, as an error the
+// controller recovers from: ACK.Recoverable is True with the error,
+// ACK.ResourceSynced is Unknown, Ready is False with the error, and there is
+// no ACK.Terminal. It also checks that err is not terminal, so the resource
+// is requeued.
+func assertDriftConditions(t *testing.T, res acktypes.AWSResource, err error) {
+	t.Helper()
+	assert.NotErrorIs(t, err, ackerr.Terminal)
+	var terminalErr *ackerr.TerminalError
+	assert.False(t, errors.As(err, &terminalErr), "a drift must not be a terminal error")
+
+	assert.Nil(t, ackcondition.Terminal(res))
+	recoverable := ackcondition.Recoverable(res)
+	require.NotNil(t, recoverable)
+	assert.Equal(t, corev1.ConditionTrue, recoverable.Status)
+	assert.Equal(t, err.Error(), *recoverable.Message)
+	synced := ackcondition.Synced(res)
+	require.NotNil(t, synced)
+	assert.Equal(t, corev1.ConditionUnknown, synced.Status)
+	ready := ackcondition.Ready(res)
+	require.NotNil(t, ready)
+	assert.Equal(t, corev1.ConditionFalse, ready.Status)
+	assert.Equal(t, err.Error(), *ready.Message)
+	assert.Equal(t, string(ackv1alpha1.ConditionTypeRecoverable), *ready.Reason)
+}
+
+// The resource's target region no longer matches the region it exists in. The
+// reconciliation stops, and the CR shows the drift.
+func TestReconcile_RegionDrifted(t *testing.T) {
+	t.Run("region annotation", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{
+			ackv1alpha1.AnnotationRegion: "eu-central-1",
+		})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-central-1. ", err.Error())
+		assertDriftConditions(t, desired, err)
+	})
+	t.Run("controller region", func(t *testing.T) {
+		desired, err := reconcileRegionDrift(t, map[string]string{})
+		require.Error(t, err)
+		assert.Equal(t, "Resource already exists in region us-west-2, but the desired state specifies region eu-west-1. ", err.Error())
+		assertDriftConditions(t, desired, err)
+	})
+}
+
+// reconcileRegionDrift reconciles a resource that exists in us-west-2 and has
+// the supplied annotations, with a controller running in eu-west-1. It
+// returns the resource, with the conditions the reconciliation left on it,
+// and the reconciliation error.
+func reconcileRegionDrift(
+	t *testing.T,
+	annotations map[string]string,
+) (*ackmocks.AWSResource, error) {
+	ctx := context.TODO()
+	req := ctrlrt.Request{
+		NamespacedName: types.NamespacedName{Namespace: "default", Name: "mybook"},
+	}
+
+	existingRegion := ackv1alpha1.AWSRegion("us-west-2")
+	desired, _, metaObj := resourceMocks()
+	metaObj.SetAnnotations(annotations)
+	ids := &ackmocks.AWSResourceIdentifiers{}
+	ids.On("Region").Return(&existingRegion)
+	ids.On("OwnerAccountID").Return(nil)
+	desired.On("Identifiers").Return(ids)
+	conditions := []*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+	}
+	desired.On("Conditions").Return(func() []*ackv1alpha1.Condition { return conditions })
+	desired.On(
+		"ReplaceConditions",
+		mock.AnythingOfType("[]*v1alpha1.Condition"),
+	).Run(func(args mock.Arguments) {
+		conditions = args.Get(0).([]*ackv1alpha1.Condition)
+	}).Return()
+
+	rd := &ackmocks.AWSResourceDescriptor{}
+	rd.On("GroupVersionKind").Return(schema.GroupVersionKind{
+		Group:   "test.services.k8s.aws",
+		Kind:    "Book",
+		Version: "v1alpha1",
+	})
+	rd.On("EmptyRuntimeObject").Return(&fakeBook{})
+	rd.On("ResourceFromRuntimeObject", mock.Anything).Return(desired)
+
+	zapOptions := ctrlrtzap.Options{
+		Development: true,
+		Level:       zapcore.InfoLevel,
+	}
+	fakeLogger := ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions))
+	kc := &ctrlrtclientmock.Client{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	apiReader := &ctrlrtclientmock.Reader{}
+	apiReader.On("Get", mock.Anything, req.NamespacedName, mock.AnythingOfType("*runtime.fakeBook")).Return(nil)
+
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:        kc,
+			apiReader: apiReader,
+			log:       fakeLogger,
+			cfg:       ackcfg.Config{Region: "eu-west-1"},
+			carmCache: ackrtcache.New(fakeLogger, ackrtcache.Config{}, featuregate.FeatureGates{}),
+			irsCache:  iamroleselector.NewCache(fakeLogger),
+			metrics:   ackmetrics.NewMetrics("test"),
+		},
+		rd: rd,
+	}
+
+	_, err := r.Reconcile(ctx, req)
+	statusWriter.AssertCalled(t, "Patch", mock.Anything, mock.Anything, mock.Anything)
+	return desired, err
+}
+
+// conditionsInStatus is an AWSResource that keeps its conditions in the
+// status.conditions of its object, as the generated resources do, so that a
+// status patch built from it carries them. Its DeepCopy is a real copy, which
+// the mocks' is not.
+type conditionsInStatus struct{ *uResource }
+
+func (r conditionsInStatus) Conditions() []*ackv1alpha1.Condition {
+	raw, _, _ := k8sobj.NestedSlice(r.obj.Object, "status", "conditions")
+	b, _ := json.Marshal(raw)
+	var conditions []*ackv1alpha1.Condition
+	_ = json.Unmarshal(b, &conditions)
+	return conditions
+}
+
+func (r conditionsInStatus) ReplaceConditions(conditions []*ackv1alpha1.Condition) {
+	b, _ := json.Marshal(conditions)
+	var raw []interface{}
+	_ = json.Unmarshal(b, &raw)
+	_ = k8sobj.SetNestedSlice(r.obj.Object, raw, "status", "conditions")
+}
+
+func (r conditionsInStatus) DeepCopy() acktypes.AWSResource {
+	return conditionsInStatus{&uResource{obj: r.obj.DeepCopy()}}
+}
+
+// The status patch for a drift replaces the conditions the resource had with
+// the three that report the drift, and changes nothing else.
+func TestFailBeforeSync_PatchesOnlyTheConditions(t *testing.T) {
+	desired := conditionsInStatus{newUResource(nil, map[string]interface{}{"name": "mybook"})}
+	desired.obj.SetNamespace("default")
+	desired.obj.SetName("mybook")
+	desired.obj.SetGeneration(3)
+	require.NoError(t, k8sobj.SetNestedField(desired.obj.Object, "arn:aws:iam::111111111111:policy/mybook", "status", "ackResourceMetadata", "arn"))
+	desired.ReplaceConditions([]*ackv1alpha1.Condition{
+		{Type: ackv1alpha1.ConditionTypeResourceSynced, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReady, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeReferencesResolved, Status: corev1.ConditionTrue},
+		{Type: ackv1alpha1.ConditionTypeLateInitialized, Status: corev1.ConditionTrue},
+	})
+
+	var sent map[string]interface{}
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		data, err := args.Get(2).(client.Patch).Data(args.Get(1).(client.Object))
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &sent))
+	}).Return(nil)
+	kc := &ctrlrtclientmock.Client{}
+	kc.On("Status").Return(statusWriter)
+	zapOptions := ctrlrtzap.Options{Development: true, Level: zapcore.InfoLevel}
+	r := &resourceReconciler{
+		reconciler: reconciler{
+			kc:  kc,
+			log: ctrlrtzap.New(ctrlrtzap.UseFlagOptions(&zapOptions)),
+		},
+	}
+
+	result, err := r.failBeforeSync(context.TODO(), desired, nil, errors.New("drifted"))
+	require.EqualError(t, err, "drifted")
+	assert.Equal(t, ctrlrt.Result{}, result)
+
+	require.Len(t, sent, 1, "the patch changes only the status: %v", sent)
+	status, ok := sent["status"].(map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, status, 1, "the patch changes only the conditions: %v", status)
+	got := map[string]string{}
+	for _, c := range status["conditions"].([]interface{}) {
+		c := c.(map[string]interface{})
+		got[c["type"].(string)] = fmt.Sprintf("%v %v %v %v", c["status"], c["reason"], c["message"], c["observedGeneration"])
+	}
+	assert.Equal(t, map[string]string{
+		"ACK.Recoverable":    "True <nil> drifted 3",
+		"ACK.ResourceSynced": "Unknown drifted " + ackcondition.UnknownSyncedMessage + " 3",
+		"Ready":              "False ACK.Recoverable drifted 3",
+	}, got)
 }
 
 // preDeleteDescriptorMock implements both AWSResourceDescriptor and
