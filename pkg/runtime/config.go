@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
@@ -76,8 +77,19 @@ func (c *serviceController) NewAWSConfig(
 	if c.cfg.HTTPClientTimeout > 0 {
 		httpClient = httpClient.WithTimeout(c.cfg.HTTPClientTimeout)
 	}
+
+	var sdkHTTPClient aws.HTTPClient
+	if c.cfg.SDKMaxTPS > 0 {
+		sdkHTTPClient = &rateLimitedHTTPClient{
+			client:  httpClient,
+			limiter: rate.NewLimiter(rate.Limit(c.cfg.SDKMaxTPS), c.cfg.SDKMaxBurst),
+		}
+	} else {
+		sdkHTTPClient = httpClient
+	}
+
 	client := &clientWithUserAgent{
-		client:    httpClient,
+		client:    sdkHTTPClient,
 		userAgent: val,
 	}
 
@@ -108,4 +120,19 @@ func formatUserAgent(name, version string, extra ...string) string {
 		ua += fmt.Sprintf(" (%s)", strings.Join(extra, "; "))
 	}
 	return ua
+}
+
+// rateLimitedHTTPClient wraps an aws.HTTPClient with a token bucket rate
+// limiter. It enforces a maximum request rate (TPS) across all AWS SDK API
+// calls made through this client.
+type rateLimitedHTTPClient struct {
+	client  aws.HTTPClient
+	limiter *rate.Limiter
+}
+
+func (c *rateLimitedHTTPClient) Do(r *http.Request) (*http.Response, error) {
+	if err := c.limiter.Wait(r.Context()); err != nil {
+		return nil, err
+	}
+	return c.client.Do(r)
 }
