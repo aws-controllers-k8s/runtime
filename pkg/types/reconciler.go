@@ -35,4 +35,7 @@ type Reconciler interface {
 	// WriteToSecret writes a value to a Secret given the namespace, name,
 	// and key of the Secret
 	WriteToSecret(context.Context, string, string, string, string) error
+	// SecretResourceVersion returns the metadata.resourceVersion of the
+	// referenced Secret. Returns empty string if the Secret is not found.
+	SecretResourceVersion(context.Context, *v1alpha1.SecretKeyReference, string) (string, error)
 }

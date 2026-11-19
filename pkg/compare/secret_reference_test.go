@@ -23,6 +23,8 @@ import (
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
 )
 
+const annotationKey = ackv1alpha1.AnnotationSecretResourceVersions
+
 // newSecretReference is used a instantiate a secret reference used for testing purposes.
 func newSecretReference(name string) *ackv1alpha1.SecretKeyReference {
 	return &ackv1alpha1.SecretKeyReference{
@@ -31,6 +33,134 @@ func newSecretReference(name string) *ackv1alpha1.SecretKeyReference {
 			Name:      name,
 		},
 		Key: "password",
+	}
+}
+
+func TestSecretDataChanged(t *testing.T) {
+	tests := []struct {
+		name               string
+		desiredAnnotations map[string]string
+		latestAnnotations  map[string]string
+		secretKey          string
+		want               bool
+	}{
+		{
+			name:               "both nil annotations",
+			desiredAnnotations: nil,
+			latestAnnotations:  nil,
+			secretKey:          "default/my-secret",
+			want:               false,
+		},
+		{
+			name:               "no stored versions, no latest versions",
+			desiredAnnotations: map[string]string{},
+			latestAnnotations:  map[string]string{},
+			secretKey:          "default/my-secret",
+			want:               false,
+		},
+		{
+			name: "same resource version",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			secretKey: "default/my-secret",
+			want:      false,
+		},
+		{
+			name: "different resource version",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"200"}`,
+			},
+			secretKey: "default/my-secret",
+			want:      true,
+		},
+		{
+			name:               "no desired version, latest has version (first sync)",
+			desiredAnnotations: map[string]string{},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			secretKey: "default/my-secret",
+			want:      true,
+		},
+		{
+			name: "desired has version, latest missing (secret deleted)",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			latestAnnotations: map[string]string{},
+			secretKey:         "default/my-secret",
+			want:              true,
+		},
+		{
+			name: "different secret key not affected",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"100"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/my-secret":"200"}`,
+			},
+			secretKey: "default/other-secret",
+			want:      false,
+		},
+		{
+			name: "multiple secrets, queried secret unchanged",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100","default/api-key":"50"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100","default/api-key":"75"}`,
+			},
+			secretKey: "default/db-password",
+			want:      false,
+		},
+		{
+			name: "multiple secrets, queried secret changed",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100","default/api-key":"50"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"200","default/api-key":"50"}`,
+			},
+			secretKey: "default/db-password",
+			want:      true,
+		},
+		{
+			name: "multiple secrets, new secret added in latest",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100","default/api-key":"50"}`,
+			},
+			secretKey: "default/api-key",
+			want:      true,
+		},
+		{
+			name: "multiple secrets, queried secret removed from latest",
+			desiredAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100","default/api-key":"50"}`,
+			},
+			latestAnnotations: map[string]string{
+				annotationKey: `{"default/db-password":"100"}`,
+			},
+			secretKey: "default/api-key",
+			want:      true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ackcompare.SecretDataChanged(tt.desiredAnnotations, tt.latestAnnotations, tt.secretKey)
+			if got != tt.want {
+				t.Errorf("SecretDataChanged() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

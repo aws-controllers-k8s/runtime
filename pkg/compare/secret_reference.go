@@ -15,6 +15,7 @@ package compare
 
 import (
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	acksecret "github.com/aws-controllers-k8s/runtime/pkg/secret"
 )
 
 // SecretKeyReferenceEqual returns true if the supplied secret key references
@@ -101,4 +102,20 @@ func cleanUpDuplicateSecretReferences(
 		}
 	}
 	return uniqueSecretReferences
+}
+
+// SecretDataChanged compares the secret resource version for a given secret
+// key between the desired (previously synced) and latest (current) annotation
+// maps. Returns true if the secret's data has changed since last sync.
+func SecretDataChanged(desiredAnnotations, latestAnnotations map[string]string, secretKey string) bool {
+	desiredVersions := acksecret.ParseResourceVersions(desiredAnnotations)
+	latestVersions := acksecret.ParseResourceVersions(latestAnnotations)
+
+	desiredVersion := desiredVersions[secretKey]
+	latestVersion := latestVersions[secretKey]
+
+	if desiredVersion == "" && latestVersion == "" {
+		return false
+	}
+	return desiredVersion != latestVersion
 }
