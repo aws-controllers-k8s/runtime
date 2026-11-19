@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
+	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
 )
 
 const appName = "aws-controllers-k8s"
@@ -98,6 +99,14 @@ func (c *serviceController) NewAWSConfig(
 		client := sts.NewFromConfig(awsCfg)
 		creds := stscreds.NewAssumeRoleProvider(client, string(roleARN))
 		awsCfg.Credentials = aws.NewCredentialsCache(creds)
+	}
+
+	// Added after the assume-role client so a credential refresh during an
+	// Update is never recorded as a write. The full slice expression gives this
+	// config its own backing array.
+	if c.cfg.FeatureGates.IsEnabled(featuregate.ConvergenceDetection) {
+		n := len(awsCfg.APIOptions)
+		awsCfg.APIOptions = append(awsCfg.APIOptions[:n:n], addAPICallRecorder)
 	}
 	return awsCfg, nil
 }
