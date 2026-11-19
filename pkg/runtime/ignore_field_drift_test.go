@@ -23,16 +23,21 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8srt "k8s.io/apimachinery/pkg/runtime"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
+	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	ctrlrtzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ackv1alpha1 "github.com/aws-controllers-k8s/runtime/apis/core/v1alpha1"
 	ctrlrtclientmock "github.com/aws-controllers-k8s/runtime/mocks/controller-runtime/pkg/client"
 	ackmocks "github.com/aws-controllers-k8s/runtime/mocks/pkg/types"
 	ackcompare "github.com/aws-controllers-k8s/runtime/pkg/compare"
+	ackcondition "github.com/aws-controllers-k8s/runtime/pkg/condition"
 	ackcfg "github.com/aws-controllers-k8s/runtime/pkg/config"
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	"github.com/aws-controllers-k8s/runtime/pkg/featuregate"
@@ -119,6 +124,42 @@ func (r *uResource) DeepCopy() acktypes.AWSResource {
 		}
 	}
 	return &uResource{obj: r.obj.DeepCopy(), conditions: conds}
+}
+
+// statusUResource is a uResource whose RuntimeObject carries its conditions in
+// status.conditions, as a generated resource's does, so that a test can read
+// them from the object handed to the status writer.
+type statusUResource struct{ *uResource }
+
+func (r *statusUResource) RuntimeObject() client.Object {
+	conds := make([]interface{}, 0, len(r.conditions))
+	for _, c := range r.conditions {
+		u, err := k8srt.DefaultUnstructuredConverter.ToUnstructured(c)
+		if err != nil {
+			panic(err)
+		}
+		conds = append(conds, u)
+	}
+	if err := unstructured.SetNestedSlice(r.obj.Object, conds, "status", "conditions"); err != nil {
+		panic(err)
+	}
+	return r.obj
+}
+
+func (r *statusUResource) DeepCopy() acktypes.AWSResource {
+	return &statusUResource{r.uResource.DeepCopy().(*uResource)}
+}
+
+// asUResource returns the uResource behind r, which may be wrapped in a
+// statusUResource.
+func asUResource(r acktypes.AWSResource) (*uResource, bool) {
+	switch v := r.(type) {
+	case *uResource:
+		return v, true
+	case *statusUResource:
+		return v.uResource, true
+	}
+	return nil, false
 }
 
 // gatesEnabled returns a FeatureGates instance with the IgnoreFieldDrift
@@ -633,8 +674,8 @@ const driftField = "description"
 // compared, which is sufficient to drive the reconciler's Update branching.
 func specDelta(a, b acktypes.AWSResource) *ackcompare.Delta {
 	delta := ackcompare.NewDelta()
-	ua, aok := a.(*uResource)
-	ub, bok := b.(*uResource)
+	ua, aok := asUResource(a)
+	ub, bok := asUResource(b)
 	if !aok || !bok {
 		return delta
 	}
@@ -1613,15 +1654,158 @@ func TestIgnoreFieldDrift_Ignored_CustomUpdateFromLatestIsAlsoSafe(t *testing.T)
 }
 
 // =============================================================================
-// Malformed annotation path — the reconciler must return a terminal error
-// without proceeding to the Update call. This validates the fail-fast behavior:
-// if the user put a syntactically invalid path in the annotation, continuing
-// could silently mutate fields the user intended to protect.
+// Malformed annotation path — the reconciler must stop with ACK.Terminal
+// before any AWS call, and without a requeue. This validates the fail-fast
+// behavior: if the user put a syntactically invalid path in the annotation,
+// continuing could silently mutate fields the user intended to protect. Once
+// the user fixes the annotation, the next reconcile clears ACK.Terminal and
+// proceeds.
 // =============================================================================
 func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 	require := require.New(t)
 	ctx := context.TODO()
 
+	rec, rm, desired, statusWriter := malformedPathMocks(t)
+	rm.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(_ context.Context, d, _ acktypes.AWSResource, _ *ackcompare.Delta) acktypes.AWSResource {
+			return d.DeepCopy()
+		}, nil,
+	)
+	var patched []*unstructured.Unstructured
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		patched = append(patched, args.Get(1).(*unstructured.Unstructured).DeepCopy())
+	}).Return(nil)
+
+	res, err := rec.Sync(ctx, rm, desired)
+
+	// Must stop with ackerr.Terminal, which HandleReconcileError does not
+	// requeue: fixing the annotation triggers the next reconcile.
+	require.ErrorIs(err, ackerr.Terminal)
+	result, err := rec.HandleReconcileError(ctx, desired, res, err)
+	require.NoError(err)
+	assert.Equal(t, ctrlrt.Result{}, result)
+
+	// The CR says why.
+	terminal := ackcondition.Terminal(res)
+	require.NotNil(terminal)
+	assert.Equal(t, corev1.ConditionTrue, terminal.Status)
+	assert.Contains(t, *terminal.Message, "malformed paths [spec/bad]")
+
+	// The status patch stores it: nothing requeues the resource, so this is
+	// the only chance.
+	require.Len(patched, 1)
+	stored := patchedCondition(t, patched[0], ackv1alpha1.ConditionTypeTerminal)
+	require.NotNil(stored)
+	assert.Equal(t, string(corev1.ConditionTrue), stored["status"])
+	assert.Contains(t, stored["message"], "malformed paths [spec/bad]")
+
+	// It stops before anything else runs: no reference resolution, no
+	// tagging, no AWS call. Past ReadOne, a NotFound would lead to Create.
+	rm.AssertNotCalled(t, "ResolveReferences", mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "EnsureTags", mock.Anything, mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "ReadOne", mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+
+	// The user fixes the annotation. The next reconcile reads the CR with the
+	// stored ACK.Terminal condition, clears it and proceeds: the non-ignored
+	// "name" field has drifted, so Update is called.
+	fixed := res.DeepCopy()
+	fixed.(*statusUResource).obj.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.description",
+	})
+	require.NotNil(ackcondition.Terminal(fixed))
+
+	res, err = rec.Sync(ctx, rm, fixed)
+	require.NoError(err)
+	assert.Nil(t, ackcondition.Terminal(res))
+	rm.AssertCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// =============================================================================
+// Malformed annotation path, and the status patch fails. Nothing requeues a
+// resource after ackerr.Terminal, so HandleReconcileError must return the patch
+// error: the reconcile is then retried until ACK.Terminal is stored.
+// =============================================================================
+func TestIgnoreFieldDrift_MalformedPath_StatusPatchFailureIsRetried(t *testing.T) {
+	require := require.New(t)
+	ctx := context.TODO()
+
+	rec, rm, desired, statusWriter := malformedPathMocks(t)
+	patchErr := apierrors.NewServiceUnavailable("etcdserver: request timed out")
+	statusWriter.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(patchErr)
+
+	res, err := rec.Sync(ctx, rm, desired)
+	require.ErrorIs(err, ackerr.Terminal)
+	result, err := rec.HandleReconcileError(ctx, desired, res, err)
+
+	require.ErrorIs(err, patchErr)
+	assert.Equal(t, ctrlrt.Result{}, result)
+	statusWriter.AssertNumberOfCalls(t, "Patch", 1)
+}
+
+// =============================================================================
+// Event filter — nothing requeues a resource with a malformed annotation, so
+// with the gate on, an annotation-only update (same generation) must trigger a
+// reconcile. A status patch or a resync (same generation and annotations) must
+// not.
+// =============================================================================
+func TestEventFilterFor(t *testing.T) {
+	old := &unstructured.Unstructured{}
+	old.SetGeneration(1)
+	old.SetResourceVersion("1")
+	old.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec/bad",
+	})
+
+	annotationChanged := old.DeepCopy()
+	annotationChanged.SetResourceVersion("2")
+	annotationChanged.SetAnnotations(map[string]string{
+		ackv1alpha1.AnnotationIgnoreFieldDrift: "spec.description",
+	})
+	generationChanged := old.DeepCopy()
+	generationChanged.SetResourceVersion("2")
+	generationChanged.SetGeneration(2)
+	statusChanged := old.DeepCopy()
+	statusChanged.SetResourceVersion("2")
+
+	testCases := []struct {
+		name   string
+		gateOn bool
+		newObj *unstructured.Unstructured
+		want   bool
+	}{
+		{"annotation change, gate on", true, annotationChanged, true},
+		{"annotation change, gate off", false, annotationChanged, false},
+		{"generation change, gate on", true, generationChanged, true},
+		{"generation change, gate off", false, generationChanged, true},
+		{"status change, gate on", true, statusChanged, false},
+		{"status change, gate off", false, statusChanged, false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ackcfg.Config{
+				FeatureGates: featuregate.FeatureGates{
+					featuregate.IgnoreFieldDrift: {Enabled: tc.gateOn},
+				},
+			}
+			got := eventFilterFor(cfg).Update(event.UpdateEvent{
+				ObjectOld: old,
+				ObjectNew: tc.newObj,
+			})
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// malformedPathMocks wires a reconciler for a resource whose ignore-field-drift
+// annotation has a malformed path. The caller sets up statusWriter's Patch.
+func malformedPathMocks(t *testing.T) (
+	*resourceReconciler,
+	*ackmocks.AWSResourceManager,
+	acktypes.AWSResource,
+	*ctrlrtclientmock.SubResourceWriter,
+) {
 	rec, rm, rd, kc, scmd := ignoreDriftReconcilerMocks(t, true)
 	wireDescriptorCommon(rd)
 	wireManagerCommon(rm, scmd)
@@ -1632,6 +1816,7 @@ func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 	}
 	desired := newUResource(annotations, map[string]interface{}{
 		"description": "X",
+		"name":        "desired-name",
 	})
 	desired.obj.SetNamespace("default")
 	desired.obj.SetName("mybook")
@@ -1640,6 +1825,7 @@ func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 
 	latest := newUResource(nil, map[string]interface{}{
 		"description": "E",
+		"name":        "aws-name",
 	})
 	latest.obj.SetNamespace("default")
 	latest.obj.SetName("mybook")
@@ -1651,15 +1837,25 @@ func TestIgnoreFieldDrift_MalformedPath_FailsFast(t *testing.T) {
 		func(_ context.Context, r acktypes.AWSResource) acktypes.AWSResource { return r }, nil,
 	)
 	kc.On("Patch", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
 
-	_, err := rec.Sync(ctx, rm, desired)
+	return rec, rm, &statusUResource{desired}, statusWriter
+}
 
-	// Must return a terminal error.
-	require.Error(err)
-	var termErr *ackerr.TerminalError
-	require.ErrorAs(err, &termErr)
-	assert.Contains(t, err.Error(), "malformed")
-
-	// Update must NOT have been called.
-	rm.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+// patchedCondition returns the condition of type condType from the
+// status.conditions of obj, or nil.
+func patchedCondition(
+	t *testing.T,
+	obj *unstructured.Unstructured,
+	condType ackv1alpha1.ConditionType,
+) map[string]interface{} {
+	conds, _, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	require.NoError(t, err)
+	for _, c := range conds {
+		if m, ok := c.(map[string]interface{}); ok && m["type"] == string(condType) {
+			return m
+		}
+	}
+	return nil
 }

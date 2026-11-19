@@ -114,32 +114,39 @@ func (r *resourceReconciler) BindControllerManager(mgr ctrlrt.Manager) error {
 	rd := r.rmf.ResourceDescriptor()
 	maxConcurrentReconciles := r.cfg.GetReconcileResourceMaxConcurrency(rd.GroupVersionKind().Kind)
 
-	// By default only spec/generation changes trigger a reconcile. The
-	// ignore-field-drift feature is configured via an annotation, and changing
-	// (or removing) that annotation must trigger a reconcile so the new set of
-	// ignored fields takes effect promptly rather than waiting for the next
-	// resync or spec edit. We therefore add AnnotationChangedPredicate ONLY when
-	// the feature gate is enabled, so controllers that do not use the feature
-	// keep the prior (spec/generation-only) trigger behavior.
-	eventFilter := predicate.Predicate(predicate.GenerationChangedPredicate{})
-	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
-		eventFilter = predicate.Or(
-			predicate.GenerationChangedPredicate{},
-			predicate.AnnotationChangedPredicate{},
-		)
-	}
-
 	return ctrlrt.NewControllerManagedBy(
 		mgr,
 	).For(
 		rd.EmptyRuntimeObject(),
 	).WithEventFilter(
-		eventFilter,
+		eventFilterFor(r.cfg),
 	).WithOptions(
 		ctrlrtcontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 		},
 	).Complete(r)
+}
+
+// eventFilterFor returns the predicate that decides which events for a
+// resource trigger a reconcile.
+//
+// By default only spec/generation changes trigger a reconcile. The
+// ignore-field-drift feature is configured via an annotation, and changing
+// (or removing) that annotation must trigger a reconcile so the new set of
+// ignored fields takes effect promptly rather than waiting for the next
+// resync or spec edit. A malformed annotation is not requeued at all, so an
+// annotation change is the only way out of its ACK.Terminal condition. We
+// therefore add AnnotationChangedPredicate ONLY when the feature gate is
+// enabled, so controllers that do not use the feature keep the prior
+// (spec/generation-only) trigger behavior.
+func eventFilterFor(cfg ackcfg.Config) predicate.Predicate {
+	if cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) {
+		return predicate.Or(
+			predicate.GenerationChangedPredicate{},
+			predicate.AnnotationChangedPredicate{},
+		)
+	}
+	return predicate.GenerationChangedPredicate{}
 }
 
 // SecretValueFromReference fetches the value of a Secret given a
@@ -613,16 +620,20 @@ func (r *resourceReconciler) Sync(
 	// Fail fast on a syntactically malformed ignore-field-drift annotation
 	// before any AWS call or mutation. A malformed path means the user's intent
 	// is unclear, and proceeding (create OR update) could reconcile a field the
-	// user meant to ignore. Returning a terminal error here surfaces the problem
-	// on the CR and stops the reconcile before create/update/read-only handling.
+	// user meant to ignore. The ACK.Terminal condition surfaces the problem on
+	// the CR, and the reconcile stops before create/update/read-only handling.
+	//
+	// It is not requeued: only a change to the annotation can fix it, and with
+	// this feature gate enabled an annotation change triggers a reconcile (see
+	// eventFilterFor).
 	if r.cfg.FeatureGates.IsEnabled(featuregate.IgnoreFieldDrift) &&
 		HasIgnoreFieldDrift(desired) {
 		if bad := malformedIgnorePaths(desired); len(bad) > 0 {
-			err = ackerr.NewTerminalError(fmt.Errorf(
+			err = fmt.Errorf(
 				"ignore-field-drift annotation contains malformed paths %v; "+
 					"fix the annotation before reconciliation can proceed", bad,
-			))
-			return ackcondition.WithTerminalCondition(desired, err), err
+			)
+			return ackcondition.WithTerminalCondition(desired, err), ackerr.Terminal
 		}
 	}
 
@@ -1745,9 +1756,17 @@ func (r *resourceReconciler) HandleReconcileError(
 		// before resource is marked as managed.
 		// It is okay to patch status when resource is not present due to deletion
 		// because a NotFound error is thrown which will be ignored.
-		// TODO(jaypipes): We ignore error handling here but I don't know if
-		// there is a more robust way to handle failures in the patch operation
-		_ = r.patchResourceStatus(ctx, desired, latest)
+		// TODO(jaypipes): A failed patch is ignored here, except for
+		// ackerr.Terminal below; there may be a more robust way to handle
+		// failures of the patch for the other results.
+		patchErr := r.patchResourceStatus(ctx, desired, latest)
+		// A resource that ends with ackerr.Terminal is not requeued, and only
+		// this patch stores the ACK.Terminal condition that says why. If it
+		// fails, return its error, so the reconcile is retried until the
+		// condition is stored.
+		if patchErr != nil && err == ackerr.Terminal {
+			return ctrlrt.Result{}, patchErr
+		}
 	}
 	if err == nil || err == ackerr.Terminal {
 		return ctrlrt.Result{}, nil
