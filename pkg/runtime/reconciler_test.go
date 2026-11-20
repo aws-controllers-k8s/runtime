@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -714,6 +715,8 @@ func reconcileRecreated(
 // is not known, writes every field.
 func TestReconcile_RecreatedResourceStatus(t *testing.T) {
 	timeout := apierrors.NewTimeoutError("request did not complete within requested timeout", 0)
+	// What client-go returns for a request cut at the deadline of its context.
+	deadline := &url.Error{Op: "Patch", URL: "https://kubernetes/status", Err: context.DeadlineExceeded}
 	readErr := apierrors.NewServiceUnavailable("etcdserver: leader changed")
 	for _, tc := range []struct {
 		name string
@@ -732,6 +735,9 @@ func TestReconcile_RecreatedResourceStatus(t *testing.T) {
 		{name: "applied, then a timeout, and the read fails", applied: true, err: timeout, readErr: readErr},
 		{name: "not applied, then a timeout", err: timeout},
 		{name: "not applied, then a timeout, and the read fails", err: timeout, readErr: readErr, keepsMaintenance: true},
+		// The deadline has passed, so the read fails too.
+		{name: "applied, then cut at the deadline", applied: true, err: deadline, readErr: readErr},
+		{name: "not applied, then cut at the deadline", err: deadline, readErr: readErr, keepsMaintenance: true},
 		{name: "rejected", err: apierrors.NewInvalid(
 			schema.GroupKind{Kind: "Book"}, "mybook", nil,
 		)},

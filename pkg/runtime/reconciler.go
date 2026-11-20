@@ -1027,7 +1027,18 @@ func (r *resourceReconciler) patchStatusAfterCreate(
 	// Unlike retry.OnError, the waits between attempts end with ctx too.
 	err := wait.ExponentialBackoffWithContext(ctx, statusAfterCreateBackoff,
 		func(ctx context.Context) (bool, error) {
-			err := r.patchResourceStatus(ctx, stored, written)
+			// Not through patchResourceStatus: patchObject drops the
+			// deadline of ctx, and retry.RetryOnConflict returns nil for an
+			// error that wraps a context error, so a patch cut at the
+			// deadline would look applied.
+			err := r.kc.Status().Patch(ctx,
+				written.DeepCopy().RuntimeObject(),
+				client.MergeFrom(stored.DeepCopy().RuntimeObject()),
+			)
+			if apierrors.IsNotFound(err) {
+				// The CR is gone: there is nothing to patch.
+				return true, nil
+			}
 			if err != nil && !isRejectedPatch(err) {
 				maybeApplied = true
 			}
