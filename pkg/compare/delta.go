@@ -58,24 +58,30 @@ func (d *Delta) DifferentAt(subject string) bool {
 // might be placed in an sdk_update_pre_build_request custom code hook to
 // prevent the ModifyDBInstance call from being executed if the DBInstance's
 // Tags field is the only field with changes.
+//
+// Each difference is checked on its own, so several differences under one
+// except path (for example two changed members of an excepted struct) still
+// count as excepted.
 func (d *Delta) DifferentExcept(
 	exceptPaths ...string,
 ) bool {
-	numDiffs := len(d.Differences)
-	if numDiffs == 0 {
-		return false
-	} else if numDiffs > len(exceptPaths) {
-		return true
-	}
-	foundExcepts := 0
 	for _, diff := range d.Differences {
-		for _, exceptPath := range exceptPaths {
-			if diff.Path.Contains(exceptPath) {
-				foundExcepts++
-			}
+		if !diffMatchesAny(diff, exceptPaths) {
+			return true
 		}
 	}
-	return foundExcepts != numDiffs
+	return false
+}
+
+// diffMatchesAny returns true if the difference's path is at or under any of
+// the supplied paths.
+func diffMatchesAny(diff *Difference, paths []string) bool {
+	for _, p := range paths {
+		if diff.Path.Contains(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // Add adds a new Difference to the Delta
