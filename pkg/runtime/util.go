@@ -243,7 +243,8 @@ func getAdoptionFields(res acktypes.AWSResource) string {
 }
 
 // patchObject performs a patch operation using context.WithoutCancel to prevent
-// patch operations from being cancelled while preserving context values.
+// patch operations from being cancelled while preserving context values. A
+// deadline that ctx has is kept: the caller set it to limit the patch.
 // It automatically determines whether to patch spec/metadata or status based on operationType.
 //
 // NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
@@ -257,6 +258,11 @@ func patchObject(
 	operationType string,
 ) error {
 	patchCtx := context.WithoutCancel(ctx)
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		patchCtx, cancel = context.WithDeadline(patchCtx, deadline)
+		defer cancel()
+	}
 	if operationType == OperationType_Status {
 		return kc.Status().Patch(patchCtx, obj, patch)
 	}

@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8srtschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,6 +73,14 @@ func isWithoutCancelContext(ctx interface{}) bool {
 
 // withoutCancelContextMatcher returns a matcher for WithoutCancel contexts
 var withoutCancelContextMatcher = mock.MatchedBy(isWithoutCancelContext)
+
+// statusAfterCreateContextMatcher matches the context of the status patch
+// right after Create, and of the read of the CR after it: it has the deadline
+// of statusAfterCreateTimeout.
+var statusAfterCreateContextMatcher = mock.MatchedBy(func(ctx context.Context) bool {
+	_, ok := ctx.Deadline()
+	return ok
+})
 
 func resourceMocks() (
 	*ackmocks.AWSResource, // mocked resource
@@ -434,7 +443,7 @@ func TestReconcilerCreate_PostCreateErrorFinishesCreate(t *testing.T) {
 	// The resource exists in AWS: its status is patched right after Create.
 	// (The mocks' DeepCopy returns the same object, so the patched object is
 	// desired's.)
-	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, desiredRTObj,
+	statusWriter.AssertCalled(t, "Patch", statusAfterCreateContextMatcher, desiredRTObj,
 		mock.AnythingOfType("*client.mergeFromPatch"))
 	desired.AssertCalled(t, "SetStatus", created)
 	rm.AssertCalled(t, "ReadOne", ctx, created)
@@ -487,14 +496,14 @@ func createRecorder(t *testing.T, statusPatch ...error) ([]string, error) {
 	for _, err := range statusPatch {
 		// The mocks' DeepCopy returns the same object, so the patched object
 		// is desired's.
-		statusWriter.On("Patch", withoutCancelContextMatcher, desiredRTObj,
+		statusWriter.On("Patch", statusAfterCreateContextMatcher, desiredRTObj,
 			mock.AnythingOfType("*client.mergeFromPatch"),
 		).Return(err).Run(record("status patch")).Once()
 	}
 	rr, ok := r.(*resourceReconciler)
 	require.True(t, ok)
 	apiReader := &ctrlrtclientmock.Reader{}
-	apiReader.On("Get", withoutCancelContextMatcher, mock.Anything, mock.Anything).Return(
+	apiReader.On("Get", statusAfterCreateContextMatcher, mock.Anything, mock.Anything).Return(
 		apierrors.NewServiceUnavailable("etcdserver: leader changed"),
 	).Run(record("read"))
 	rr.apiReader = apiReader
@@ -729,8 +738,8 @@ func TestReconcile_RecreatedResourceStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// One attempt, so the error is the patch's outcome.
-			defer func(d time.Duration) { statusAfterCreateTimeout = d }(statusAfterCreateTimeout)
-			statusAfterCreateTimeout = 0
+			defer func(b wait.Backoff) { statusAfterCreateBackoff = b }(statusAfterCreateBackoff)
+			statusAfterCreateBackoff = wait.Backoff{Steps: 1}
 
 			patches, server := reconcileRecreated(t, func(n int) (bool, error) {
 				if n == 0 {
@@ -778,18 +787,21 @@ func TestReconcilerCreate_StatusPatchAfterCreateRetriesTransientErrors(t *testin
 }
 
 // The retries stop once statusAfterCreateTimeout has passed, whatever the
-// backoff has left: a single attempt can take long when the API server times
-// out. A timeout does not tell whether the patch was applied, so the CR is
-// read again.
+// backoff has left, also in the middle of a wait between attempts. A timeout
+// does not tell whether the patch was applied, so the CR is read again.
 func TestReconcilerCreate_StatusPatchAfterCreateStopsAtTheDeadline(t *testing.T) {
 	defer func(d time.Duration) { statusAfterCreateTimeout = d }(statusAfterCreateTimeout)
-	statusAfterCreateTimeout = 0
+	defer func(b wait.Backoff) { statusAfterCreateBackoff = b }(statusAfterCreateBackoff)
+	statusAfterCreateTimeout = 50 * time.Millisecond
+	statusAfterCreateBackoff = wait.Backoff{Steps: 5, Duration: 5 * time.Second}
 
+	start := time.Now()
 	calls, err := createRecorder(t,
 		apierrors.NewServerTimeout(schema.GroupResource{Resource: "books"}, "patch", 1),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Create", "status patch", "read", "ReadOne"}, calls)
+	assert.Less(t, time.Since(start), time.Second)
 }
 
 // Any other error is not retried, and does not fail the create: the status
@@ -812,6 +824,95 @@ func TestReconcilerCreate_StatusPatchAfterCreateRejectedAfterTimeout(t *testing.
 	)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Create", "status patch", "status patch", "read", "ReadOne"}, calls)
+}
+
+// statusPatchAfterCreate runs createResource for a managed resource whose
+// Create succeeds, with ctx as the reconcile's context, and returns the number
+// of attempts of the status patch right after Create. onCreate runs during
+// Create, and patch returns the result of each attempt from the context that
+// the attempt gets.
+func statusPatchAfterCreate(
+	t *testing.T,
+	ctx context.Context,
+	onCreate func(),
+	patch func(context.Context) error,
+) int {
+	t.Helper()
+	desired, desiredRTObj, _ := resourceMocks()
+	desired.On("Conditions").Return([]*ackv1alpha1.Condition{})
+	desired.On("ReplaceConditions", mock.Anything).Return()
+	desiredRTObj.On("GetNamespace").Return("default")
+	desiredRTObj.On("GetName").Return("mybook")
+	created, _, _ := resourceMocks()
+	observed, _, _ := resourceMocks()
+
+	rm := &ackmocks.AWSResourceManager{}
+	rm.On("Create", ctx, desired).Return(created, nil).Run(func(mock.Arguments) { onCreate() })
+	rm.On("ReadOne", ctx, created).Return(observed, nil)
+	rm.On("ClearResolvedReferences", mock.Anything).Return(
+		func(r acktypes.AWSResource) acktypes.AWSResource { return r },
+	)
+	rm.On("FilterSystemTags", mock.Anything, mock.Anything)
+
+	rmf, rd := managedResourceManagerFactoryMocks(desired, created)
+	rd.On("IsManaged", mock.Anything).Return(true)
+	rd.On("Delta", mock.Anything, mock.Anything).Return(ackcompare.NewDelta())
+
+	r, kc, _ := reconcilerMocks(rmf)
+	statusWriter := &ctrlrtclientmock.SubResourceWriter{}
+	kc.On("Status").Return(statusWriter)
+	statusWriter.On("Patch", mock.Anything, desiredRTObj, mock.Anything).Return(
+		func(ctx context.Context, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			return patch(ctx)
+		},
+	)
+	rr, ok := r.(*resourceReconciler)
+	require.True(t, ok)
+
+	_, err := rr.createResource(ctx, rm, desired, desired)
+	require.NoError(t, err)
+	return len(statusWriter.Calls)
+}
+
+// The status patch right after Create is not canceled with the reconcile's
+// context, and still retries once it is: a shutdown is when the patch matters
+// most.
+func TestReconcilerCreate_StatusPatchAfterCreateOutlivesTheReconcile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var patchErrs []error
+	attempts := statusPatchAfterCreate(t, ctx, cancel, func(ctx context.Context) error {
+		patchErrs = append(patchErrs, ctx.Err())
+		if len(patchErrs) == 1 {
+			return apierrors.NewServiceUnavailable("etcdserver: leader changed")
+		}
+		return nil
+	})
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, []error{nil, nil}, patchErrs)
+}
+
+// statusAfterCreateTimeout also cuts the attempt in flight, down to the
+// request to the API server.
+func TestReconcilerCreate_StatusPatchAfterCreateCutsTheAttemptInFlight(t *testing.T) {
+	defer func(d time.Duration) { statusAfterCreateTimeout = d }(statusAfterCreateTimeout)
+	statusAfterCreateTimeout = 50 * time.Millisecond
+
+	var patchErr error
+	start := time.Now()
+	// The patch reports success once cut, so that the CR is not read again.
+	attempts := statusPatchAfterCreate(t, context.TODO(), func() {}, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			patchErr = ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+		return nil
+	})
+	assert.Equal(t, 1, attempts)
+	assert.ErrorIs(t, patchErr, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), time.Second)
 }
 
 // TestReconcilerCreate_UnmanageOnAWSErrorWithoutPostCreateMarker asserts a plain
@@ -1171,7 +1272,7 @@ func TestReconcilerAdoptOrCreateResource_Create(t *testing.T) {
 	statusWriter.On("Patch", withoutCancelContextMatcher, latestRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	// The status patch right after Create. The mocks' DeepCopy returns the same
 	// object, so the patched object is desired's.
-	statusWriter.On("Patch", withoutCancelContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
+	statusWriter.On("Patch", statusAfterCreateContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch")).Return(nil)
 	_, err := r.Sync(ctx, rm, desired)
 	require.Nil(err)
 	rm.AssertNumberOfCalls(t, "ReadOne", 2)
@@ -1480,7 +1581,7 @@ func TestReconcilerCreate_UnManagedResource_CheckReferencesResolveOnce(t *testin
 	// mocks' DeepCopy returns the same object, so the patched object is
 	// desired's.)
 	statusWriter.AssertNumberOfCalls(t, "Patch", 1)
-	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", statusAfterCreateContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
 	rm.AssertNumberOfCalls(t, "EnsureTags", 2)
@@ -1571,7 +1672,7 @@ func TestReconcilerCreate_ManagedResource_CheckReferencesResolveOnce(t *testing.
 	// mocks' DeepCopy returns the same object, so the patched object is
 	// desired's.)
 	statusWriter.AssertNumberOfCalls(t, "Patch", 1)
-	statusWriter.AssertCalled(t, "Patch", withoutCancelContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
+	statusWriter.AssertCalled(t, "Patch", statusAfterCreateContextMatcher, desiredRTObj, mock.AnythingOfType("*client.mergeFromPatch"))
 	rm.AssertCalled(t, "LateInitialize", ctx, latest)
 	rm.AssertCalled(t, "IsSynced", ctx, latest)
 	rm.AssertNumberOfCalls(t, "EnsureTags", 1)

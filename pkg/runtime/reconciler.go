@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrlrt "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,9 +71,11 @@ const (
 )
 
 // statusAfterCreateBackoff spaces the attempts of patchStatusAfterCreate, and
-// statusAfterCreateTimeout is when it stops retrying: a single attempt is not
-// canceled with the reconcile's context, so with timeouts on the API server
-// side the waits between attempts are not the whole time spent.
+// statusAfterCreateTimeout limits the whole of it: the attempts, the one in
+// flight included, the waits between them and the read of the CR after a
+// failure. Its clock starts when the patch starts, not when the controller
+// starts shutting down, since the patch is not canceled with the reconcile's
+// context.
 var (
 	statusAfterCreateBackoff = wait.Backoff{
 		Steps:    5,
@@ -1003,8 +1004,9 @@ func (r *resourceReconciler) createResource(
 // again. When the failure does not show that the API server rejected the
 // patch, such as a timeout or a dropped connection, the patch may have been
 // applied all the same, and stored's status is read again from the API server;
-// failing that, it is emptied, so that the status patch at the end of the
-// reconcile writes every field that is set.
+// failing that, or when statusAfterCreateTimeout has run out, it is emptied, so
+// that the status patch at the end of the reconcile writes every field that is
+// set.
 func (r *resourceReconciler) patchStatusAfterCreate(
 	ctx context.Context,
 	stored acktypes.AWSResource,
@@ -1015,21 +1017,30 @@ func (r *resourceReconciler) patchStatusAfterCreate(
 	setStatusWithoutConditions(written, latest)
 
 	// Not canceled with ctx: a shutdown is when this patch matters most.
-	ctx = context.WithoutCancel(ctx)
-	deadline := time.Now().Add(statusAfterCreateTimeout)
-	retriable := func(err error) bool {
-		return isTransientAPIError(err) && time.Now().Before(deadline)
-	}
+	// statusAfterCreateTimeout limits it instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusAfterCreateTimeout)
+	defer cancel()
 	// Any attempt counts, not only the last: an earlier one may have been
 	// applied before a later one was rejected.
 	maybeApplied := false
-	err := retry.OnError(statusAfterCreateBackoff, retriable, func() error {
-		err := r.patchResourceStatus(ctx, stored, written)
-		if err != nil && !isRejectedPatch(err) {
-			maybeApplied = true
-		}
-		return err
-	})
+	var lastErr error
+	// Unlike retry.OnError, the waits between attempts end with ctx too.
+	err := wait.ExponentialBackoffWithContext(ctx, statusAfterCreateBackoff,
+		func(ctx context.Context) (bool, error) {
+			err := r.patchResourceStatus(ctx, stored, written)
+			if err != nil && !isRejectedPatch(err) {
+				maybeApplied = true
+			}
+			if err != nil && isTransientAPIError(err) {
+				lastErr = err
+				return false, nil
+			}
+			return err == nil, err
+		},
+	)
+	if wait.Interrupted(err) && lastErr != nil {
+		err = lastErr
+	}
 	if err == nil {
 		setStatusWithoutConditions(stored, written)
 		return
