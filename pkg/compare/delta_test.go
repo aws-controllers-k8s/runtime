@@ -90,3 +90,64 @@ func TestDifferentExcept(t *testing.T) {
 	require.True(d.DifferentExcept("Bar"))    // there is a difference that is *not* Bar
 	require.False(d.DifferentExcept("Baz.Y")) // there is *not* a different that is *not* Bar
 }
+
+func TestDifferentExcept_MultipleDifferences(t *testing.T) {
+	tests := []struct {
+		name        string
+		diffPaths   []string
+		exceptPaths []string
+		want        bool
+	}{
+		{
+			name:        "empty delta",
+			diffPaths:   nil,
+			exceptPaths: []string{"Spec.Tags"},
+			want:        false,
+		},
+		{
+			name:        "no except paths",
+			diffPaths:   []string{"Spec.Name"},
+			exceptPaths: nil,
+			want:        true,
+		},
+		{
+			name:        "several differences under one except path",
+			diffPaths:   []string{"Spec.Logging.Enabled", "Spec.Logging.Level", "Spec.Logging.Destination"},
+			exceptPaths: []string{"Spec.Logging"},
+			want:        false,
+		},
+		{
+			name:        "differences under two except paths",
+			diffPaths:   []string{"Spec.Tags", "Spec.Logging.Enabled", "Spec.Logging.Level"},
+			exceptPaths: []string{"Spec.Tags", "Spec.Logging"},
+			want:        false,
+		},
+		{
+			name:        "one difference outside the except paths",
+			diffPaths:   []string{"Spec.Logging.Enabled", "Spec.Logging.Level", "Spec.Name"},
+			exceptPaths: []string{"Spec.Logging"},
+			want:        true,
+		},
+		{
+			name:        "overlapping except paths count a difference once",
+			diffPaths:   []string{"Spec.Logging.Level"},
+			exceptPaths: []string{"Spec.Logging", "Spec.Logging.Level"},
+			want:        false,
+		},
+		{
+			name:        "except path is a prefix string but not a parent path",
+			diffPaths:   []string{"Spec.TagsOther"},
+			exceptPaths: []string{"Spec.Tags"},
+			want:        true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := compare.NewDelta()
+			for _, p := range tt.diffPaths {
+				d.Add(p, "a", "b")
+			}
+			require.Equal(t, tt.want, d.DifferentExcept(tt.exceptPaths...))
+		})
+	}
+}
