@@ -104,14 +104,18 @@ func (c *CARMMap) Run(name string, clientSet kubernetes.Interface, stopCh <-chan
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			if resourceMatchCARMConfigMap(obj, name) {
-				cm := obj.(*corev1.ConfigMap)
+			deleted, err := deletedName(obj)
+			if err != nil {
+				c.log.Error(err, "unable to get the name of a deleted config map")
+				return
+			}
+			if deleted == name {
 				newMap := make(map[string]string)
 				// To avoid multiple mutex locks, we are updating the cache
 				// and the configmap existence flag in the same function.
 				configMapCreated := false
 				c.updateData(configMapCreated, newMap)
-				c.log.V(1).Info("deleted account config map", "name", cm.ObjectMeta.Name)
+				c.log.V(1).Info("deleted account config map", "name", name)
 			}
 		},
 	})
