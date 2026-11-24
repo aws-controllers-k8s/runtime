@@ -42,6 +42,12 @@ const (
 	// alters reconciliation behavior, so it is disabled by default and must be
 	// explicitly enabled by the controller operator.
 	IgnoreFieldDrift = "IgnoreFieldDrift"
+
+	// ConvergenceDetection is a feature gate for skipping an Update that has
+	// already succeeded twice with the same delta and the same AWS write calls
+	// without changing anything. It alters reconciliation behavior, so it is
+	// disabled by default.
+	ConvergenceDetection = "ConvergenceDetection"
 )
 
 // defaultACKFeatureGates is a map of feature names to Feature structs
@@ -53,6 +59,8 @@ var defaultACKFeatureGates = FeatureGates{
 	ServiceLevelCARM:  {Stage: Alpha, Enabled: false},
 	IAMRoleSelector:   {Stage: Alpha, Enabled: false},
 	IgnoreFieldDrift:  {Stage: Alpha, Enabled: false},
+
+	ConvergenceDetection: {Stage: Alpha, Enabled: false},
 }
 
 // FeatureStage represents the development stage of a feature.
