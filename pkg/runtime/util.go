@@ -246,7 +246,8 @@ func getAdoptionFields(res acktypes.AWSResource) string {
 // patch operations from being cancelled while preserving context values.
 // It automatically determines whether to patch spec/metadata or status based on operationType.
 //
-// NOTE(rushmash91): The 30s SIGTERM grace period acts as the effective timeout -
+// NOTE(rushmash91): The controller Pod's termination grace period acts as the
+// effective timeout (terminationGracePeriodSeconds, 10s in the Helm chart) -
 // no additional timeout needed to avoid interfering with normal Kubernetes client
 // timeout/retry strategy.
 func patchObject(
