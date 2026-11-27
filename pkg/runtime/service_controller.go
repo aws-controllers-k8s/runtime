@@ -223,9 +223,12 @@ func (c *serviceController) BindControllerManager(mgr ctrlrt.Manager, cfg ackcfg
 	if err != nil {
 		return err
 	}
-	// The caches are only used for cross account resource management. We
-	// want to run them only when --enable-carm is set to true and
-	// --watch-namespace is set to zero or more than one namespaces.
+	// The CARM caches back cross account resource management and the CARM
+	// namespace annotations (owner account, region, endpoint URL). We run
+	// them only when --enable-carm is set to true and --watch-namespace is
+	// set to zero or more than one namespaces, since the namespace informer
+	// needs cluster-wide list/watch on namespaces. The namespace
+	// deletion-policy annotation does not depend on these caches.
 	if cfg.EnableCARM {
 		if len(namespaces) == 1 {
 			c.log.V(0).Info("--enable-carm is set to true but --watch-namespace is set to a single namespace. CARM will not be enabled.")
