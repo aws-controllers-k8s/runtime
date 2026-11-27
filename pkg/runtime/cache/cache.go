@@ -113,6 +113,19 @@ func (c Caches) Run(clientSet kubernetes.Interface) {
 	}
 }
 
+// deletedName returns the name of the object of a delete notification. The
+// notification carries the object, or a DeletedFinalStateUnknown tombstone
+// when the informer missed the deletion while its watch was broken, and found
+// it when it listed the objects again.
+func deletedName(obj interface{}) (string, error) {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		return "", err
+	}
+	_, name, err := cache.SplitMetaNamespaceKey(key)
+	return name, err
+}
+
 // WaitForCachesToSync waits for both of the namespace and configMap
 // informers to sync - by checking their hasSynced functions.
 func (c Caches) WaitForCachesToSync(ctx context.Context) bool {
